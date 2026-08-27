@@ -4,6 +4,9 @@
 #include <Logging.h>
 #include <Memory.h>
 #include <base64.h>
+#include <esp_crt_bundle.h>
+#include <esp_http_client.h>
+#include <strings.h>
 
 #include <functional>
 #include <string>
@@ -12,19 +15,14 @@
 #include <SecureHttpClient.h>
 
 extern "C" void wolfSSL_Arduino_Serial_Print(const char* const msg) { LOG_DBG("WOLFSSL", "%s", msg); }
-#else
-#include <esp_crt_bundle.h>
-#include <esp_http_client.h>
 #endif
 
 namespace {
-#if !defined(FREEINK_NET_WOLFSSL)
 // RX holds the response headers. Smaller buffers leave enough contiguous heap
 // for mbedTLS on redirect-heavy OPDS feeds while still preserving the headers
 // we read directly (Location, Content-Length).
 constexpr int HTTP_RX_BUF = 2048;
 constexpr int HTTP_TX_BUF = 512;
-#endif
 // Per-socket-op timeout. Some OPDS download endpoints are slow to send headers
 // (>15s) and chunked catalogs stall mid-body, so 15s killed them. 60s gives
 // slow servers room. esp_http_client's timeout_ms is uint32, so unlike Arduino
@@ -42,6 +40,24 @@ struct Sink {
   HttpDownloader::ResponseInfo* responseInfo = nullptr;
   uint32_t timeoutMs = HTTP_TIMEOUT_MS;
 };
+
+esp_err_t captureResponseHeaders(esp_http_client_event_t* event) {
+  if (!event || event->event_id != HTTP_EVENT_ON_HEADER || !event->user_data || !event->header_key ||
+      !event->header_value) {
+    return ESP_OK;
+  }
+  auto* sink = static_cast<Sink*>(event->user_data);
+  if (!sink->responseInfo) return ESP_OK;
+
+  if (strcasecmp(event->header_key, "X-Content-SHA256") == 0) {
+    sink->responseInfo->sha256 = event->header_value;
+  } else if (strcasecmp(event->header_key, "X-Calendar-Date") == 0) {
+    sink->responseInfo->calendarDate = event->header_value;
+  } else if (strcasecmp(event->header_key, "Date") == 0) {
+    sink->responseInfo->serverDate = event->header_value;
+  }
+  return ESP_OK;
+}
 
 bool isRedirect(int status) {
   return status == 301 || status == 302 || status == 303 || status == 307 || status == 308;
@@ -103,6 +119,7 @@ HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std:
       sink.responseInfo->contentLength = sink.total;
       sink.responseInfo->sha256 = http.getHeader("x-content-sha256");
       sink.responseInfo->calendarDate = http.getHeader("x-calendar-date");
+      sink.responseInfo->serverDate = http.getHeader("date");
     }
     if (http.callbackAborted()) return HttpDownloader::FILE_ERROR;
     if (!http.responseComplete()) {
@@ -116,14 +133,19 @@ HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std:
 }
 #endif
 
-#if !defined(FREEINK_NET_WOLFSSL)
 // Streams a GET body through sink.write in READ_CHUNK pieces. Uses the manual
 // open/fetch_headers/read path rather than esp_http_client_perform(): perform()
 // pushes the whole body through an event callback and reports a chunked body
 // that ends early as ESP_ERR_HTTP_INCOMPLETE_DATA, whereas the read loop streams
 // large/slow files and surfaces a short read directly.
+bool isHttpsUrl(const std::string& url) { return url.rfind("https://", 0) == 0; }
+
 HttpDownloader::DownloadError runGet(const std::string& url, const std::string& username, const std::string& password,
-                                     Sink& sink) {
+                                     Sink& sink, const bool requireHttps = false) {
+  if (requireHttps && !isHttpsUrl(url)) {
+    LOG_ERR("HTTP", "Verified transport rejected a non-HTTPS URL");
+    return HttpDownloader::HTTP_ERROR;
+  }
   esp_http_client_config_t config = {};
   config.url = url.c_str();
   config.buffer_size = HTTP_RX_BUF;
@@ -137,6 +159,8 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
   // only because Arduino's ssl_client drives mbedtls directly.
   config.crt_bundle_attach = esp_crt_bundle_attach;
   config.keep_alive_enable = true;
+  config.event_handler = captureResponseHeaders;
+  config.user_data = &sink;
 
   esp_http_client_handle_t client = esp_http_client_init(&config);
   if (!client) {
@@ -165,6 +189,22 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
   int status = esp_http_client_get_status_code(client);
   for (int hop = 0; isRedirect(status) && hop < MAX_REDIRECTS; ++hop) {
     if (esp_http_client_set_redirection(client) != ESP_OK) break;
+    if (requireHttps) {
+      // Only the scheme is needed. esp_http_client_get_url() truncates safely,
+      // and GitHub's signed CDN redirects can exceed 900 bytes.
+      char redirectedScheme[9];
+      if (esp_http_client_get_url(client, redirectedScheme, sizeof(redirectedScheme)) != ESP_OK ||
+          !isHttpsUrl(redirectedScheme)) {
+        LOG_ERR("HTTP", "Verified transport rejected a non-HTTPS redirect");
+        esp_http_client_cleanup(client);
+        return HttpDownloader::HTTP_ERROR;
+      }
+    }
+    if (sink.responseInfo) {
+      sink.responseInfo->sha256.clear();
+      sink.responseInfo->calendarDate.clear();
+      sink.responseInfo->serverDate.clear();
+    }
     esp_http_client_close(client);
     err = esp_http_client_open(client, 0);
     if (err != ESP_OK) {
@@ -184,14 +224,6 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
 
   if (sink.responseInfo) {
     sink.responseInfo->contentLength = contentLength > 0 ? static_cast<size_t>(contentLength) : 0;
-    char* sha256Header = nullptr;
-    if (esp_http_client_get_header(client, "X-Content-SHA256", &sha256Header) == ESP_OK && sha256Header) {
-      sink.responseInfo->sha256 = sha256Header;
-    }
-    char* calendarDateHeader = nullptr;
-    if (esp_http_client_get_header(client, "X-Calendar-Date", &calendarDateHeader) == ESP_OK && calendarDateHeader) {
-      sink.responseInfo->calendarDate = calendarDateHeader;
-    }
   }
 
   // fetch_headers returns 0 for a chunked response (no Content-Length); leave
@@ -233,14 +265,17 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
   }
   return HttpDownloader::OK;
 }
-#endif  // !FREEINK_NET_WOLFSSL
 
 // All HTTP(S) fetches go through wolfSSL when it is the active TLS stack: it
 // speaks TLS 1.3 and reads large bodies from servers where the esp_http_client/
 // mbedTLS path fails to connect or stalls mid-stream. Plain-http URLs still use a
 // WiFiClient inside runGetWolf, so this is safe for non-TLS targets too.
 HttpDownloader::DownloadError runGetSecure(const std::string& url, const std::string& username,
-                                           const std::string& password, Sink& sink) {
+                                           const std::string& password, Sink& sink,
+                                           const HttpDownloader::TransportSecurity security) {
+  if (security == HttpDownloader::TransportSecurity::VERIFIED_TLS) {
+    return runGet(url, username, password, sink, true);
+  }
 #if defined(FREEINK_NET_WOLFSSL)
   return runGetWolf(url, username, password, sink);
 #else
@@ -250,15 +285,15 @@ HttpDownloader::DownloadError runGetSecure(const std::string& url, const std::st
 }  // namespace
 
 bool HttpDownloader::fetchUrl(const std::string& url, Stream& outContent, const std::string& username,
-                              const std::string& password) {
+                              const std::string& password, const TransportSecurity security) {
   LOG_DBG("HTTP", "Fetching: %s", url.c_str());
   Sink sink;
   sink.write = [&outContent](const uint8_t* data, size_t len) { return outContent.write(data, len) == len; };
-  return runGetSecure(url, username, password, sink) == OK;
+  return runGetSecure(url, username, password, sink, security) == OK;
 }
 
 bool HttpDownloader::fetchUrl(const std::string& url, std::string& outContent, const std::string& username,
-                              const std::string& password) {
+                              const std::string& password, const TransportSecurity security) {
   LOG_DBG("HTTP", "Fetching: %s", url.c_str());
   outContent.clear();  // start clean; the sink appends, so don't carry prior content
   Sink sink;
@@ -266,21 +301,22 @@ bool HttpDownloader::fetchUrl(const std::string& url, std::string& outContent, c
     outContent.append(reinterpret_cast<const char*>(data), len);
     return true;
   };
-  return runGetSecure(url, username, password, sink) == OK;
+  return runGetSecure(url, username, password, sink, security) == OK;
 }
 
 bool HttpDownloader::fetchUrl(const std::string& url, const DataCallback& onData, const std::string& username,
-                              const std::string& password) {
+                              const std::string& password, const TransportSecurity security) {
   LOG_DBG("HTTP", "Fetching: %s", url.c_str());
   Sink sink;
   sink.write = onData;
-  return runGetSecure(url, username, password, sink) == OK;
+  return runGetSecure(url, username, password, sink, security) == OK;
 }
 
 HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& url, const std::string& destPath,
                                                              ProgressCallback progress, bool* cancelFlag,
                                                              const std::string& username, const std::string& password,
-                                                             ResponseInfo* responseInfo, const uint32_t timeoutMs) {
+                                                             ResponseInfo* responseInfo, const uint32_t timeoutMs,
+                                                             const TransportSecurity security) {
   LOG_DBG("HTTP", "Downloading: %s -> %s", url.c_str(), destPath.c_str());
 
   if (Storage.exists(destPath.c_str())) {
@@ -300,7 +336,7 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
   if (responseInfo) *responseInfo = {};
   sink.write = [&file](const uint8_t* data, size_t len) { return file.write(data, len) == len; };
 
-  const DownloadError result = runGetSecure(url, username, password, sink);
+  const DownloadError result = runGetSecure(url, username, password, sink, security);
   // Close before any remove() on the same path; DESTRUCTOR_CLOSES_FILE would
   // otherwise close only after the remove.
   file.close();
