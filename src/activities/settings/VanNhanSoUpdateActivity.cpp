@@ -111,8 +111,11 @@ bool isTrustedAssetUrl(const char* value) {
   if (!value) return false;
   static constexpr const char* ORIGIN_PREFIX = "https://vannhanso.com/";
   static constexpr const char* R2_PREFIX = "https://eink-assets.vannhanso.com/";
+  static constexpr const char* WORKER_PREFIX =
+      "https://vannhanso-eink-assets.kamikaze129.workers.dev/";
   return strncmp(value, ORIGIN_PREFIX, strlen(ORIGIN_PREFIX)) == 0 ||
-         strncmp(value, R2_PREFIX, strlen(R2_PREFIX)) == 0;
+         strncmp(value, R2_PREFIX, strlen(R2_PREFIX)) == 0 ||
+         strncmp(value, WORKER_PREFIX, strlen(WORKER_PREFIX)) == 0;
 }
 
 bool parseHttpDate(const std::string& value, Rtc::DateTime& dateTime) {
