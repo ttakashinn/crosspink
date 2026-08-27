@@ -7,6 +7,27 @@
 
 HalClock halClock;  // Singleton instance
 
+namespace {
+constexpr time_t MIN_VALID_UNIX_TIME = 1704067200;  // 2024-01-01 00:00:00 UTC
+
+bool dateTimeFromSystemClock(Rtc::DateTime& out) {
+  const time_t now = time(nullptr);
+  if (now < MIN_VALID_UNIX_TIME) return false;
+
+  struct tm timeinfo = {};
+  if (!gmtime_r(&now, &timeinfo)) return false;
+
+  out.year = static_cast<uint16_t>(timeinfo.tm_year + 1900);
+  out.month = static_cast<uint8_t>(timeinfo.tm_mon + 1);
+  out.day = static_cast<uint8_t>(timeinfo.tm_mday);
+  out.hour = static_cast<uint8_t>(timeinfo.tm_hour);
+  out.minute = static_cast<uint8_t>(timeinfo.tm_min);
+  out.second = static_cast<uint8_t>(timeinfo.tm_sec);
+  out.weekday = static_cast<uint8_t>(timeinfo.tm_wday);
+  return true;
+}
+}  // namespace
+
 void HalClock::begin() {
   _available = _sdkRtc.begin();
   LOG_INF("CLK", _available ? "SDK RTC found" : "RTC not found");
@@ -39,6 +60,13 @@ bool HalClock::getTime(uint8_t& hour, uint8_t& minute) const {
   return true;
 }
 
+bool HalClock::getDateTime(Rtc::DateTime& out) const {
+  if (!_available) return false;
+  return _sdkRtc.now(out);
+}
+
+bool HalClock::getSystemDateTime(Rtc::DateTime& out) const { return dateTimeFromSystemClock(out); }
+
 bool HalClock::formatTime(char* buf, size_t bufSize, uint8_t utcOffsetQuarterHoursBiased, bool use12Hour) const {
   if (bufSize < (use12Hour ? 9u : 6u)) return false;
   uint8_t h, m;
@@ -69,6 +97,22 @@ bool HalClock::formatTime(char* buf, size_t bufSize, uint8_t utcOffsetQuarterHou
 bool HalClock::syncFromNTP() {
   if (!_available) return false;
 
+  Rtc::DateTime dt;
+  if (!syncSystemTimeFromNTP(dt)) return false;
+
+  if (_sdkRtc.set(dt)) {
+    _lastPollMs = 0;
+    _cachedHour = dt.hour;
+    _cachedMinute = dt.minute;
+    _hasCachedTime = true;
+    LOG_INF("CLK", "RTC set to %04u-%02u-%02u %02u:%02u:%02u UTC", dt.year, dt.month, dt.day, dt.hour, dt.minute,
+            dt.second);
+    return true;
+  }
+  return false;
+}
+
+bool HalClock::syncSystemTimeFromNTP(Rtc::DateTime& out) {
   if (WiFi.status() != WL_CONNECTED) {
     LOG_ERR("CLK", "WiFi not connected, cannot sync NTP");
     return false;
@@ -81,28 +125,7 @@ bool HalClock::syncFromNTP() {
   constexpr int maxAttempts = 50;
   for (int i = 0; i < maxAttempts; i++) {
     if (sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED) {
-      time_t now = time(nullptr);
-      struct tm timeinfo;
-      gmtime_r(&now, &timeinfo);
-
-      Rtc::DateTime dt;
-      dt.year = static_cast<uint16_t>(timeinfo.tm_year + 1900);
-      dt.month = static_cast<uint8_t>(timeinfo.tm_mon + 1);
-      dt.day = static_cast<uint8_t>(timeinfo.tm_mday);
-      dt.hour = static_cast<uint8_t>(timeinfo.tm_hour);
-      dt.minute = static_cast<uint8_t>(timeinfo.tm_min);
-      dt.second = static_cast<uint8_t>(timeinfo.tm_sec);
-      dt.weekday = static_cast<uint8_t>(timeinfo.tm_wday);
-      if (_sdkRtc.set(dt)) {
-        _lastPollMs = 0;
-        _cachedHour = dt.hour;
-        _cachedMinute = dt.minute;
-        _hasCachedTime = true;
-        LOG_INF("CLK", "RTC set to %04u-%02u-%02u %02u:%02u:%02u UTC", dt.year, dt.month, dt.day, dt.hour, dt.minute,
-                dt.second);
-        return true;
-      }
-      return false;
+      return dateTimeFromSystemClock(out);
     }
     delay(100);
   }

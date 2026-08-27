@@ -3,6 +3,7 @@
 #include <BoardConfig.h>
 #include <GfxRenderer.h>
 #include <Logging.h>
+#include <Memory.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -22,6 +23,7 @@
 #include "SettingsList.h"
 #include "StatusBarSettingsActivity.h"
 #include "TextSettingsActivity.h"
+#include "VanNhanSoUpdateActivity.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "activities/util/IntervalSelectionActivity.h"
 #include "components/UITheme.h"
@@ -66,6 +68,10 @@ void SettingsActivity::rebuildSettingsLists() {
   }
 
   // Append device-only ACTION items
+#if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3
+  displaySettings.push_back(
+      SettingInfo::Action(StrId::STR_VANNHANSO_REFRESH, SettingAction::UpdateVanNhanSo));
+#endif
   if (!BoardConfig::hasTouch()) {
     controlsSettings.insert(controlsSettings.begin(),
                             SettingInfo::Action(StrId::STR_REMAP_FRONT_BUTTONS, SettingAction::RemapFrontButtons));
@@ -409,6 +415,11 @@ void SettingsActivity::toggleCurrentSetting() {
       case SettingAction::Language:
         startActivityForResult(std::make_unique<LanguageSelectActivity>(renderer, mappedInput), resultHandler);
         break;
+      case SettingAction::UpdateVanNhanSo: {
+        auto activity = makeUniqueNoThrow<VanNhanSoUpdateActivity>(renderer, mappedInput);
+        if (activity) startActivityForResult(std::move(activity), resultHandler);
+        break;
+      }
       case SettingAction::None:
         // Do nothing
         break;

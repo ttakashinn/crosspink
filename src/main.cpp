@@ -13,6 +13,7 @@
 #include <HalTiltSensor.h>
 #include <I18n.h>
 #include <Logging.h>
+#include <Memory.h>
 #include <SPI.h>
 #include <WiFi.h>
 #include <builtinFonts/all.h>
@@ -29,6 +30,7 @@
 #include "activities/Activity.h"
 #include "activities/ActivityManager.h"
 #include "activities/settings/SdFirmwareUpdateActivity.h"
+#include "activities/settings/VanNhanSoUpdateActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "images/LoadingIcon.h"
@@ -433,6 +435,20 @@ void setup() {
     APP_STATE.saveToFile();
     activityManager.goToReader(path, allowFastInitialReaderRefresh);
   }
+
+#if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3
+  const bool shouldAutoUpdateVanNhanSo = !isSilentReboot && !recoveryFirmwareMode && !rebootedFromPanic &&
+                                        isSleepWake &&
+                                        SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::VANNHANSO;
+  if (shouldAutoUpdateVanNhanSo) {
+    auto updateActivity = makeUniqueNoThrow<VanNhanSoUpdateActivity>(renderer, mappedInputManager, true);
+    if (updateActivity) {
+      activityManager.pushActivity(std::move(updateActivity));
+    } else {
+      LOG_ERR("VNS", "OOM: automatic update activity");
+    }
+  }
+#endif
 
   if (resume == BootResume::Silent) {
     // Block until the first paint physically completes. refreshDisplay()

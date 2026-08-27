@@ -43,6 +43,8 @@ void SleepActivity::onEnter() {
       return renderBlankSleepScreen();
     case (CrossPointSettings::SLEEP_SCREEN_MODE::CUSTOM):
       return renderCustomSleepScreen();
+    case (CrossPointSettings::SLEEP_SCREEN_MODE::VANNHANSO):
+      return renderVanNhanSoSleepScreen();
     case (CrossPointSettings::SLEEP_SCREEN_MODE::COVER):
       return renderCoverSleepScreen();
     case (CrossPointSettings::SLEEP_SCREEN_MODE::COVER_CUSTOM):
@@ -54,6 +56,24 @@ void SleepActivity::onEnter() {
     default:
       return renderDefaultSleepScreen();
   }
+}
+
+void SleepActivity::renderVanNhanSoSleepScreen() const {
+  static constexpr const char* CACHE_PATH = "/vannhanso-sleep.bmp";
+
+  HalFile file;
+  if (Storage.openFileForRead("SLP", CACHE_PATH, file)) {
+    Bitmap bitmap(file, true);
+    if (bitmap.parseHeaders() == BmpReaderError::Ok && bitmap.getWidth() == renderer.getScreenWidth() &&
+        bitmap.getHeight() == renderer.getScreenHeight()) {
+      LOG_DBG("SLP", "Loading Văn Nhân Số sleep screen: %s", CACHE_PATH);
+      renderBitmapSleepScreen(bitmap);
+      return;
+    }
+    LOG_ERR("SLP", "Invalid or wrong-sized Văn Nhân Số sleep screen: %s", CACHE_PATH);
+  }
+
+  renderDefaultSleepScreen();
 }
 
 void SleepActivity::renderCustomSleepScreen() const {

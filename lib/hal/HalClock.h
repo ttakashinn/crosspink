@@ -27,6 +27,14 @@ class HalClock {
   // Returns false if RTC is not available.
   bool getTime(uint8_t& hour, uint8_t& minute) const;
 
+  // Read the complete UTC wall clock from the external RTC.
+  // Returns false on devices without an RTC or when the RTC value is invalid.
+  bool getDateTime(Rtc::DateTime& out) const;
+
+  // Read the ESP system clock after it has been synchronized. This can retain
+  // time across deep sleep, but not across a complete battery power cut.
+  bool getSystemDateTime(Rtc::DateTime& out) const;
+
   // Format time into a caller-provided buffer.
   // 24h mode produces "HH:MM" (needs >=6 bytes); 12h mode produces "H:MM AM"/"HH:MM PM" (needs >=9 bytes).
   // utcOffsetQuarterHoursBiased: biased quarter-hour offset (48 = UTC+0, 0 = UTC-12, 104 = UTC+14).
@@ -41,4 +49,8 @@ class HalClock {
   // Debouncing (skip if already synced once) is enforced by the caller, not here,
   // so the HAL stays free of any app-layer settings dependency.
   bool syncFromNTP();
+
+  // Synchronize the ESP system clock and return the current UTC time. Unlike
+  // syncFromNTP(), this also works on devices without an external RTC.
+  bool syncSystemTimeFromNTP(Rtc::DateTime& out);
 };
