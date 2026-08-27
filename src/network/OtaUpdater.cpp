@@ -12,13 +12,42 @@
 // clang-format on
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <string>
 
 #include "FirmwareFlasher.h"
 
 namespace {
-constexpr char latestReleaseUrl[] = "https://api.github.com/repos/crosspoint-reader/crosspoint-reader/releases/latest";
+constexpr char latestReleaseUrl[] = "https://api.github.com/repos/ttakashinn/crosspoint-reader/releases/latest";
+
+struct FirmwareVersion {
+  int major = 0;
+  int minor = 0;
+  int patch = 0;
+  int vanNhanSoRevision = 0;
+};
+
+bool parseFirmwareVersion(const char* value, FirmwareVersion& version) {
+  if (!value || !*value) return false;
+  if (*value == 'v' || *value == 'V') ++value;
+
+  int consumed = 0;
+  if (sscanf(value, "%d.%d.%d%n", &version.major, &version.minor, &version.patch, &consumed) != 3) return false;
+  if (version.major < 0 || version.minor < 0 || version.patch < 0) return false;
+
+  constexpr char VNS_SUFFIX[] = "-vns.";
+  const char* suffix = value + consumed;
+  if (strncmp(suffix, VNS_SUFFIX, sizeof(VNS_SUFFIX) - 1) == 0) {
+    char trailing = '\0';
+    const char* revision = suffix + sizeof(VNS_SUFFIX) - 1;
+    if (sscanf(revision, "%d%c", &version.vanNhanSoRevision, &trailing) != 1 || version.vanNhanSoRevision < 0) {
+      return false;
+    }
+  }
+
+  return true;
+}
 }  // namespace
 
 OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
@@ -68,42 +97,17 @@ bool OtaUpdater::isUpdateNewer() const {
     return false;
   }
 
-  int currentMajor, currentMinor, currentPatch;
-  int latestMajor, latestMinor, latestPatch;
-
-  const auto currentVersion = CROSSPOINT_VERSION;
-
-  // semantic version check (only match on 3 segments)
-  sscanf(latestVersion.c_str(), "%d.%d.%d", &latestMajor, &latestMinor, &latestPatch);
-  sscanf(currentVersion, "%d.%d.%d", &currentMajor, &currentMinor, &currentPatch);
-
-  /*
-   * Compare major versions.
-   * If they differ, return true if latest major version greater than current major version
-   * otherwise return false.
-   */
-  if (latestMajor != currentMajor) return latestMajor > currentMajor;
-
-  /*
-   * Compare minor versions.
-   * If they differ, return true if latest minor version greater than current minor version
-   * otherwise return false.
-   */
-  if (latestMinor != currentMinor) return latestMinor > currentMinor;
-
-  /*
-   * Check patch versions.
-   */
-  if (latestPatch != currentPatch) return latestPatch > currentPatch;
-
-  // If we reach here, it means all segments are equal.
-  // One final check, if we're on an RC build (contains "-rc"), we should consider the latest version as newer even if
-  // the segments are equal, since RC builds are pre-release versions.
-  if (strstr(currentVersion, "-rc") != nullptr) {
-    return true;
+  FirmwareVersion current;
+  FirmwareVersion latest;
+  if (!parseFirmwareVersion(CROSSPOINT_VERSION, current) || !parseFirmwareVersion(latestVersion.c_str(), latest)) {
+    LOG_ERR("OTA", "Invalid version: current=%s latest=%s", CROSSPOINT_VERSION, latestVersion.c_str());
+    return false;
   }
 
-  return false;
+  if (latest.major != current.major) return latest.major > current.major;
+  if (latest.minor != current.minor) return latest.minor > current.minor;
+  if (latest.patch != current.patch) return latest.patch > current.patch;
+  return latest.vanNhanSoRevision > current.vanNhanSoRevision;
 }
 
 const std::string& OtaUpdater::getLatestVersion() const { return latestVersion; }

@@ -4,6 +4,9 @@ on:
     tags:
       - '*'
 
+permissions:
+  contents: write
+
 jobs:
   build-release:
     runs-on: ubuntu-latest
@@ -45,3 +48,19 @@ jobs:
             .pio/build/gh_release/firmware.elf
             .pio/build/gh_release/firmware.map
             .pio/build/gh_release/partitions.bin
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd .pio/build/gh_release
+          sha256sum firmware.bin > firmware.bin.sha256
+          upstream_version="${GITHUB_REF_NAME%%-vns.*}"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" firmware.bin firmware.bin.sha256 --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" firmware.bin firmware.bin.sha256 \
+              --verify-tag \
+              --title "CrossPoint Văn Nhân Số $GITHUB_REF_NAME" \
+              --notes "Custom firmware for Xteink X3/X4, based on CrossPoint Reader stable $upstream_version."
+          fi

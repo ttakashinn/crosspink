@@ -437,9 +437,9 @@ void setup() {
   }
 
 #if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3
-  const bool shouldAutoUpdateVanNhanSo = !isSilentReboot && !recoveryFirmwareMode && !rebootedFromPanic &&
-                                        isSleepWake &&
-                                        SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::VANNHANSO;
+  const bool shouldAutoUpdateVanNhanSo = !isSilentReboot && !recoveryFirmwareMode && !HalSystem::isRebootFromPanic() &&
+                                         wakeupReason == HalGPIO::WakeupReason::PowerButton &&
+                                         SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::VANNHANSO;
   if (shouldAutoUpdateVanNhanSo) {
     auto updateActivity = makeUniqueNoThrow<VanNhanSoUpdateActivity>(renderer, mappedInputManager, true);
     if (updateActivity) {
