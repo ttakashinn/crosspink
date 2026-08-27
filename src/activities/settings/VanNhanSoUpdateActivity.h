@@ -2,6 +2,8 @@
 
 #include <CrossPointState.h>
 
+#include <atomic>
+
 #include "activities/Activity.h"
 
 class VanNhanSoUpdateActivity final : public Activity {
@@ -15,12 +17,23 @@ class VanNhanSoUpdateActivity final : public Activity {
   void loop() override;
   void render(RenderLock&&) override;
   bool preventAutoSleep() override { return state == AUTO_CONNECTING || state == DOWNLOADING; }
-  bool skipLoopDelay() override { return true; }
+  bool skipLoopDelay() override { return state == AUTO_CONNECTING || state == DOWNLOADING; }
 
  private:
-  enum State { STATUS, WIFI_SELECTION, AUTO_CONNECTING, DOWNLOADING, VERIFYING, INSTALLING, SUCCESS, FAILED, SKIPPED };
+  enum State {
+    STATUS,
+    WIFI_SELECTION,
+    AUTO_CONNECTING,
+    DOWNLOADING,
+    VERIFYING,
+    INSTALLING,
+    SUCCESS,
+    FAILED,
+    CANCELLED,
+    SKIPPED,
+  };
 
-  State state = STATUS;
+  std::atomic<State> state{STATUS};
   const bool automatic;
   const bool sleepAfterUpdate;
   bool shouldTearDownWifiOnExit = false;
@@ -28,8 +41,8 @@ class VanNhanSoUpdateActivity final : public Activity {
   unsigned long connectionStartTime = 0;
   uint32_t currentDateKey = 0;
   uint16_t currentMinute = UINT16_MAX;
-  size_t downloadedBytes = 0;
-  size_t totalBytes = 0;
+  std::atomic<size_t> downloadedBytes{0};
+  std::atomic<size_t> totalBytes{0};
 
   static constexpr unsigned long AUTO_CONNECTION_TIMEOUT_MS = 3000;
   static constexpr uint32_t DOWNLOAD_TIMEOUT_MS = 5000;
@@ -48,9 +61,8 @@ class VanNhanSoUpdateActivity final : public Activity {
   void downloadSleepScreen();
   void recordAttempt();
   void recordSuccess();
+  void recordCancelled();
   void fail(CrossPointState::VanNhanSoUpdateError error);
-  bool validateDownloadedFile() const;
   bool validateChecksum(const std::string& expectedChecksum) const;
-  bool installDownloadedFile() const;
   const char* errorText(CrossPointState::VanNhanSoUpdateError error) const;
 };

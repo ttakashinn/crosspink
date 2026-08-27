@@ -13,7 +13,13 @@ class CrossPointState : public PersistableStore<CrossPointState> {
  public:
   static constexpr uint8_t SLEEP_RECENT_COUNT = 16;
 
-  enum class VanNhanSoUpdateResult : uint8_t { NEVER = 0, IN_PROGRESS = 1, SUCCESS = 2, FAILED = 3 };
+  enum class VanNhanSoUpdateResult : uint8_t {
+    NEVER = 0,
+    IN_PROGRESS = 1,
+    SUCCESS = 2,
+    FAILED = 3,
+    CANCELLED = 4,
+  };
   enum class VanNhanSoUpdateError : uint8_t {
     NONE = 0,
     NO_WIFI = 1,

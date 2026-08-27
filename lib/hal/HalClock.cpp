@@ -3,6 +3,7 @@
 #include <Logging.h>
 #include <WiFi.h>
 #include <esp_sntp.h>
+#include <sys/time.h>
 #include <time.h>
 
 HalClock halClock;  // Singleton instance
@@ -25,6 +26,22 @@ bool dateTimeFromSystemClock(Rtc::DateTime& out) {
   out.second = static_cast<uint8_t>(timeinfo.tm_sec);
   out.weekday = static_cast<uint8_t>(timeinfo.tm_wday);
   return true;
+}
+
+time_t unixTimeFromUtc(const Rtc::DateTime& dateTime) {
+  // Howard Hinnant's civil-date conversion, yielding days since 1970-01-01.
+  // This avoids timegm(), which newlib on the ESP32-C3 does not expose.
+  int year = dateTime.year;
+  const unsigned month = dateTime.month;
+  const unsigned day = dateTime.day;
+  year -= month <= 2;
+  const int era = (year >= 0 ? year : year - 399) / 400;
+  const unsigned yearOfEra = static_cast<unsigned>(year - era * 400);
+  const unsigned shiftedMonth = month > 2 ? month - 3 : month + 9;
+  const unsigned dayOfYear = (153 * shiftedMonth + 2) / 5 + day - 1;
+  const unsigned dayOfEra = yearOfEra * 365 + yearOfEra / 4 - yearOfEra / 100 + dayOfYear;
+  const int64_t days = static_cast<int64_t>(era) * 146097 + dayOfEra - 719468;
+  return static_cast<time_t>(days * 86400 + dateTime.hour * 3600 + dateTime.minute * 60 + dateTime.second);
 }
 }  // namespace
 
@@ -132,4 +149,33 @@ bool HalClock::syncSystemTimeFromNTP(Rtc::DateTime& out) {
 
   LOG_ERR("CLK", "NTP sync timed out");
   return false;
+}
+
+bool HalClock::setDateTimeUtc(const Rtc::DateTime& dateTime) {
+  const time_t epoch = unixTimeFromUtc(dateTime);
+  if (epoch < MIN_VALID_UNIX_TIME) return false;
+
+  // Round-trip through gmtime both to reject impossible fields (for example
+  // 31 February) and to derive weekday rather than trusting callers to fill
+  // that RTC-specific field.
+  struct tm normalizedTm = {};
+  if (!gmtime_r(&epoch, &normalizedTm) || normalizedTm.tm_year + 1900 != dateTime.year ||
+      normalizedTm.tm_mon + 1 != dateTime.month || normalizedTm.tm_mday != dateTime.day ||
+      normalizedTm.tm_hour != dateTime.hour || normalizedTm.tm_min != dateTime.minute ||
+      normalizedTm.tm_sec != dateTime.second) {
+    return false;
+  }
+  Rtc::DateTime normalized = dateTime;
+  normalized.weekday = static_cast<uint8_t>(normalizedTm.tm_wday);
+
+  const timeval now = {epoch, 0};
+  if (settimeofday(&now, nullptr) != 0) return false;
+
+  bool rtcOk = true;
+  if (_available) rtcOk = _sdkRtc.set(normalized);
+  _lastPollMs = 0;
+  _cachedHour = normalized.hour;
+  _cachedMinute = normalized.minute;
+  _hasCachedTime = true;
+  return rtcOk;
 }

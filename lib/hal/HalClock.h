@@ -53,4 +53,8 @@ class HalClock {
   // Synchronize the ESP system clock and return the current UTC time. Unlike
   // syncFromNTP(), this also works on devices without an external RTC.
   bool syncSystemTimeFromNTP(Rtc::DateTime& out);
+
+  // Set the UTC system clock and, when present, the external RTC from an
+  // already-authenticated time source such as an HTTPS Date response header.
+  bool setDateTimeUtc(const Rtc::DateTime& dateTime);
 };

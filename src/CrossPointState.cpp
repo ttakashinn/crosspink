@@ -59,7 +59,7 @@ bool CrossPointState::fromJson(JsonVariantConst doc) {
   lastSleepFromReader = doc["lastSleepFromReader"] | false;
   showBootScreen = doc["showBootScreen"] | true;
   const uint8_t updateResult = doc["vanNhanSoUpdateResult"] | static_cast<uint8_t>(VanNhanSoUpdateResult::NEVER);
-  vanNhanSoUpdateResult = updateResult <= static_cast<uint8_t>(VanNhanSoUpdateResult::FAILED)
+  vanNhanSoUpdateResult = updateResult <= static_cast<uint8_t>(VanNhanSoUpdateResult::CANCELLED)
                               ? static_cast<VanNhanSoUpdateResult>(updateResult)
                               : VanNhanSoUpdateResult::NEVER;
   const uint8_t updateError = doc["vanNhanSoUpdateError"] | static_cast<uint8_t>(VanNhanSoUpdateError::NONE);

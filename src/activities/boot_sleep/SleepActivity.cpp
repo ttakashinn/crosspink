@@ -13,6 +13,7 @@
 #include "CrossPointState.h"
 #include "activities/reader/ReaderUtils.h"
 #include "components/UITheme.h"
+#include "features/vannhanso/VanNhanSoCache.h"
 #include "fontIds.h"
 #include "images/Logo120.h"
 #include "images/MoonIcon.h"
@@ -59,18 +60,20 @@ void SleepActivity::onEnter() {
 }
 
 void SleepActivity::renderVanNhanSoSleepScreen() const {
-  static constexpr const char* CACHE_PATH = "/vannhanso-sleep.bmp";
-
-  HalFile file;
-  if (Storage.openFileForRead("SLP", CACHE_PATH, file)) {
+  const char* path = vannhanso_cache::findRenderableImage(renderer.getScreenWidth(), renderer.getScreenHeight());
+  if (path != nullptr) {
+    HalFile file;
+    if (!Storage.openFileForRead("SLP", path, file)) {
+      LOG_ERR("SLP", "Could not reopen validated Văn Nhân Số sleep screen: %s", path);
+      return renderDefaultSleepScreen();
+    }
     Bitmap bitmap(file, true);
-    if (bitmap.parseHeaders() == BmpReaderError::Ok && bitmap.getWidth() == renderer.getScreenWidth() &&
-        bitmap.getHeight() == renderer.getScreenHeight()) {
-      LOG_DBG("SLP", "Loading Văn Nhân Số sleep screen: %s", CACHE_PATH);
+    if (bitmap.parseHeaders() == BmpReaderError::Ok) {
+      LOG_DBG("SLP", "Loading Văn Nhân Số sleep screen: %s", path);
       renderBitmapSleepScreen(bitmap);
       return;
     }
-    LOG_ERR("SLP", "Invalid or wrong-sized Văn Nhân Số sleep screen: %s", CACHE_PATH);
+    LOG_ERR("SLP", "Validated Văn Nhân Số sleep screen changed before rendering: %s", path);
   }
 
   renderDefaultSleepScreen();
