@@ -49,6 +49,20 @@ void SettingsActivity::rebuildSettingsLists() {
 
   for (auto& setting : getSettingsList(&sdFontSystem.registry(), &dictionaries)) {
     if (setting.category == StrId::STR_NONE_OPT) continue;
+    const bool isVanNhanSoSetting = setting.valuePtr == &CrossPointSettings::vanNhanSoUpdateMode ||
+                                    setting.valuePtr == &CrossPointSettings::vanNhanSoLayout ||
+                                    setting.valuePtr == &CrossPointSettings::vanNhanSoFontSize ||
+                                    setting.valuePtr == &CrossPointSettings::vanNhanSoVocabularyLevel ||
+                                    setting.valuePtr == &CrossPointSettings::vanNhanSoWeatherLocation ||
+                                    setting.valuePtr == &CrossPointSettings::vanNhanSoFinance;
+    if (isVanNhanSoSetting && SETTINGS.sleepScreen != CrossPointSettings::SLEEP_SCREEN_MODE::VANNHANSO) continue;
+    const bool isVanNhanSoFullLayoutSetting = setting.valuePtr == &CrossPointSettings::vanNhanSoVocabularyLevel ||
+                                              setting.valuePtr == &CrossPointSettings::vanNhanSoWeatherLocation ||
+                                              setting.valuePtr == &CrossPointSettings::vanNhanSoFinance;
+    if (isVanNhanSoFullLayoutSetting &&
+        SETTINGS.vanNhanSoLayout != CrossPointSettings::VANNHANSO_LAYOUT::VANNHANSO_LAYOUT_FULL) {
+      continue;
+    }
     if (setting.category == StrId::STR_CAT_DISPLAY) {
       displaySettings.push_back(setting);
     } else if (setting.category == StrId::STR_CAT_READER) {
@@ -69,8 +83,9 @@ void SettingsActivity::rebuildSettingsLists() {
 
   // Append device-only ACTION items
 #if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3
-  displaySettings.push_back(
-      SettingInfo::Action(StrId::STR_VANNHANSO_REFRESH, SettingAction::UpdateVanNhanSo));
+  if (SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::VANNHANSO) {
+    displaySettings.push_back(SettingInfo::Action(StrId::STR_VANNHANSO_REFRESH, SettingAction::UpdateVanNhanSo));
+  }
 #endif
   if (!BoardConfig::hasTouch()) {
     controlsSettings.insert(controlsSettings.begin(),

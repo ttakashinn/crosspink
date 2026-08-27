@@ -43,6 +43,8 @@ class VanNhanSoUpdateActivity final : public Activity {
   bool isBackoffActive() const;
   bool readDateMarker(uint32_t& dateKey) const;
   bool writeDateMarker(uint32_t dateKey) const;
+  bool readProfileMarker(char* profile, size_t profileSize) const;
+  bool writeProfileMarker() const;
   void downloadSleepScreen();
   void recordAttempt();
   void recordSuccess();

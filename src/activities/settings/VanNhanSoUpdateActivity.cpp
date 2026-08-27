@@ -40,8 +40,40 @@ constexpr const char* CACHE_PATH = "/vannhanso-sleep.bmp";
 constexpr const char* BACKUP_PATH = "/.vannhanso-sleep.bak";
 constexpr const char* DATE_PATH = "/.crosspoint/vannhanso-date.txt";
 constexpr const char* DATE_TEMP_PATH = "/.crosspoint/vannhanso-date.tmp";
+constexpr const char* PROFILE_PATH = "/.crosspoint/vannhanso-profile.txt";
+constexpr const char* PROFILE_TEMP_PATH = "/.crosspoint/vannhanso-profile.tmp";
 constexpr int VIETNAM_UTC_OFFSET_HOURS = 7;
 constexpr size_t SHA256_HEX_LENGTH = 64;
+constexpr size_t PROFILE_MAX_LENGTH = 128;
+constexpr size_t REQUEST_URL_MAX_LENGTH = 384;
+
+const char* safeParam(const char* const* values, const size_t count, const uint8_t index) {
+  return values[index < count ? index : 0];
+}
+
+bool buildProfileSignature(char* output, const size_t outputSize) {
+  static constexpr const char* LAYOUTS[] = {"minimal", "full"};
+  static constexpr const char* FONT_SIZES[] = {"standard", "large"};
+  static constexpr const char* VOCABULARY_LEVELS[] = {"b1", "b2", "c1", "c2", "mixed"};
+  static constexpr const char* WEATHER_LOCATIONS[] = {"hanoi",  "hochiminh", "danang", "haiphong",
+                                                      "cantho", "hue",       "dongnai"};
+
+  const int written =
+      snprintf(output, outputSize, "layout=%s&font=%s&vocab=%s&weather=%s&finance=%u&grayscale=1",
+               safeParam(LAYOUTS, std::size(LAYOUTS), SETTINGS.vanNhanSoLayout),
+               safeParam(FONT_SIZES, std::size(FONT_SIZES), SETTINGS.vanNhanSoFontSize),
+               safeParam(VOCABULARY_LEVELS, std::size(VOCABULARY_LEVELS), SETTINGS.vanNhanSoVocabularyLevel),
+               safeParam(WEATHER_LOCATIONS, std::size(WEATHER_LOCATIONS), SETTINGS.vanNhanSoWeatherLocation),
+               SETTINGS.vanNhanSoFinance ? 1U : 0U);
+  return written > 0 && static_cast<size_t>(written) < outputSize;
+}
+
+bool buildRequestUrl(const char* baseUrl, char* output, const size_t outputSize) {
+  char profile[PROFILE_MAX_LENGTH];
+  if (!buildProfileSignature(profile, sizeof(profile))) return false;
+  const int written = snprintf(output, outputSize, "%s?%s", baseUrl, profile);
+  return written > 0 && static_cast<size_t>(written) < outputSize;
+}
 
 bool isLeapYear(const uint16_t year) { return (year % 4 == 0 && year % 100 != 0) || year % 400 == 0; }
 
@@ -322,7 +354,11 @@ bool VanNhanSoUpdateActivity::resolveCurrentDate(const bool allowNetworkSync) {
 bool VanNhanSoUpdateActivity::isCurrentCache() const {
   if (currentDateKey == 0 || !Storage.exists(CACHE_PATH)) return false;
   uint32_t storedDateKey = 0;
-  return readDateMarker(storedDateKey) && storedDateKey == currentDateKey;
+  char storedProfile[PROFILE_MAX_LENGTH];
+  char currentProfile[PROFILE_MAX_LENGTH];
+  return readDateMarker(storedDateKey) && storedDateKey == currentDateKey &&
+         readProfileMarker(storedProfile, sizeof(storedProfile)) &&
+         buildProfileSignature(currentProfile, sizeof(currentProfile)) && strcmp(storedProfile, currentProfile) == 0;
 }
 
 bool VanNhanSoUpdateActivity::isBackoffActive() const {
@@ -383,17 +419,55 @@ bool VanNhanSoUpdateActivity::writeDateMarker(const uint32_t dateKey) const {
   return true;
 }
 
+bool VanNhanSoUpdateActivity::readProfileMarker(char* profile, const size_t profileSize) const {
+  if (!profile || profileSize < 2) return false;
+  HalFile file;
+  if (!Storage.openFileForRead("VNS", PROFILE_PATH, file)) return false;
+  const size_t length = file.fileSize();
+  if (length == 0 || length >= profileSize) return false;
+  if (file.read(reinterpret_cast<uint8_t*>(profile), length) != static_cast<int>(length)) return false;
+  profile[length] = '\0';
+  return true;
+}
+
+bool VanNhanSoUpdateActivity::writeProfileMarker() const {
+  char profile[PROFILE_MAX_LENGTH];
+  if (!buildProfileSignature(profile, sizeof(profile))) return false;
+  const size_t length = strlen(profile);
+
+  Storage.remove(PROFILE_TEMP_PATH);
+  HalFile file;
+  if (!Storage.openFileForWrite("VNS", PROFILE_TEMP_PATH, file)) return false;
+  if (file.write(reinterpret_cast<const uint8_t*>(profile), length) != static_cast<int>(length)) {
+    file.close();
+    Storage.remove(PROFILE_TEMP_PATH);
+    return false;
+  }
+  file.close();
+
+  Storage.remove(PROFILE_PATH);
+  if (!Storage.rename(PROFILE_TEMP_PATH, PROFILE_PATH)) {
+    Storage.remove(PROFILE_TEMP_PATH);
+    return false;
+  }
+  return true;
+}
+
 void VanNhanSoUpdateActivity::downloadSleepScreen() {
   const bool isX3 = renderer.getScreenWidth() >= 528;
-  const char* url = isX3 ? VANNHANSO_X3_URL : VANNHANSO_X4_URL;
+  const char* baseUrl = isX3 ? VANNHANSO_X3_URL : VANNHANSO_X4_URL;
+  char url[REQUEST_URL_MAX_LENGTH];
+  if (!buildRequestUrl(baseUrl, url, sizeof(url))) {
+    fail(CrossPointState::VanNhanSoUpdateError::METADATA);
+    return;
+  }
 
   downloadedBytes = 0;
   totalBytes = 0;
   cancelDownload = false;
   HttpDownloader::ResponseInfo responseInfo;
 
-  // HttpDownloader owns the only short-lived URL/path allocations. The image
-  // body itself is streamed directly to SD and never buffered in heap.
+  // The image body is streamed directly to SD and never buffered in heap.
   const auto result = HttpDownloader::downloadToFile(
       url, TEMP_PATH,
       [this](const size_t downloaded, const size_t total) {
@@ -462,6 +536,9 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
   if (currentDateKey != 0 && !writeDateMarker(currentDateKey)) {
     LOG_ERR("VNS", "Could not save update date marker");
   }
+  if (!writeProfileMarker()) {
+    LOG_ERR("VNS", "Could not save dashboard profile marker");
+  }
 
   recordSuccess();
   state = SUCCESS;
@@ -509,7 +586,7 @@ bool VanNhanSoUpdateActivity::validateDownloadedFile() const {
     return false;
   }
 
-  if (!bitmap.is1Bit() || bitmap.getWidth() != renderer.getScreenWidth() ||
+  if ((bitmap.getBpp() != 1 && bitmap.getBpp() != 2) || bitmap.getWidth() != renderer.getScreenWidth() ||
       bitmap.getHeight() != renderer.getScreenHeight()) {
     LOG_ERR("VNS", "Wrong BMP format or dimensions: %dx%d %ubpp", bitmap.getWidth(), bitmap.getHeight(),
             bitmap.getBpp());

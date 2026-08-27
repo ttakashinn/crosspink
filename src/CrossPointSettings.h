@@ -178,11 +178,37 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     VANNHANSO_UPDATE_MANUAL = 2,
     VANNHANSO_UPDATE_MODE_COUNT
   };
+  enum VANNHANSO_LAYOUT { VANNHANSO_LAYOUT_MINIMAL = 0, VANNHANSO_LAYOUT_FULL = 1, VANNHANSO_LAYOUT_COUNT };
+  enum VANNHANSO_FONT_SIZE { VANNHANSO_FONT_STANDARD = 0, VANNHANSO_FONT_LARGE = 1, VANNHANSO_FONT_SIZE_COUNT };
+  enum VANNHANSO_VOCABULARY_LEVEL {
+    VANNHANSO_VOCAB_B1 = 0,
+    VANNHANSO_VOCAB_B2 = 1,
+    VANNHANSO_VOCAB_C1 = 2,
+    VANNHANSO_VOCAB_C2 = 3,
+    VANNHANSO_VOCAB_MIXED = 4,
+    VANNHANSO_VOCABULARY_LEVEL_COUNT
+  };
+  enum VANNHANSO_WEATHER_LOCATION {
+    VANNHANSO_WEATHER_HANOI = 0,
+    VANNHANSO_WEATHER_HOCHIMINH = 1,
+    VANNHANSO_WEATHER_DANANG = 2,
+    VANNHANSO_WEATHER_HAIPHONG = 3,
+    VANNHANSO_WEATHER_CANTHO = 4,
+    VANNHANSO_WEATHER_HUE = 5,
+    VANNHANSO_WEATHER_DONGNAI = 6,
+    VANNHANSO_WEATHER_LOCATION_COUNT
+  };
 
   // Sleep screen settings
   uint8_t sleepScreen = DARK;
   // When Văn Nhân Số may contact the server for a new daily sleep screen.
   uint8_t vanNhanSoUpdateMode = VANNHANSO_UPDATE_FIRST_BOOT;
+  uint8_t vanNhanSoLayout = VANNHANSO_LAYOUT_FULL;
+  // Large is the safer default on the low-density X3/X4 panels.
+  uint8_t vanNhanSoFontSize = VANNHANSO_FONT_LARGE;
+  uint8_t vanNhanSoVocabularyLevel = VANNHANSO_VOCAB_MIXED;
+  uint8_t vanNhanSoWeatherLocation = VANNHANSO_WEATHER_HANOI;
+  uint8_t vanNhanSoFinance = 1;
   // Sleep screen cover mode settings
   uint8_t sleepScreenCoverMode = FIT;
   // Sleep screen cover filter
