@@ -6,52 +6,73 @@
 // the local header last and break the build.
 #include "HttpDownloader.h"
 #include <Logging.h>
+#include <FirmwareReleaseValidation.h>
 #include <ReleaseJsonParser.h>
 #include <esp_ota_ops.h>
 #include <esp_wifi.h>
+#include <mbedtls/sha256.h>
 // clang-format on
 
 #include <algorithm>
 #include <cstdio>
-#include <cstring>
+#include <limits>
 #include <string>
 
 #include "FirmwareFlasher.h"
 
 namespace {
 constexpr char latestReleaseUrl[] = "https://api.github.com/repos/ttakashinn/crosspoint-reader/releases/latest";
+constexpr char trustedAssetPrefix[] = "https://github.com/ttakashinn/crosspoint-reader/releases/download/";
+constexpr char OTA_TEMP_PATH[] = "/.crosspoint-ota.tmp";
+constexpr size_t SHA256_HEX_LENGTH = 64;
 
-struct FirmwareVersion {
-  int major = 0;
-  int minor = 0;
-  int patch = 0;
-  int vanNhanSoRevision = 0;
-};
+bool isTrustedReleaseAssetUrl(const std::string& url) { return url.rfind(trustedAssetPrefix, 0) == 0; }
 
-bool parseFirmwareVersion(const char* value, FirmwareVersion& version) {
-  if (!value || !*value) return false;
-  if (*value == 'v' || *value == 'V') ++value;
+bool verifyFileSha256(const char* path, const std::string& expectedChecksum) {
+  HalFile file;
+  if (!Storage.openFileForRead("OTA", path, file)) return false;
 
-  int consumed = 0;
-  if (sscanf(value, "%d.%d.%d%n", &version.major, &version.minor, &version.patch, &consumed) != 3) return false;
-  if (version.major < 0 || version.minor < 0 || version.patch < 0) return false;
-
-  constexpr char VNS_SUFFIX[] = "-vns.";
-  const char* suffix = value + consumed;
-  if (strncmp(suffix, VNS_SUFFIX, sizeof(VNS_SUFFIX) - 1) == 0) {
-    char trailing = '\0';
-    const char* revision = suffix + sizeof(VNS_SUFFIX) - 1;
-    if (sscanf(revision, "%d%c", &version.vanNhanSoRevision, &trailing) != 1 || version.vanNhanSoRevision < 0) {
-      return false;
+  mbedtls_sha256_context context;
+  mbedtls_sha256_init(&context);
+  mbedtls_sha256_starts(&context, 0);
+  uint8_t buffer[4096];
+  size_t remaining = file.fileSize();
+  bool readOk = true;
+  while (remaining > 0) {
+    const size_t wanted = std::min(remaining, sizeof(buffer));
+    if (file.read(buffer, wanted) != static_cast<int>(wanted)) {
+      readOk = false;
+      break;
     }
+    mbedtls_sha256_update(&context, buffer, wanted);
+    remaining -= wanted;
   }
+  file.close();
 
-  return true;
+  uint8_t digest[32];
+  mbedtls_sha256_finish(&context, digest);
+  mbedtls_sha256_free(&context);
+  if (!readOk || expectedChecksum.size() != SHA256_HEX_LENGTH) return false;
+
+  char actual[SHA256_HEX_LENGTH + 1];
+  for (size_t i = 0; i < sizeof(digest); ++i) snprintf(actual + i * 2, 3, "%02x", digest[i]);
+  actual[SHA256_HEX_LENGTH] = '\0';
+  return expectedChecksum == actual;
 }
 }  // namespace
 
 OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
   LOG_DBG("OTA", "Checking for update (current: %s)", CROSSPOINT_VERSION);
+
+  // A failed re-check must not leave a previously discovered release usable.
+  updateAvailable = false;
+  latestVersion.clear();
+  otaUrl.clear();
+  checksumUrl.clear();
+  otaSize = 0;
+  processedSize = 0;
+  totalSize = 0;
+  installPhase = InstallPhase::IDLE;
 
   // Stream the ~32KB release JSON straight into the parser as it arrives.
   // Buffering the whole body in a std::string would add a growing allocation
@@ -59,13 +80,20 @@ OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
   // OOM there aborts. fetchUrl handles the verified-https GET, redirects, and
   // User-Agent (see HttpDownloader).
   ReleaseJsonParser releaseParser;
-  const bool ok = HttpDownloader::fetchUrl(latestReleaseUrl, [&releaseParser](const uint8_t* data, size_t len) {
-    releaseParser.feed(reinterpret_cast<const char*>(data), len);
-    return true;
-  });
+  const bool ok = HttpDownloader::fetchUrl(
+      latestReleaseUrl,
+      [&releaseParser](const uint8_t* data, size_t len) {
+        releaseParser.feed(reinterpret_cast<const char*>(data), len);
+        return true;
+      },
+      "", "", HttpDownloader::TransportSecurity::VERIFIED_TLS);
   if (!ok) {
     LOG_ERR("OTA", "Release check fetch failed");
     return HTTP_ERROR;
+  }
+  if (!releaseParser.isComplete()) {
+    LOG_ERR("OTA", "Release JSON is malformed or incomplete");
+    return JSON_PARSE_ERROR;
   }
 
   LOG_DBG("OTA", "Parser results: tag=%s firmware=%s", releaseParser.foundTag() ? "yes" : "no",
@@ -80,11 +108,29 @@ OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
     LOG_ERR("OTA", "No firmware.bin asset found");
     return NO_UPDATE;
   }
+  if (!releaseParser.foundChecksum()) {
+    LOG_ERR("OTA", "No firmware.bin.sha256 asset found");
+    return CHECKSUM_ERROR;
+  }
 
   latestVersion = releaseParser.getTagName();
   otaUrl = releaseParser.getFirmwareUrl();
+  checksumUrl = releaseParser.getChecksumUrl();
   otaSize = releaseParser.getFirmwareSize();
-  totalSize = otaSize;
+  firmware_release::Version parsedVersion;
+  if (!firmware_release::parseVersion(latestVersion.c_str(), parsedVersion)) {
+    LOG_ERR("OTA", "Release tag has an invalid stable-version format: %s", latestVersion.c_str());
+    return JSON_PARSE_ERROR;
+  }
+  if (!isTrustedReleaseAssetUrl(otaUrl) || !isTrustedReleaseAssetUrl(checksumUrl)) {
+    LOG_ERR("OTA", "Release contains an untrusted asset URL");
+    return JSON_PARSE_ERROR;
+  }
+  if (otaSize == 0 || otaSize > std::numeric_limits<size_t>::max() / 2) {
+    LOG_ERR("OTA", "Release firmware has an invalid size: %u", static_cast<unsigned>(otaSize));
+    return JSON_PARSE_ERROR;
+  }
+  totalSize = otaSize * 2;
   updateAvailable = true;
 
   LOG_DBG("OTA", "Found update: tag=%s size=%zu", latestVersion.c_str(), otaSize);
@@ -97,9 +143,10 @@ bool OtaUpdater::isUpdateNewer() const {
     return false;
   }
 
-  FirmwareVersion current;
-  FirmwareVersion latest;
-  if (!parseFirmwareVersion(CROSSPOINT_VERSION, current) || !parseFirmwareVersion(latestVersion.c_str(), latest)) {
+  firmware_release::Version current;
+  firmware_release::Version latest;
+  if (!firmware_release::parseVersion(CROSSPOINT_VERSION, current) ||
+      !firmware_release::parseVersion(latestVersion.c_str(), latest)) {
     LOG_ERR("OTA", "Invalid version: current=%s latest=%s", CROSSPOINT_VERSION, latestVersion.c_str());
     return false;
   }
@@ -117,95 +164,124 @@ OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback onProgres
     return UPDATE_OLDER_ERROR;
   }
 
-  // esp_https_ota is hardwired to esp-tls/mbedTLS, whose precompiled build on this
-  // package can't negotiate TLS 1.3 (see SecureClient.h). Drive the OTA partition
-  // ourselves and stream the firmware through HttpDownloader, which runs over
-  // wolfSSL when FREEINK_NET_WOLFSSL is set, reusing its redirect handling for the
-  // GitHub -> CDN hop.
   const esp_partition_t* updatePartition = esp_ota_get_next_update_partition(nullptr);
   if (!updatePartition) {
     LOG_ERR("OTA", "No OTA partition available");
     return INTERNAL_UPDATE_ERROR;
   }
-
-  esp_ota_handle_t otaHandle = 0;
-  esp_err_t esp_err = esp_ota_begin(updatePartition, OTA_SIZE_UNKNOWN, &otaHandle);
-  if (esp_err != ESP_OK) {
-    LOG_ERR("OTA", "esp_ota_begin failed: %s", esp_err_to_name(esp_err));
-    return INTERNAL_UPDATE_ERROR;
+  if (otaSize == 0 || otaSize > updatePartition->size) {
+    LOG_ERR("OTA", "Firmware size does not fit update partition: %u > %u", static_cast<unsigned>(otaSize),
+            static_cast<unsigned>(updatePartition->size));
+    return INVALID_IMAGE_ERROR;
   }
 
-  /* For better timing and connectivity, we disable power saving for WiFi */
-  esp_wifi_set_ps(WIFI_PS_NONE);
+  std::string checksumSidecar;
+  bool checksumTooLarge = false;
+  const bool checksumFetched = HttpDownloader::fetchUrl(
+      checksumUrl,
+      [&checksumSidecar, &checksumTooLarge](const uint8_t* data, const size_t length) {
+        constexpr size_t MAX_CHECKSUM_SIDECAR_SIZE = 256;
+        if (checksumSidecar.size() + length > MAX_CHECKSUM_SIDECAR_SIZE) {
+          checksumTooLarge = true;
+          return false;
+        }
+        checksumSidecar.append(reinterpret_cast<const char*>(data), length);
+        return true;
+      },
+      "", "", HttpDownloader::TransportSecurity::VERIFIED_TLS);
+  if (!checksumFetched || checksumTooLarge) {
+    LOG_ERR("OTA", "Could not download release checksum");
+    return HTTP_ERROR;
+  }
+  std::string expectedChecksum;
+  if (!firmware_release::parseSha256Sidecar(checksumSidecar, expectedChecksum)) {
+    LOG_ERR("OTA", "Invalid firmware.bin.sha256 contents");
+    return CHECKSUM_ERROR;
+  }
 
+  Storage.remove(OTA_TEMP_PATH);
+  esp_wifi_set_ps(WIFI_PS_NONE);
+  installPhase = InstallPhase::DOWNLOADING;
   processedSize = 0;
   int lastReportedPct = -1;
-  bool flashOk = true;
-  // The image streams in chunks; only the first bytes carry the header. Buffer
-  // the first 14 bytes so we can read chip_id (esp_image_header_t offset 12)
-  // and reject a wrong-MCU image before it overwrites the OTA partition.
-  uint8_t hdr[14];
-  size_t hdrLen = 0;
-  bool wrongChip = false;
-  const bool fetchOk = HttpDownloader::fetchUrl(otaUrl, [&](const uint8_t* data, size_t len) {
-    if (hdrLen < sizeof(hdr)) {
-      const size_t take = std::min(len, sizeof(hdr) - hdrLen);
-      std::memcpy(hdr + hdrLen, data, take);
-      hdrLen += take;
-      if (hdrLen == sizeof(hdr)) {
-        uint16_t imageChip;
-        std::memcpy(&imageChip, hdr + 12, sizeof(imageChip));
-        const uint16_t deviceChip = firmware_flash::runningPartitionChipId();
-        if (deviceChip != 0xFFFF && imageChip != deviceChip) {
-          LOG_ERR("OTA", "wrong chip: image=0x%04X device=0x%04X", imageChip, deviceChip);
-          wrongChip = true;
-          return false;  // abort the transfer
+  const auto downloadResult = HttpDownloader::downloadToFile(
+      otaUrl, OTA_TEMP_PATH,
+      [this, onProgress, ctx, &lastReportedPct](const size_t downloaded, const size_t) {
+        processedSize = std::min(downloaded, otaSize);
+        const size_t progressTotal = totalSize.load();
+        const int pct = progressTotal > 0 ? static_cast<int>(processedSize.load() * 100 / progressTotal) : 0;
+        if (onProgress && pct != lastReportedPct) {
+          lastReportedPct = pct;
+          onProgress(ctx);
         }
-      }
-    }
-    if (esp_ota_write(otaHandle, data, len) != ESP_OK) {
-      flashOk = false;
-      return false;  // abort the transfer
-    }
-    processedSize += len;
-    // Fire the callback only on whole-percent change. Per-chunk updates wake the
-    // render task, whose framebuffer work contends with TLS on the internal arena,
-    // and e-ink can't repaint faster than a percent tick anyway.
-    if (onProgress && totalSize > 0) {
-      const int pct = static_cast<int>(static_cast<uint64_t>(processedSize) * 100 / totalSize);
-      if (pct != lastReportedPct) {
-        lastReportedPct = pct;
-        onProgress(ctx);
-      }
-    }
-    return true;
-  });
-
-  /* Return back to default power saving for WiFi in case of failing */
+      },
+      nullptr, "", "", nullptr, 60000, HttpDownloader::TransportSecurity::VERIFIED_TLS);
   esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
-
-  if (wrongChip) {
-    LOG_ERR("OTA", "Firmware install aborted: wrong device");
-    esp_ota_abort(otaHandle);
-    return WRONG_DEVICE_ERROR;
+  if (downloadResult != HttpDownloader::OK) {
+    Storage.remove(OTA_TEMP_PATH);
+    installPhase = InstallPhase::IDLE;
+    return downloadResult == HttpDownloader::FILE_ERROR ? STORAGE_ERROR : HTTP_ERROR;
   }
 
-  if (!fetchOk || !flashOk) {
-    LOG_ERR("OTA", "Firmware install failed (%s)", flashOk ? "download" : "flash write");
-    esp_ota_abort(otaHandle);
-    return flashOk ? HTTP_ERROR : INTERNAL_UPDATE_ERROR;
+  HalFile staged;
+  if (!Storage.openFileForRead("OTA", OTA_TEMP_PATH, staged)) {
+    Storage.remove(OTA_TEMP_PATH);
+    installPhase = InstallPhase::IDLE;
+    return STORAGE_ERROR;
+  }
+  const size_t stagedSize = staged.fileSize();
+  staged.close();
+  if (stagedSize != otaSize) {
+    LOG_ERR("OTA", "Downloaded size mismatch: expected=%u actual=%u", static_cast<unsigned>(otaSize),
+            static_cast<unsigned>(stagedSize));
+    Storage.remove(OTA_TEMP_PATH);
+    installPhase = InstallPhase::IDLE;
+    return CHECKSUM_ERROR;
   }
 
-  esp_err = esp_ota_end(otaHandle);  // verifies the written image
-  if (esp_err != ESP_OK) {
-    LOG_ERR("OTA", "esp_ota_end failed: %s", esp_err_to_name(esp_err));
-    return INTERNAL_UPDATE_ERROR;
+  installPhase = InstallPhase::VERIFYING;
+  if (onProgress) onProgress(ctx);
+  if (!verifyFileSha256(OTA_TEMP_PATH, expectedChecksum)) {
+    LOG_ERR("OTA", "Release SHA-256 verification failed");
+    Storage.remove(OTA_TEMP_PATH);
+    installPhase = InstallPhase::IDLE;
+    return CHECKSUM_ERROR;
   }
 
-  esp_err = esp_ota_set_boot_partition(updatePartition);
-  if (esp_err != ESP_OK) {
-    LOG_ERR("OTA", "esp_ota_set_boot_partition failed: %s", esp_err_to_name(esp_err));
-    return INTERNAL_UPDATE_ERROR;
+  const auto validation = firmware_flash::validateImageFile(OTA_TEMP_PATH, updatePartition->size);
+  if (validation != firmware_flash::Result::OK) {
+    LOG_ERR("OTA", "Firmware image validation failed: %s", firmware_flash::resultName(validation));
+    Storage.remove(OTA_TEMP_PATH);
+    installPhase = InstallPhase::IDLE;
+    return validation == firmware_flash::Result::BAD_CHIP ? WRONG_DEVICE_ERROR : INVALID_IMAGE_ERROR;
+  }
+
+  struct FlashProgressContext {
+    OtaUpdater* updater;
+    ProgressCallback callback;
+    void* callbackContext;
+    int lastPercent;
+  } progressContext{this, onProgress, ctx, lastReportedPct};
+  const auto flashProgress = +[](const size_t written, const size_t, void* opaque) {
+    auto* progress = static_cast<FlashProgressContext*>(opaque);
+    progress->updater->processedSize = progress->updater->otaSize + written;
+    const size_t progressTotal = progress->updater->totalSize.load();
+    const int pct =
+        progressTotal > 0 ? static_cast<int>(progress->updater->processedSize.load() * 100 / progressTotal) : 0;
+    if (progress->callback && pct != progress->lastPercent) {
+      progress->lastPercent = pct;
+      progress->callback(progress->callbackContext);
+    }
+  };
+
+  installPhase = InstallPhase::FLASHING;
+  if (onProgress) onProgress(ctx);
+  const auto flashResult = firmware_flash::flashFromSdPath(OTA_TEMP_PATH, flashProgress, &progressContext, true);
+  Storage.remove(OTA_TEMP_PATH);
+  installPhase = InstallPhase::IDLE;
+  if (flashResult != firmware_flash::Result::OK) {
+    LOG_ERR("OTA", "Firmware flash failed: %s", firmware_flash::resultName(flashResult));
+    return flashResult == firmware_flash::Result::BAD_CHIP ? WRONG_DEVICE_ERROR : INTERNAL_UPDATE_ERROR;
   }
 
   LOG_INF("OTA", "Update completed");

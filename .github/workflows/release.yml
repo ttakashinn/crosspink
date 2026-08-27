@@ -28,6 +28,23 @@ jobs:
       - name: Install PlatformIO Core
         run: uv pip install --system -U https://github.com/pioarduino/platformio-core/archive/refs/tags/v6.1.19.zip
 
+      - name: Validate release tag
+        run: |
+          set -euo pipefail
+          expected="$(python - <<'PY'
+          import configparser
+          config = configparser.ConfigParser()
+          config.read('platformio.ini', encoding='utf-8')
+          print(config['crosspoint']['version'])
+          PY
+          )"
+          actual="${GITHUB_REF_NAME#v}"
+          if [ "$actual" != "$expected" ]; then
+            echo "Release tag '$GITHUB_REF_NAME' does not match platformio.ini version '$expected'" >&2
+            exit 1
+          fi
+          echo "CROSSPOINT_RELEASE_VERSION=$expected" >> "$GITHUB_ENV"
+
       - name: Cache PlatformIO packages
         uses: actions/cache@v4
         with:
@@ -37,6 +54,15 @@ jobs:
 
       - name: Build CrossPoint
         run: pio run -e gh_release
+
+      - name: Validate firmware image metadata
+        run: |
+          set -euo pipefail
+          info="$(python "$HOME/.platformio/packages/tool-esptoolpy/esptool.py" image-info \
+            .pio/build/gh_release/firmware.bin)"
+          grep -Fqx "App version: $CROSSPOINT_RELEASE_VERSION" <<< "$info"
+          grep -E '^Checksum: .*\(valid\)$' <<< "$info"
+          grep -E '^Validation hash: .*\(valid\)$' <<< "$info"
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4

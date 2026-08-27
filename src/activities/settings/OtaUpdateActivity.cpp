@@ -26,6 +26,24 @@ OtaActionRects getOtaActionRects(const GfxRenderer& renderer) {
 bool contains(const Rect& rect, const int x, const int y) {
   return x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height;
 }
+
+const char* otaErrorDetail(const OtaUpdater::OtaUpdaterError error) {
+  switch (error) {
+    case OtaUpdater::WRONG_DEVICE_ERROR:
+      return tr(STR_FIRMWARE_WRONG_DEVICE);
+    case OtaUpdater::CHECKSUM_ERROR:
+    case OtaUpdater::INVALID_IMAGE_ERROR:
+      return tr(STR_INVALID_FIRMWARE);
+    case OtaUpdater::STORAGE_ERROR:
+      return tr(STR_FIRMWARE_FILE_OPEN_FAILED);
+    case OtaUpdater::HTTP_ERROR:
+      return tr(STR_DOWNLOAD_FAILED);
+    case OtaUpdater::INTERNAL_UPDATE_ERROR:
+      return tr(STR_FIRMWARE_WRITE_FAILED);
+    default:
+      return nullptr;
+  }
+}
 }  // namespace
 
 void OtaUpdateActivity::onWifiSelectionComplete(const bool success) {
@@ -44,10 +62,19 @@ void OtaUpdateActivity::onWifiSelectionComplete(const bool success) {
   requestUpdateAndWait();
 
   const auto res = updater.checkForUpdate();
+  if (res == OtaUpdater::NO_UPDATE) {
+    LOG_DBG("OTA", "Release has no installable firmware asset");
+    {
+      RenderLock lock(*this);
+      state = NO_UPDATE;
+    }
+    return;
+  }
   if (res != OtaUpdater::OK) {
     LOG_DBG("OTA", "Update check failed: %d", res);
     {
       RenderLock lock(*this);
+      failedDetail = otaErrorDetail(res);
       state = FAILED;
     }
     return;
@@ -139,7 +166,10 @@ void OtaUpdateActivity::render(RenderLock&&) {
     const auto labels = mappedInput.mapLabels(tr(STR_CANCEL), tr(STR_UPDATE), "", "");
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   } else if (state == UPDATE_IN_PROGRESS) {
-    renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_UPDATING));
+    const char* phaseText = tr(STR_UPDATING);
+    if (updater.getInstallPhase() == OtaUpdater::InstallPhase::DOWNLOADING) phaseText = tr(STR_DOWNLOADING);
+    if (updater.getInstallPhase() == OtaUpdater::InstallPhase::VERIFYING) phaseText = tr(STR_VALIDATING_FIRMWARE);
+    renderer.drawCenteredText(UI_10_FONT_ID, top, phaseText);
 
     int y = top + height + metrics.verticalSpacing;
     GUI.drawProgressBar(
@@ -151,9 +181,7 @@ void OtaUpdateActivity::render(RenderLock&&) {
     // Percent label is drawn by BaseTheme::drawProgressBar; this slot is left intentionally empty
     // so the bytes line below stays at the same Y it was at when the activity drew its own percent.
     y += height + metrics.verticalSpacing;
-    renderer.drawCenteredText(
-        UI_10_FONT_ID, y,
-        (std::to_string(updater.getProcessedSize()) + " / " + std::to_string(updater.getTotalSize())).c_str());
+    renderer.drawCenteredText(UI_10_FONT_ID, y, (std::to_string(lastUpdaterPercentage) + "%").c_str());
   } else if (state == NO_UPDATE) {
     renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_NO_UPDATE), true, EpdFontFamily::BOLD);
     const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
@@ -193,7 +221,7 @@ void OtaUpdateActivity::runUpdateInstall() {
     LOG_DBG("OTA", "Update failed: %d", res);
     {
       RenderLock lock(*this);
-      failedDetail = res == OtaUpdater::WRONG_DEVICE_ERROR ? tr(STR_FIRMWARE_WRONG_DEVICE) : nullptr;
+      failedDetail = otaErrorDetail(res);
       state = FAILED;
     }
     requestUpdate();

@@ -284,6 +284,15 @@ Result flashFromSdPath(const char* sdPath, ProgressCb onProgress, void* ctx, boo
   }
 
   const size_t firmwareSize = file.fileSize();
+  // Keep these bounds even when the caller has just validated the same path.
+  // They make the raw erase/write loop safe if a staged file changes between
+  // validation and reopening, and prevent dest->size - streamPos underflow.
+  if (firmwareSize < MIN_FIRMWARE_SIZE || firmwareSize > dest->size) {
+    LOG_ERR("FLASH", "unsafe size at flash time: %u (partition=%u)", static_cast<unsigned>(firmwareSize),
+            static_cast<unsigned>(dest->size));
+    file.close();
+    return firmwareSize < MIN_FIRMWARE_SIZE ? Result::TOO_SMALL : Result::TOO_LARGE;
+  }
   LOG_INF("FLASH", "src=%s size=%u dest=%s @0x%x partsize=%u", sdPath, static_cast<unsigned>(firmwareSize), dest->label,
           static_cast<unsigned>(dest->address), static_cast<unsigned>(dest->size));
 

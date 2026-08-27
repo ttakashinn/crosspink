@@ -1,14 +1,22 @@
 #pragma once
 
+#include <atomic>
 #include <string>
 
 class OtaUpdater {
   bool updateAvailable = false;
   std::string latestVersion;
   std::string otaUrl;
+  std::string checksumUrl;
   size_t otaSize = 0;
-  size_t processedSize = 0;
-  size_t totalSize = 0;
+  std::atomic<size_t> processedSize{0};
+  std::atomic<size_t> totalSize{0};
+
+ public:
+  enum class InstallPhase : uint8_t { IDLE, DOWNLOADING, VERIFYING, FLASHING };
+
+ private:
+  std::atomic<InstallPhase> installPhase{InstallPhase::IDLE};
 
  public:
   using ProgressCallback = void (*)(void* ctx);
@@ -22,13 +30,18 @@ class OtaUpdater {
     INTERNAL_UPDATE_ERROR,
     OOM_ERROR,
     WRONG_DEVICE_ERROR,
+    CHECKSUM_ERROR,
+    INVALID_IMAGE_ERROR,
+    STORAGE_ERROR,
   };
 
   size_t getOtaSize() const { return otaSize; }
 
-  size_t getProcessedSize() const { return processedSize; }
+  size_t getProcessedSize() const { return processedSize.load(); }
 
-  size_t getTotalSize() const { return totalSize; }
+  size_t getTotalSize() const { return totalSize.load(); }
+
+  InstallPhase getInstallPhase() const { return installPhase.load(); }
 
   OtaUpdater() = default;
   bool isUpdateNewer() const;
