@@ -26,6 +26,7 @@ class HttpDownloader {
   struct ResponseInfo {
     size_t contentLength = 0;
     std::string sha256;
+    std::string calendarDate;
   };
 
   /**

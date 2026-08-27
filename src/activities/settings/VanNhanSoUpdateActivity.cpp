@@ -15,9 +15,11 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <iterator>
 
 #include "MappedInputManager.h"
 #include "SilentRestart.h"
+#include "VanNhanSoUpdateHooks.h"
 #include "WifiCredentialStore.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "components/UITheme.h"
@@ -49,13 +51,15 @@ uint8_t daysInMonth(const uint16_t year, const uint8_t month) {
   return DAYS[month - 1];
 }
 
-uint32_t vietnamDateKey(Rtc::DateTime dt) {
+bool vietnamDateTime(Rtc::DateTime dt, uint32_t& dateKey, uint16_t& minuteOfDay) {
   if (dt.year < 2024 || dt.month < 1 || dt.month > 12 || dt.day < 1 || dt.day > daysInMonth(dt.year, dt.month) ||
-      dt.hour > 23) {
-    return 0;
+      dt.hour > 23 || dt.minute > 59) {
+    return false;
   }
 
-  if (dt.hour + VIETNAM_UTC_OFFSET_HOURS >= 24) {
+  uint8_t localHour = dt.hour + VIETNAM_UTC_OFFSET_HOURS;
+  if (localHour >= 24) {
+    localHour -= 24;
     if (++dt.day > daysInMonth(dt.year, dt.month)) {
       dt.day = 1;
       if (++dt.month > 12) {
@@ -64,7 +68,9 @@ uint32_t vietnamDateKey(Rtc::DateTime dt) {
       }
     }
   }
-  return static_cast<uint32_t>(dt.year) * 10000U + static_cast<uint32_t>(dt.month) * 100U + dt.day;
+  dateKey = static_cast<uint32_t>(dt.year) * 10000U + static_cast<uint32_t>(dt.month) * 100U + dt.day;
+  minuteOfDay = static_cast<uint16_t>(localHour) * 60U + dt.minute;
+  return true;
 }
 
 bool isSha256Hex(const std::string& value) {
@@ -75,6 +81,24 @@ bool isSha256Hex(const std::string& value) {
   return true;
 }
 
+uint32_t parseIsoDateKey(const std::string& value) {
+  if (value.size() != 10 || value[4] != '-' || value[7] != '-') return 0;
+  uint32_t parts[3] = {};
+  const uint8_t starts[] = {0, 5, 8};
+  const uint8_t lengths[] = {4, 2, 2};
+  for (uint8_t part = 0; part < 3; ++part) {
+    for (uint8_t i = 0; i < lengths[part]; ++i) {
+      const char ch = value[starts[part] + i];
+      if (ch < '0' || ch > '9') return 0;
+      parts[part] = parts[part] * 10U + static_cast<uint32_t>(ch - '0');
+    }
+  }
+  if (parts[0] < 2024 || parts[1] < 1 || parts[1] > 12 || parts[2] < 1 || parts[2] > daysInMonth(parts[0], parts[1])) {
+    return 0;
+  }
+  return parts[0] * 10000U + parts[1] * 100U + parts[2];
+}
+
 std::string formatDateKey(const uint32_t dateKey) {
   if (dateKey == 0) return "--/--/----";
   char value[11];
@@ -82,11 +106,24 @@ std::string formatDateKey(const uint32_t dateKey) {
            static_cast<unsigned long>((dateKey / 100) % 100), static_cast<unsigned long>(dateKey / 10000));
   return value;
 }
+
+std::string formatDateTime(const uint32_t dateKey, const uint16_t minuteOfDay) {
+  if (dateKey == 0) return "--/--/---- --:--";
+  char value[18];
+  if (minuteOfDay < 24U * 60U) {
+    snprintf(value, sizeof(value), "%02lu/%02lu/%04lu %02u:%02u", static_cast<unsigned long>(dateKey % 100),
+             static_cast<unsigned long>((dateKey / 100) % 100), static_cast<unsigned long>(dateKey / 10000),
+             minuteOfDay / 60, minuteOfDay % 60);
+  } else {
+    snprintf(value, sizeof(value), "%02lu/%02lu/%04lu --:--", static_cast<unsigned long>(dateKey % 100),
+             static_cast<unsigned long>((dateKey / 100) % 100), static_cast<unsigned long>(dateKey / 10000));
+  }
+  return value;
+}
 }  // namespace
 
 void VanNhanSoUpdateActivity::onEnter() {
   Activity::onEnter();
-  resumeReaderAfterRestart = APP_STATE.lastSleepFromReader && !APP_STATE.openEpubPath.empty();
 
   if (automatic) {
     startAutomaticUpdate();
@@ -104,12 +141,13 @@ void VanNhanSoUpdateActivity::onExit() {
   if (shouldTearDownWifiOnExit && WiFi.getMode() != WIFI_MODE_NULL) {
     WiFi.disconnect(false);
     delay(30);
-    if (automatic && resumeReaderAfterRestart) {
-      silentRestartToReader();
-    } else {
+    WiFi.mode(WIFI_OFF);
+    if (!automatic) {
       silentRestart();
     }
   }
+
+  if (automatic && sleepAfterUpdate) vanNhanSoUpdateFinishedBeforeSleep();
 }
 
 void VanNhanSoUpdateActivity::beginManualUpdate() {
@@ -145,6 +183,13 @@ void VanNhanSoUpdateActivity::startAutomaticUpdate() {
     return;
   }
 
+  if (isBackoffActive()) {
+    LOG_INF("VNS", "Automatic update delayed by retry backoff");
+    state = SKIPPED;
+    finish();
+    return;
+  }
+
   WIFI_STORE.loadFromFile();
   const std::string lastSsid = WIFI_STORE.getLastConnectedSsid();
   const auto credential = lastSsid.empty() ? std::nullopt : WIFI_STORE.findCredential(lastSsid);
@@ -166,13 +211,12 @@ void VanNhanSoUpdateActivity::startAutomaticUpdate() {
   shouldTearDownWifiOnExit = true;
   connectionStartTime = millis();
   state = AUTO_CONNECTING;
-  requestUpdate();
 }
 
 void VanNhanSoUpdateActivity::checkAutomaticConnection() {
   const wl_status_t status = WiFi.status();
   if (status == WL_CONNECTED) {
-    if (resolveCurrentDate(true) && isCurrentCache()) {
+    if (resolveCurrentDate(false) && isCurrentCache()) {
       LOG_INF("VNS", "Sleep screen already current for %lu", static_cast<unsigned long>(currentDateKey));
       state = SKIPPED;
       finish();
@@ -181,7 +225,6 @@ void VanNhanSoUpdateActivity::checkAutomaticConnection() {
 
     recordAttempt();
     state = DOWNLOADING;
-    requestUpdateAndWait();
     downloadSleepScreen();
     finish();
     return;
@@ -271,14 +314,36 @@ bool VanNhanSoUpdateActivity::resolveCurrentDate(const bool allowNetworkSync) {
     }
   }
 
-  currentDateKey = haveDate ? vietnamDateKey(dateTime) : 0;
-  return currentDateKey != 0;
+  currentDateKey = 0;
+  currentMinute = UINT16_MAX;
+  return haveDate && vietnamDateTime(dateTime, currentDateKey, currentMinute);
 }
 
 bool VanNhanSoUpdateActivity::isCurrentCache() const {
   if (currentDateKey == 0 || !Storage.exists(CACHE_PATH)) return false;
   uint32_t storedDateKey = 0;
   return readDateMarker(storedDateKey) && storedDateKey == currentDateKey;
+}
+
+bool VanNhanSoUpdateActivity::isBackoffActive() const {
+  if (APP_STATE.vanNhanSoUpdateResult != CrossPointState::VanNhanSoUpdateResult::FAILED ||
+      APP_STATE.vanNhanSoConsecutiveFailures == 0) {
+    return false;
+  }
+  // Without a trustworthy clock there is no safe way to measure elapsed
+  // backoff across deep-sleep resets. Suppress repeated automatic association
+  // attempts; a manual update still bypasses this gate and records server date.
+  if (currentDateKey == 0) return true;
+  if (APP_STATE.vanNhanSoLastAttemptDate != currentDateKey) return false;
+  if (currentMinute >= 24U * 60U || APP_STATE.vanNhanSoLastAttemptMinute >= 24U * 60U ||
+      currentMinute < APP_STATE.vanNhanSoLastAttemptMinute) {
+    return false;
+  }
+
+  static constexpr uint16_t RETRY_DELAYS_MINUTES[] = {5, 15, 60, 180};
+  const uint8_t delayIndex =
+      std::min<uint8_t>(APP_STATE.vanNhanSoConsecutiveFailures - 1, std::size(RETRY_DELAYS_MINUTES) - 1);
+  return currentMinute - APP_STATE.vanNhanSoLastAttemptMinute < RETRY_DELAYS_MINUTES[delayIndex];
 }
 
 bool VanNhanSoUpdateActivity::readDateMarker(uint32_t& dateKey) const {
@@ -357,7 +422,7 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
   }
 
   state = VERIFYING;
-  requestUpdateAndWait();
+  if (!automatic) requestUpdateAndWait();
   if (!isSha256Hex(responseInfo.sha256)) {
     LOG_ERR("VNS", "Missing or invalid X-Content-SHA256 response header");
     Storage.remove(TEMP_PATH);
@@ -375,8 +440,19 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
     return;
   }
 
+  const uint32_t responseDateKey = parseIsoDateKey(responseInfo.calendarDate);
+  if (responseDateKey == 0) {
+    LOG_ERR("VNS", "Missing or invalid X-Calendar-Date response header");
+    Storage.remove(TEMP_PATH);
+    fail(CrossPointState::VanNhanSoUpdateError::METADATA);
+    return;
+  }
+  // The response header is authoritative for /today.bmp. It also lets X4
+  // persist the data date after a full power loss, without waiting for NTP.
+  currentDateKey = responseDateKey;
+
   state = INSTALLING;
-  requestUpdateAndWait();
+  if (!automatic) requestUpdateAndWait();
   if (!installDownloadedFile()) {
     Storage.remove(TEMP_PATH);
     fail(CrossPointState::VanNhanSoUpdateError::INSTALL);
@@ -396,6 +472,7 @@ void VanNhanSoUpdateActivity::recordAttempt() {
   APP_STATE.vanNhanSoUpdateResult = CrossPointState::VanNhanSoUpdateResult::IN_PROGRESS;
   APP_STATE.vanNhanSoUpdateError = CrossPointState::VanNhanSoUpdateError::NONE;
   APP_STATE.vanNhanSoLastAttemptDate = currentDateKey;
+  APP_STATE.vanNhanSoLastAttemptMinute = currentMinute;
   APP_STATE.saveToFile();
 }
 
@@ -404,6 +481,9 @@ void VanNhanSoUpdateActivity::recordSuccess() {
   APP_STATE.vanNhanSoUpdateError = CrossPointState::VanNhanSoUpdateError::NONE;
   APP_STATE.vanNhanSoLastAttemptDate = currentDateKey;
   APP_STATE.vanNhanSoLastSuccessDate = currentDateKey;
+  APP_STATE.vanNhanSoLastAttemptMinute = currentMinute;
+  APP_STATE.vanNhanSoLastSuccessMinute = currentMinute;
+  APP_STATE.vanNhanSoConsecutiveFailures = 0;
   APP_STATE.saveToFile();
 }
 
@@ -411,6 +491,8 @@ void VanNhanSoUpdateActivity::fail(const CrossPointState::VanNhanSoUpdateError e
   APP_STATE.vanNhanSoUpdateResult = CrossPointState::VanNhanSoUpdateResult::FAILED;
   APP_STATE.vanNhanSoUpdateError = error;
   APP_STATE.vanNhanSoLastAttemptDate = currentDateKey;
+  APP_STATE.vanNhanSoLastAttemptMinute = currentMinute;
+  APP_STATE.vanNhanSoConsecutiveFailures = std::min<uint8_t>(APP_STATE.vanNhanSoConsecutiveFailures + 1, 4);
   APP_STATE.saveToFile();
   state = FAILED;
   requestUpdate();
@@ -519,6 +601,8 @@ const char* VanNhanSoUpdateActivity::errorText(const CrossPointState::VanNhanSoU
       return tr(STR_VANNHANSO_ERROR_INVALID_IMAGE);
     case CrossPointState::VanNhanSoUpdateError::INSTALL:
       return tr(STR_VANNHANSO_ERROR_INSTALL);
+    case CrossPointState::VanNhanSoUpdateError::METADATA:
+      return tr(STR_VANNHANSO_ERROR_METADATA);
     case CrossPointState::VanNhanSoUpdateError::NONE:
     default:
       return "";
@@ -526,6 +610,10 @@ const char* VanNhanSoUpdateActivity::errorText(const CrossPointState::VanNhanSoU
 }
 
 void VanNhanSoUpdateActivity::render(RenderLock&&) {
+  // Automatic updates intentionally leave the already-rendered reader/home
+  // frame untouched. Any user input cancels the short automatic attempt.
+  if (automatic) return;
+
   const auto& metrics = UITheme::getInstance().getMetrics();
   const auto pageWidth = renderer.getScreenWidth();
   const auto pageHeight = renderer.getScreenHeight();
@@ -538,6 +626,15 @@ void VanNhanSoUpdateActivity::render(RenderLock&&) {
   const std::string cachedDate = formatDateKey(cachedDateKey);
   char currentText[80];
   snprintf(currentText, sizeof(currentText), tr(STR_VANNHANSO_CURRENT_DATA), cachedDate.c_str());
+
+  const std::string lastAttempt =
+      formatDateTime(APP_STATE.vanNhanSoLastAttemptDate, APP_STATE.vanNhanSoLastAttemptMinute);
+  const std::string lastSuccess =
+      formatDateTime(APP_STATE.vanNhanSoLastSuccessDate, APP_STATE.vanNhanSoLastSuccessMinute);
+  char attemptText[80];
+  char successText[80];
+  snprintf(attemptText, sizeof(attemptText), tr(STR_VANNHANSO_LAST_ATTEMPT), lastAttempt.c_str());
+  snprintf(successText, sizeof(successText), tr(STR_VANNHANSO_LAST_SUCCESS), lastSuccess.c_str());
 
   if (state == WIFI_SELECTION || state == AUTO_CONNECTING) {
     renderer.drawCenteredText(UI_10_FONT_ID, midY, tr(STR_CONNECTING));
@@ -560,16 +657,20 @@ void VanNhanSoUpdateActivity::render(RenderLock&&) {
     renderer.drawCenteredText(UI_10_FONT_ID, midY + 5, errorText(APP_STATE.vanNhanSoUpdateError));
     renderer.drawCenteredText(UI_10_FONT_ID, midY + 40, currentText);
   } else {
-    renderer.drawCenteredText(UI_12_FONT_ID, midY - 40, tr(STR_VANNHANSO_UPDATE_STATUS), true, EpdFontFamily::BOLD);
-    renderer.drawCenteredText(UI_10_FONT_ID, midY, currentText);
+    renderer.drawCenteredText(UI_12_FONT_ID, midY - 82, tr(STR_VANNHANSO_UPDATE_STATUS), true, EpdFontFamily::BOLD);
+    renderer.drawCenteredText(UI_10_FONT_ID, midY - 42, currentText);
+    renderer.drawCenteredText(UI_10_FONT_ID, midY - 8, attemptText);
+    renderer.drawCenteredText(UI_10_FONT_ID, midY + 26, successText);
     if (APP_STATE.vanNhanSoUpdateResult == CrossPointState::VanNhanSoUpdateResult::FAILED) {
-      renderer.drawCenteredText(UI_10_FONT_ID, midY + 38, errorText(APP_STATE.vanNhanSoUpdateError));
+      renderer.drawCenteredText(UI_10_FONT_ID, midY + 60, tr(STR_VANNHANSO_LAST_RESULT_FAILED));
+    } else if (APP_STATE.vanNhanSoUpdateResult == CrossPointState::VanNhanSoUpdateResult::SUCCESS) {
+      renderer.drawCenteredText(UI_10_FONT_ID, midY + 60, tr(STR_VANNHANSO_LAST_RESULT_OK));
     } else if (cachedDateKey != 0 && cachedDateKey == currentDateKey) {
-      renderer.drawCenteredText(UI_10_FONT_ID, midY + 38, tr(STR_VANNHANSO_CACHE_CURRENT));
+      renderer.drawCenteredText(UI_10_FONT_ID, midY + 60, tr(STR_VANNHANSO_CACHE_CURRENT));
     } else if (cachedDateKey != 0) {
-      renderer.drawCenteredText(UI_10_FONT_ID, midY + 38, tr(STR_VANNHANSO_CACHE_OLD));
+      renderer.drawCenteredText(UI_10_FONT_ID, midY + 60, tr(STR_VANNHANSO_CACHE_OLD));
     } else {
-      renderer.drawCenteredText(UI_10_FONT_ID, midY + 38, tr(STR_VANNHANSO_CACHE_EMPTY));
+      renderer.drawCenteredText(UI_10_FONT_ID, midY + 60, tr(STR_VANNHANSO_CACHE_EMPTY));
     }
   }
 

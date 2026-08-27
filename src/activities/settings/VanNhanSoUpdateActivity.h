@@ -6,8 +6,9 @@
 
 class VanNhanSoUpdateActivity final : public Activity {
  public:
-  explicit VanNhanSoUpdateActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool automatic = false)
-      : Activity("VanNhanSoUpdate", renderer, mappedInput), automatic(automatic) {}
+  explicit VanNhanSoUpdateActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool automatic = false,
+                                   bool sleepAfterUpdate = false)
+      : Activity("VanNhanSoUpdate", renderer, mappedInput), automatic(automatic), sleepAfterUpdate(sleepAfterUpdate) {}
 
   void onEnter() override;
   void onExit() override;
@@ -21,16 +22,17 @@ class VanNhanSoUpdateActivity final : public Activity {
 
   State state = STATUS;
   const bool automatic;
+  const bool sleepAfterUpdate;
   bool shouldTearDownWifiOnExit = false;
-  bool resumeReaderAfterRestart = false;
   bool cancelDownload = false;
   unsigned long connectionStartTime = 0;
   uint32_t currentDateKey = 0;
+  uint16_t currentMinute = UINT16_MAX;
   size_t downloadedBytes = 0;
   size_t totalBytes = 0;
 
-  static constexpr unsigned long AUTO_CONNECTION_TIMEOUT_MS = 10000;
-  static constexpr uint32_t DOWNLOAD_TIMEOUT_MS = 15000;
+  static constexpr unsigned long AUTO_CONNECTION_TIMEOUT_MS = 3000;
+  static constexpr uint32_t DOWNLOAD_TIMEOUT_MS = 5000;
 
   void onWifiSelectionComplete(bool connected);
   void beginManualUpdate();
@@ -38,6 +40,7 @@ class VanNhanSoUpdateActivity final : public Activity {
   void checkAutomaticConnection();
   bool resolveCurrentDate(bool allowNetworkSync);
   bool isCurrentCache() const;
+  bool isBackoffActive() const;
   bool readDateMarker(uint32_t& dateKey) const;
   bool writeDateMarker(uint32_t dateKey) const;
   void downloadSleepScreen();

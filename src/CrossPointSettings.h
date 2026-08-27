@@ -172,8 +172,17 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     QUICK_RESUME_SLEEP_SCREEN_COUNT
   };
 
+  enum VANNHANSO_UPDATE_MODE {
+    VANNHANSO_UPDATE_FIRST_BOOT = 0,
+    VANNHANSO_UPDATE_ON_SLEEP = 1,
+    VANNHANSO_UPDATE_MANUAL = 2,
+    VANNHANSO_UPDATE_MODE_COUNT
+  };
+
   // Sleep screen settings
   uint8_t sleepScreen = DARK;
+  // When Văn Nhân Số may contact the server for a new daily sleep screen.
+  uint8_t vanNhanSoUpdateMode = VANNHANSO_UPDATE_FIRST_BOOT;
   // Sleep screen cover mode settings
   uint8_t sleepScreenCoverMode = FIT;
   // Sleep screen cover filter

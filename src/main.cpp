@@ -27,6 +27,7 @@
 #include "OpdsServerStore.h"
 #include "RecentBooksStore.h"
 #include "SdCardFontSystem.h"
+#include "VanNhanSoUpdateHooks.h"
 #include "activities/Activity.h"
 #include "activities/ActivityManager.h"
 #include "activities/settings/SdFirmwareUpdateActivity.h"
@@ -138,6 +139,20 @@ enum class BootResume : uint8_t {
 // startDeepSleep() does not return, so a set latch only ends at the wakeup reset.
 static bool deepSleepInProgress = false;
 
+#if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3
+// An on-sleep Văn Nhân Số update is performed as a short Activity before the
+// irreversible deep-sleep transition. These flags move the continuation out
+// of ActivityManager::onExit(), where replacing the current Activity is unsafe.
+static bool vanNhanSoSleepUpdateInProgress = false;
+static bool vanNhanSoSleepUpdateFinished = false;
+static bool vanNhanSoSleepFromTimeout = false;
+static bool skipVanNhanSoSleepUpdateOnce = false;
+
+void vanNhanSoUpdateFinishedBeforeSleep() { vanNhanSoSleepUpdateFinished = true; }
+#else
+void vanNhanSoUpdateFinishedBeforeSleep() {}
+#endif
+
 void silentRestart() {
   if (deepSleepInProgress) return;  // sleeping supersedes the heap-defrag reboot
   silentRebootTarget = SILENT_REBOOT_TARGET_HOME;
@@ -195,6 +210,25 @@ static bool loadSleepFrameBuffer() {
 
 // Enter deep sleep mode
 void enterDeepSleep(bool fromTimeout = false) {
+#if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3
+  if (vanNhanSoSleepUpdateInProgress) return;
+
+  const bool shouldUpdateBeforeSleep =
+      !skipVanNhanSoSleepUpdateOnce && SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::VANNHANSO &&
+      SETTINGS.vanNhanSoUpdateMode == CrossPointSettings::VANNHANSO_UPDATE_MODE::VANNHANSO_UPDATE_ON_SLEEP;
+  skipVanNhanSoSleepUpdateOnce = false;
+  if (shouldUpdateBeforeSleep) {
+    auto updateActivity = makeUniqueNoThrow<VanNhanSoUpdateActivity>(renderer, mappedInputManager, true, true);
+    if (updateActivity) {
+      vanNhanSoSleepUpdateInProgress = true;
+      vanNhanSoSleepFromTimeout = fromTimeout;
+      activityManager.pushActivity(std::move(updateActivity));
+      return;
+    }
+    LOG_ERR("VNS", "OOM: update-before-sleep activity; sleeping with cached image");
+  }
+#endif
+
   HalPowerManager::Lock powerLock;  // Ensure we are at normal CPU frequency for sleep preparation
   APP_STATE.lastSleepFromReader = activityManager.isReaderActivity();
 
@@ -437,10 +471,17 @@ void setup() {
   }
 
 #if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3
-  const bool shouldAutoUpdateVanNhanSo = !isSilentReboot && !recoveryFirmwareMode && !HalSystem::isRebootFromPanic() &&
-                                         wakeupReason == HalGPIO::WakeupReason::PowerButton &&
-                                         SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::VANNHANSO;
+  const bool shouldAutoUpdateVanNhanSo =
+      !isSilentReboot && !recoveryFirmwareMode && !HalSystem::isRebootFromPanic() &&
+      wakeupReason == HalGPIO::WakeupReason::PowerButton &&
+      SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::VANNHANSO &&
+      SETTINGS.vanNhanSoUpdateMode == CrossPointSettings::VANNHANSO_UPDATE_MODE::VANNHANSO_UPDATE_FIRST_BOOT;
   if (shouldAutoUpdateVanNhanSo) {
+    // Commit the destination screen before the invisible updater is pushed.
+    // This lets the user see the reader/home immediately; any input cancels
+    // the short update attempt instead of waiting for it to finish.
+    activityManager.loop();
+    activityManager.requestUpdateAndWait();
     auto updateActivity = makeUniqueNoThrow<VanNhanSoUpdateActivity>(renderer, mappedInputManager, true);
     if (updateActivity) {
       activityManager.pushActivity(std::move(updateActivity));
@@ -539,14 +580,22 @@ void loop() {
   }
 
   const unsigned long sleepTimeoutMs = SETTINGS.getSleepTimeoutMs();
-  if (sleepTimeoutMs > 0 && millis() - lastActivityTime >= sleepTimeoutMs) {
+  if (
+#if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3
+      !vanNhanSoSleepUpdateInProgress &&
+#endif
+      sleepTimeoutMs > 0 && millis() - lastActivityTime >= sleepTimeoutMs) {
     LOG_DBG("SLP", "Auto-sleep triggered after %lu ms of inactivity", sleepTimeoutMs);
     enterDeepSleep(true);
     // This should never be hit as `enterDeepSleep` calls esp_deep_sleep_start
     return;
   }
 
-  if (millis() >= allowSleepAt && gpio.isPressed(HalGPIO::BTN_POWER) &&
+  if (
+#if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3
+      !vanNhanSoSleepUpdateInProgress &&
+#endif
+      millis() >= allowSleepAt && gpio.isPressed(HalGPIO::BTN_POWER) &&
       gpio.getPowerButtonHeldTime() > SETTINGS.getPowerButtonDuration()) {
     // If the screenshot combination is potentially being pressed, don't sleep
     if (gpio.isPressed(HalGPIO::BTN_DOWN)) {
@@ -576,6 +625,16 @@ void loop() {
   const unsigned long activityStartTime = millis();
   activityManager.loop();
   const unsigned long activityDuration = millis() - activityStartTime;
+
+#if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3
+  if (vanNhanSoSleepUpdateFinished) {
+    vanNhanSoSleepUpdateFinished = false;
+    vanNhanSoSleepUpdateInProgress = false;
+    skipVanNhanSoSleepUpdateOnce = true;
+    enterDeepSleep(vanNhanSoSleepFromTimeout);
+    return;
+  }
+#endif
 
   const unsigned long loopDuration = millis() - loopStartTime;
   if (loopDuration > maxLoopDuration) {

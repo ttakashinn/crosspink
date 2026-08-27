@@ -102,6 +102,7 @@ HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std:
     if (sink.responseInfo) {
       sink.responseInfo->contentLength = sink.total;
       sink.responseInfo->sha256 = http.getHeader("x-content-sha256");
+      sink.responseInfo->calendarDate = http.getHeader("x-calendar-date");
     }
     if (http.callbackAborted()) return HttpDownloader::FILE_ERROR;
     if (!http.responseComplete()) {
@@ -186,6 +187,10 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
     char* sha256Header = nullptr;
     if (esp_http_client_get_header(client, "X-Content-SHA256", &sha256Header) == ESP_OK && sha256Header) {
       sink.responseInfo->sha256 = sha256Header;
+    }
+    char* calendarDateHeader = nullptr;
+    if (esp_http_client_get_header(client, "X-Calendar-Date", &calendarDateHeader) == ESP_OK && calendarDateHeader) {
+      sink.responseInfo->calendarDate = calendarDateHeader;
     }
   }
 

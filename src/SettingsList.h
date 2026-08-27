@@ -212,6 +212,10 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
         // --- Display ---
         SettingInfo::Enum(StrId::STR_SLEEP_SCREEN, &CrossPointSettings::sleepScreen, std::move(sleepScreenValues),
                           "sleepScreen", StrId::STR_CAT_DISPLAY),
+        SettingInfo::Enum(StrId::STR_VANNHANSO_UPDATE_MODE, &CrossPointSettings::vanNhanSoUpdateMode,
+                          {StrId::STR_VANNHANSO_UPDATE_FIRST_BOOT, StrId::STR_VANNHANSO_UPDATE_ON_SLEEP,
+                           StrId::STR_VANNHANSO_UPDATE_MANUAL},
+                          "vanNhanSoUpdateMode", StrId::STR_CAT_DISPLAY),
         SettingInfo::Enum(StrId::STR_SLEEP_COVER_MODE, &CrossPointSettings::sleepScreenCoverMode,
                           {StrId::STR_FIT, StrId::STR_CROP}, "sleepScreenCoverMode", StrId::STR_CAT_DISPLAY),
         SettingInfo::Enum(StrId::STR_SLEEP_COVER_FILTER, &CrossPointSettings::sleepScreenCoverFilter,
