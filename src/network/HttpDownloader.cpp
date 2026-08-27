@@ -29,7 +29,7 @@ constexpr int HTTP_TX_BUF = 512;
 // (>15s) and chunked catalogs stall mid-body, so 15s killed them. 60s gives
 // slow servers room. esp_http_client's timeout_ms is uint32, so unlike Arduino
 // HTTPClient's uint16 setTimeout it doesn't silently truncate.
-constexpr int HTTP_TIMEOUT_MS = 60000;
+constexpr uint32_t HTTP_TIMEOUT_MS = 60000;
 constexpr size_t READ_CHUNK = 1024;
 constexpr int MAX_REDIRECTS = 5;
 
@@ -39,6 +39,8 @@ struct Sink {
   bool* cancelFlag = nullptr;
   size_t total = 0;
   size_t downloaded = 0;
+  HttpDownloader::ResponseInfo* responseInfo = nullptr;
+  uint32_t timeoutMs = HTTP_TIMEOUT_MS;
 };
 
 bool isRedirect(int status) {
@@ -52,7 +54,7 @@ HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std:
 
   for (int hop = 0; hop <= MAX_REDIRECTS; ++hop) {
     freeink::SecureHttpClient http;
-    http.setTimeout(HTTP_TIMEOUT_MS);
+    http.setTimeout(sink.timeoutMs);
     http.setInsecure();
     if (!http.begin(url)) {
       LOG_ERR("HTTP", "wolfSSL bad URL: %s", url.c_str());
@@ -97,6 +99,10 @@ HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std:
       LOG_ERR("HTTP", "wolfSSL unexpected status: %d", status);
       return HttpDownloader::HTTP_ERROR;
     }
+    if (sink.responseInfo) {
+      sink.responseInfo->contentLength = sink.total;
+      sink.responseInfo->sha256 = http.getHeader("x-content-sha256");
+    }
     if (http.callbackAborted()) return HttpDownloader::FILE_ERROR;
     if (!http.responseComplete()) {
       LOG_ERR("HTTP", "wolfSSL incomplete: got %zu of %zu bytes", sink.downloaded, sink.total);
@@ -121,7 +127,7 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
   config.url = url.c_str();
   config.buffer_size = HTTP_RX_BUF;
   config.buffer_size_tx = HTTP_TX_BUF;
-  config.timeout_ms = HTTP_TIMEOUT_MS;
+  config.timeout_ms = sink.timeoutMs;
   // Verify HTTPS against the bundled CA roots. This build has esp-tls
   // CONFIG_ESP_TLS_INSECURE off, so an unverified TLS handshake can't be set
   // up at all; the model is public servers over verified https and local
@@ -173,6 +179,14 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
     LOG_ERR("HTTP", "unexpected status: %d", status);
     esp_http_client_cleanup(client);
     return HttpDownloader::HTTP_ERROR;
+  }
+
+  if (sink.responseInfo) {
+    sink.responseInfo->contentLength = contentLength > 0 ? static_cast<size_t>(contentLength) : 0;
+    char* sha256Header = nullptr;
+    if (esp_http_client_get_header(client, "X-Content-SHA256", &sha256Header) == ESP_OK && sha256Header) {
+      sink.responseInfo->sha256 = sha256Header;
+    }
   }
 
   // fetch_headers returns 0 for a chunked response (no Content-Length); leave
@@ -260,7 +274,8 @@ bool HttpDownloader::fetchUrl(const std::string& url, const DataCallback& onData
 
 HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& url, const std::string& destPath,
                                                              ProgressCallback progress, bool* cancelFlag,
-                                                             const std::string& username, const std::string& password) {
+                                                             const std::string& username, const std::string& password,
+                                                             ResponseInfo* responseInfo, const uint32_t timeoutMs) {
   LOG_DBG("HTTP", "Downloading: %s -> %s", url.c_str(), destPath.c_str());
 
   if (Storage.exists(destPath.c_str())) {
@@ -275,6 +290,9 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
   Sink sink;
   sink.progress = std::move(progress);
   sink.cancelFlag = cancelFlag;
+  sink.responseInfo = responseInfo;
+  sink.timeoutMs = timeoutMs > 0 ? timeoutMs : HTTP_TIMEOUT_MS;
+  if (responseInfo) *responseInfo = {};
   sink.write = [&file](const uint8_t* data, size_t len) { return file.write(data, len) == len; };
 
   const DownloadError result = runGetSecure(url, username, password, sink);

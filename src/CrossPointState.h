@@ -13,6 +13,18 @@ class CrossPointState : public PersistableStore<CrossPointState> {
  public:
   static constexpr uint8_t SLEEP_RECENT_COUNT = 16;
 
+  enum class VanNhanSoUpdateResult : uint8_t { NEVER = 0, IN_PROGRESS = 1, SUCCESS = 2, FAILED = 3 };
+  enum class VanNhanSoUpdateError : uint8_t {
+    NONE = 0,
+    NO_WIFI = 1,
+    WIFI_TIMEOUT = 2,
+    DOWNLOAD = 3,
+    CHECKSUM_MISSING = 4,
+    CHECKSUM_MISMATCH = 5,
+    INVALID_IMAGE = 6,
+    INSTALL = 7,
+  };
+
   std::string openEpubPath;
   uint16_t recentSleepImages[SLEEP_RECENT_COUNT] = {};  // circular buffer of recent wallpaper indices
   uint8_t recentSleepPos = 0;                           // next write slot
@@ -20,6 +32,10 @@ class CrossPointState : public PersistableStore<CrossPointState> {
   uint8_t readerActivityLoadCount = 0;
   bool lastSleepFromReader = false;
   bool showBootScreen = true;
+  VanNhanSoUpdateResult vanNhanSoUpdateResult = VanNhanSoUpdateResult::NEVER;
+  VanNhanSoUpdateError vanNhanSoUpdateError = VanNhanSoUpdateError::NONE;
+  uint32_t vanNhanSoLastAttemptDate = 0;
+  uint32_t vanNhanSoLastSuccessDate = 0;
 
   static const char* getFilePath() { return "/.crosspoint/state.json"; }
   void toJson(JsonDocument& doc) const;

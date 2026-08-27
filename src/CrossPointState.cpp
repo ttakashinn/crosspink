@@ -29,6 +29,10 @@ void CrossPointState::toJson(JsonDocument& doc) const {
   doc["readerActivityLoadCount"] = readerActivityLoadCount;
   doc["lastSleepFromReader"] = lastSleepFromReader;
   doc["showBootScreen"] = showBootScreen;
+  doc["vanNhanSoUpdateResult"] = static_cast<uint8_t>(vanNhanSoUpdateResult);
+  doc["vanNhanSoUpdateError"] = static_cast<uint8_t>(vanNhanSoUpdateError);
+  doc["vanNhanSoLastAttemptDate"] = vanNhanSoLastAttemptDate;
+  doc["vanNhanSoLastSuccessDate"] = vanNhanSoLastSuccessDate;
 }
 
 bool CrossPointState::fromJson(JsonVariantConst doc) {
@@ -51,5 +55,15 @@ bool CrossPointState::fromJson(JsonVariantConst doc) {
   readerActivityLoadCount = doc["readerActivityLoadCount"] | static_cast<uint8_t>(0);
   lastSleepFromReader = doc["lastSleepFromReader"] | false;
   showBootScreen = doc["showBootScreen"] | true;
+  const uint8_t updateResult = doc["vanNhanSoUpdateResult"] | static_cast<uint8_t>(VanNhanSoUpdateResult::NEVER);
+  vanNhanSoUpdateResult = updateResult <= static_cast<uint8_t>(VanNhanSoUpdateResult::FAILED)
+                              ? static_cast<VanNhanSoUpdateResult>(updateResult)
+                              : VanNhanSoUpdateResult::NEVER;
+  const uint8_t updateError = doc["vanNhanSoUpdateError"] | static_cast<uint8_t>(VanNhanSoUpdateError::NONE);
+  vanNhanSoUpdateError = updateError <= static_cast<uint8_t>(VanNhanSoUpdateError::INSTALL)
+                             ? static_cast<VanNhanSoUpdateError>(updateError)
+                             : VanNhanSoUpdateError::NONE;
+  vanNhanSoLastAttemptDate = doc["vanNhanSoLastAttemptDate"] | static_cast<uint32_t>(0);
+  vanNhanSoLastSuccessDate = doc["vanNhanSoLastSuccessDate"] | static_cast<uint32_t>(0);
   return true;
 }

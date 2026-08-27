@@ -23,6 +23,11 @@ class HttpDownloader {
     ABORTED,
   };
 
+  struct ResponseInfo {
+    size_t contentLength = 0;
+    std::string sha256;
+  };
+
   /**
    * Fetch text content from a URL with optional credentials.
    */
@@ -43,5 +48,6 @@ class HttpDownloader {
    */
   static DownloadError downloadToFile(const std::string& url, const std::string& destPath,
                                       ProgressCallback progress = nullptr, bool* cancelFlag = nullptr,
-                                      const std::string& username = "", const std::string& password = "");
+                                      const std::string& username = "", const std::string& password = "",
+                                      ResponseInfo* responseInfo = nullptr, uint32_t timeoutMs = 60000);
 };
