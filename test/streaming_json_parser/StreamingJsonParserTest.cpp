@@ -367,6 +367,42 @@ TEST(StreamingJsonParser, TruncatedInputNoCrash) {
   SUCCEED();
 }
 
+TEST(StreamingJsonParser, CompletenessRejectsEmptyTruncatedAndTrailingData) {
+  TestContext ctx;
+  StreamingJsonParser parser(makeCallbacks(&ctx));
+
+  EXPECT_FALSE(parser.isComplete());
+  const char* truncated = R"({"key":"value")";
+  parser.feed(truncated, strlen(truncated));
+  EXPECT_FALSE(parser.isComplete());
+
+  parser.reset();
+  const char* valid = "{\"key\":\"value\"}\n\t";
+  parser.feed(valid, strlen(valid));
+  EXPECT_TRUE(parser.isComplete());
+
+  const char* garbage = "x";
+  parser.feed(garbage, strlen(garbage));
+  EXPECT_TRUE(parser.hasError());
+  EXPECT_FALSE(parser.isComplete());
+}
+
+TEST(StreamingJsonParser, CompletenessRejectsMismatchedAndExtraClosers) {
+  TestContext ctx;
+  StreamingJsonParser parser(makeCallbacks(&ctx));
+
+  const char* mismatched = "{]";
+  parser.feed(mismatched, strlen(mismatched));
+  EXPECT_TRUE(parser.hasError());
+  EXPECT_FALSE(parser.isComplete());
+
+  parser.reset();
+  const char* extraCloser = "{}}";
+  parser.feed(extraCloser, strlen(extraCloser));
+  EXPECT_TRUE(parser.hasError());
+  EXPECT_FALSE(parser.isComplete());
+}
+
 TEST(StreamingJsonParser, AllEscapeSequences) {
   auto events = parse(R"({"e": "\b\f\n\r\t\"\\\/"})");
   ASSERT_EQ(events.size(), 4u);

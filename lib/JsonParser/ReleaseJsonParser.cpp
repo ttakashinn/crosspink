@@ -27,9 +27,11 @@ void ReleaseJsonParser::reset() {
   assetDepth = 0;
   tagName[0] = '\0';
   firmwareUrl[0] = '\0';
+  checksumUrl[0] = '\0';
   firmwareSize = 0;
   tagFound = false;
   firmwareFound = false;
+  checksumFound = false;
   currentAssetName[0] = '\0';
   currentAssetUrl[0] = '\0';
   currentAssetSize = 0;
@@ -39,8 +41,13 @@ void ReleaseJsonParser::feed(const char* data, size_t len) { parser.feed(data, l
 
 bool ReleaseJsonParser::foundTag() const { return tagFound; }
 bool ReleaseJsonParser::foundFirmware() const { return firmwareFound; }
+bool ReleaseJsonParser::foundChecksum() const { return checksumFound; }
+bool ReleaseJsonParser::isComplete() const {
+  return parser.isComplete() && position == Position::TOP_LEVEL && depth == 0;
+}
 const char* ReleaseJsonParser::getTagName() const { return tagName; }
 const char* ReleaseJsonParser::getFirmwareUrl() const { return firmwareUrl; }
+const char* ReleaseJsonParser::getChecksumUrl() const { return checksumUrl; }
 size_t ReleaseJsonParser::getFirmwareSize() const { return firmwareSize; }
 
 void ReleaseJsonParser::commitAsset() {
@@ -48,6 +55,9 @@ void ReleaseJsonParser::commitAsset() {
     memcpy(firmwareUrl, currentAssetUrl, sizeof(firmwareUrl));
     firmwareSize = currentAssetSize;
     firmwareFound = true;
+  } else if (strcmp(currentAssetName, "firmware.bin.sha256") == 0) {
+    memcpy(checksumUrl, currentAssetUrl, sizeof(checksumUrl));
+    checksumFound = true;
   }
   currentAssetName[0] = '\0';
   currentAssetUrl[0] = '\0';

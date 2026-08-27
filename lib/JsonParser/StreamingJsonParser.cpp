@@ -11,6 +11,8 @@ void StreamingJsonParser::reset() {
   escaped = false;
   tokenOverflow = false;
   error = false;
+  rootStarted = false;
+  rootComplete = false;
   nestingDepth = 0;
   literalLen = 0;
   literalPos = 0;
@@ -40,7 +42,19 @@ void StreamingJsonParser::feed(const char* data, size_t len) {
   }
 }
 
+bool StreamingJsonParser::isComplete() const {
+  return !error && rootStarted && rootComplete && state == State::SCANNING && nestingDepth == 0 && !expectingValue;
+}
+
 void StreamingJsonParser::handleScanning(char c) {
+  if (rootComplete) {
+    // A JSON document may only contain whitespace after its root value. This
+    // prevents a valid release object followed by a second object or trailing
+    // garbage from being accepted as a complete OTA response.
+    if (c != ' ' && c != '\t' && c != '\r' && c != '\n') error = true;
+    return;
+  }
+
   switch (c) {
     case '"':
       tokenLen = 0;
@@ -52,6 +66,13 @@ void StreamingJsonParser::handleScanning(char c) {
       }
       break;
     case '{':
+      if (nestingDepth == 0) {
+        if (rootStarted) {
+          error = true;
+          return;
+        }
+        rootStarted = true;
+      }
       if (nestingDepth < MAX_NESTING) {
         nestingStack[nestingDepth++] = Container::OBJECT;
       } else {
@@ -62,11 +83,23 @@ void StreamingJsonParser::handleScanning(char c) {
       expectingValue = false;
       break;
     case '}':
+      if (nestingDepth == 0 || nestingStack[nestingDepth - 1] != Container::OBJECT || expectingValue) {
+        error = true;
+        return;
+      }
       if (cb.onObjectEnd) cb.onObjectEnd(cb.ctx);
-      if (nestingDepth > 0) --nestingDepth;
+      --nestingDepth;
+      if (nestingDepth == 0) rootComplete = true;
       expectingValue = false;
       break;
     case '[':
+      if (nestingDepth == 0) {
+        if (rootStarted) {
+          error = true;
+          return;
+        }
+        rootStarted = true;
+      }
       if (nestingDepth < MAX_NESTING) {
         nestingStack[nestingDepth++] = Container::ARRAY;
       } else {
@@ -77,8 +110,13 @@ void StreamingJsonParser::handleScanning(char c) {
       expectingValue = false;
       break;
     case ']':
+      if (nestingDepth == 0 || nestingStack[nestingDepth - 1] != Container::ARRAY) {
+        error = true;
+        return;
+      }
       if (cb.onArrayEnd) cb.onArrayEnd(cb.ctx);
-      if (nestingDepth > 0) --nestingDepth;
+      --nestingDepth;
+      if (nestingDepth == 0) rootComplete = true;
       expectingValue = false;
       break;
     case ':':

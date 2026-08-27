@@ -3,6 +3,7 @@
 #include <cstring>
 #include <string>
 
+#include "lib/JsonParser/FirmwareReleaseValidation.h"
 #include "lib/JsonParser/ReleaseJsonParser.h"
 
 namespace {
@@ -75,7 +76,7 @@ const char* kRealisticPretty = R"({
       "url": "https://api.github.com/repos/crosspoint-reader/crosspoint-reader/releases/assets/100003",
       "id": 100003,
       "node_id": "RA_kwDOAbCdEf4AAGHR",
-      "name": "checksums.sha256",
+      "name": "firmware.bin.sha256",
       "label": null,
       "uploader": {
         "login": "releasebot",
@@ -89,7 +90,7 @@ const char* kRealisticPretty = R"({
       "download_count": 15,
       "created_at": "2026-04-28T10:17:00Z",
       "updated_at": "2026-04-28T10:17:10Z",
-      "browser_download_url": "https://github.com/crosspoint-reader/crosspoint-reader/releases/download/v2.4.1/checksums.sha256"
+      "browser_download_url": "https://github.com/crosspoint-reader/crosspoint-reader/releases/download/v2.4.1/firmware.bin.sha256"
     }
   ],
   "tarball_url": "https://api.github.com/repos/crosspoint-reader/crosspoint-reader/tarball/v2.4.1",
@@ -110,7 +111,7 @@ const char* kRealisticPretty = R"({
 })";
 
 const char* kRealisticMinified =
-    R"({"url":"https://api.github.com/repos/crosspoint-reader/crosspoint-reader/releases/12345","assets_url":"https://api.github.com/repos/crosspoint-reader/crosspoint-reader/releases/12345/assets","id":12345,"author":{"login":"releasebot","id":99887766,"node_id":"MDQ6VXNlcjk5ODg3NzY2","type":"User","site_admin":false},"tag_name":"v2.4.1","target_commitish":"main","name":"CrossPoint Reader v2.4.1","draft":false,"prerelease":false,"assets":[{"url":"https://api.github.com/repos/crosspoint-reader/crosspoint-reader/releases/assets/100001","id":100001,"name":"crosspoint-reader-v2.4.1-source.zip","uploader":{"login":"releasebot","id":99887766},"content_type":"application/zip","state":"uploaded","size":2048576,"download_count":42,"browser_download_url":"https://github.com/crosspoint-reader/crosspoint-reader/releases/download/v2.4.1/crosspoint-reader-v2.4.1-source.zip"},{"url":"https://api.github.com/repos/crosspoint-reader/crosspoint-reader/releases/assets/100002","id":100002,"name":"firmware.bin","uploader":{"login":"releasebot","id":99887766},"content_type":"application/octet-stream","state":"uploaded","size":1572864,"download_count":187,"browser_download_url":"https://github.com/crosspoint-reader/crosspoint-reader/releases/download/v2.4.1/firmware.bin"},{"url":"https://api.github.com/repos/crosspoint-reader/crosspoint-reader/releases/assets/100003","id":100003,"name":"checksums.sha256","uploader":{"login":"releasebot","id":99887766},"content_type":"text/plain","state":"uploaded","size":192,"download_count":15,"browser_download_url":"https://github.com/crosspoint-reader/crosspoint-reader/releases/download/v2.4.1/checksums.sha256"}],"body":"## What's Changed\n\n* Fixed orientation crash","reactions":{"url":"https://api.github.com/repos/crosspoint-reader/crosspoint-reader/releases/12345/reactions","total_count":5,"+1":3}})";
+    R"({"url":"https://api.github.com/repos/crosspoint-reader/crosspoint-reader/releases/12345","assets_url":"https://api.github.com/repos/crosspoint-reader/crosspoint-reader/releases/12345/assets","id":12345,"author":{"login":"releasebot","id":99887766,"node_id":"MDQ6VXNlcjk5ODg3NzY2","type":"User","site_admin":false},"tag_name":"v2.4.1","target_commitish":"main","name":"CrossPoint Reader v2.4.1","draft":false,"prerelease":false,"assets":[{"url":"https://api.github.com/repos/crosspoint-reader/crosspoint-reader/releases/assets/100001","id":100001,"name":"crosspoint-reader-v2.4.1-source.zip","uploader":{"login":"releasebot","id":99887766},"content_type":"application/zip","state":"uploaded","size":2048576,"download_count":42,"browser_download_url":"https://github.com/crosspoint-reader/crosspoint-reader/releases/download/v2.4.1/crosspoint-reader-v2.4.1-source.zip"},{"url":"https://api.github.com/repos/crosspoint-reader/crosspoint-reader/releases/assets/100002","id":100002,"name":"firmware.bin","uploader":{"login":"releasebot","id":99887766},"content_type":"application/octet-stream","state":"uploaded","size":1572864,"download_count":187,"browser_download_url":"https://github.com/crosspoint-reader/crosspoint-reader/releases/download/v2.4.1/firmware.bin"},{"url":"https://api.github.com/repos/crosspoint-reader/crosspoint-reader/releases/assets/100003","id":100003,"name":"firmware.bin.sha256","uploader":{"login":"releasebot","id":99887766},"content_type":"text/plain","state":"uploaded","size":79,"download_count":15,"browser_download_url":"https://github.com/crosspoint-reader/crosspoint-reader/releases/download/v2.4.1/firmware.bin.sha256"}],"body":"## What's Changed\n\n* Fixed orientation crash","reactions":{"url":"https://api.github.com/repos/crosspoint-reader/crosspoint-reader/releases/12345/reactions","total_count":5,"+1":3}})";
 
 void feedChunked(ReleaseJsonParser& p, const char* json, size_t chunkSize) {
   size_t len = strlen(json);
@@ -128,10 +129,14 @@ TEST(ReleaseJsonParser, RealisticPrettyPrinted) {
 
   EXPECT_TRUE(p.foundTag());
   EXPECT_TRUE(p.foundFirmware());
+  EXPECT_TRUE(p.foundChecksum());
+  EXPECT_TRUE(p.isComplete());
   EXPECT_STREQ(p.getTagName(), "v2.4.1");
   EXPECT_STREQ(p.getFirmwareUrl(),
                "https://github.com/crosspoint-reader/crosspoint-reader/releases/download/v2.4.1/firmware.bin");
   EXPECT_EQ(p.getFirmwareSize(), 1572864u);
+  EXPECT_STREQ(p.getChecksumUrl(),
+               "https://github.com/crosspoint-reader/crosspoint-reader/releases/download/v2.4.1/firmware.bin.sha256");
 }
 
 TEST(ReleaseJsonParser, RealisticMinified) {
@@ -140,10 +145,13 @@ TEST(ReleaseJsonParser, RealisticMinified) {
 
   EXPECT_TRUE(p.foundTag());
   EXPECT_TRUE(p.foundFirmware());
+  EXPECT_TRUE(p.foundChecksum());
   EXPECT_STREQ(p.getTagName(), "v2.4.1");
   EXPECT_STREQ(p.getFirmwareUrl(),
                "https://github.com/crosspoint-reader/crosspoint-reader/releases/download/v2.4.1/firmware.bin");
   EXPECT_EQ(p.getFirmwareSize(), 1572864u);
+  EXPECT_STREQ(p.getChecksumUrl(),
+               "https://github.com/crosspoint-reader/crosspoint-reader/releases/download/v2.4.1/firmware.bin.sha256");
 }
 
 TEST(ReleaseJsonParser, PrettyAndMinifiedAgree) {
@@ -409,6 +417,18 @@ TEST(ReleaseJsonParser, TruncatedRealisticJson) {
   SUCCEED();
 }
 
+TEST(ReleaseJsonParser, RequiredFieldsDoNotMakeTruncatedJsonComplete) {
+  const char* json =
+      R"({"tag_name":"1.5.0-vns.4","assets":[{"name":"firmware.bin","browser_download_url":"https://example/fw","size":123},{"name":"firmware.bin.sha256","browser_download_url":"https://example/sum","size":79}])";
+  ReleaseJsonParser p;
+  p.feed(json, strlen(json));
+
+  EXPECT_TRUE(p.foundTag());
+  EXPECT_TRUE(p.foundFirmware());
+  EXPECT_TRUE(p.foundChecksum());
+  EXPECT_FALSE(p.isComplete());
+}
+
 TEST(ReleaseJsonParser, NestedObjectsInAsset) {
   // Asset with deeply nested "uploader" object -- should not confuse depth tracking
   const char* json = R"({
@@ -504,9 +524,55 @@ TEST(ReleaseJsonParser, ResetClearsState) {
 
   EXPECT_FALSE(p.foundTag());
   EXPECT_FALSE(p.foundFirmware());
+  EXPECT_FALSE(p.foundChecksum());
   EXPECT_STREQ(p.getTagName(), "");
   EXPECT_STREQ(p.getFirmwareUrl(), "");
+  EXPECT_STREQ(p.getChecksumUrl(), "");
   EXPECT_EQ(p.getFirmwareSize(), 0u);
+}
+
+TEST(ReleaseJsonParser, ChecksumAssetRequiresExactName) {
+  const char* json = R"({
+      "tag_name": "1.5.0-vns.4",
+      "assets": [
+        {"name":"firmware.bin","browser_download_url":"https://example/fw","size":123},
+        {"name":"firmware.bin.sha256.bak","browser_download_url":"https://example/bad","size":79},
+        {"name":"firmware.bin.sha256","browser_download_url":"https://example/good","size":79}
+      ]
+    })";
+  ReleaseJsonParser p;
+  feedChunked(p, json, 7);
+  EXPECT_TRUE(p.foundChecksum());
+  EXPECT_STREQ(p.getChecksumUrl(), "https://example/good");
+}
+
+TEST(FirmwareReleaseValidation, VersionSyntaxIsStrict) {
+  firmware_release::Version version;
+  EXPECT_TRUE(firmware_release::parseVersion("1.5.0", version));
+  EXPECT_TRUE(firmware_release::parseVersion("v1.5.0-vns.3", version));
+  EXPECT_EQ(version.vanNhanSoRevision, 3);
+  EXPECT_FALSE(firmware_release::parseVersion("1.5.0-vns.3-garbage", version));
+  EXPECT_FALSE(firmware_release::parseVersion("1.5.0-dev-main", version));
+  EXPECT_FALSE(firmware_release::parseVersion("1.5", version));
+  EXPECT_FALSE(firmware_release::parseVersion(" 1.5.0", version));
+  EXPECT_FALSE(firmware_release::parseVersion("+1.5.0", version));
+  EXPECT_FALSE(firmware_release::parseVersion("1.5.0-vns.+3", version));
+  EXPECT_FALSE(firmware_release::parseVersion("99999999999999999999.5.0", version));
+  EXPECT_FALSE(firmware_release::parseVersion("", version));
+}
+
+TEST(FirmwareReleaseValidation, ParsesOnlyFirmwareChecksumSidecar) {
+  const std::string hash(64, 'A');
+  std::string parsed;
+  EXPECT_TRUE(firmware_release::parseSha256Sidecar(hash + "  firmware.bin\n", parsed));
+  EXPECT_EQ(parsed, std::string(64, 'a'));
+  EXPECT_TRUE(firmware_release::parseSha256Sidecar(hash + " *firmware.bin\r\n", parsed));
+  EXPECT_TRUE(firmware_release::parseSha256Sidecar(hash + "\n", parsed));
+  EXPECT_FALSE(firmware_release::parseSha256Sidecar(hash + "  x4-firmware.bin\n", parsed));
+  EXPECT_FALSE(firmware_release::parseSha256Sidecar(hash + "firmware.bin", parsed));
+  EXPECT_FALSE(firmware_release::parseSha256Sidecar(hash + " trailing-junk", parsed));
+  EXPECT_FALSE(firmware_release::parseSha256Sidecar(std::string(63, 'a'), parsed));
+  EXPECT_FALSE(firmware_release::parseSha256Sidecar(std::string(64, 'g'), parsed));
 }
 
 TEST(ReleaseJsonParser, PartialAssetNameMatch) {
