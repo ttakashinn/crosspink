@@ -100,6 +100,7 @@ HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std:
 
     if (http.aborted()) return HttpDownloader::ABORTED;
     if (status < 0) {
+      if (sink.responseInfo) sink.responseInfo->transportError = status;
       LOG_ERR("HTTP", "wolfSSL request failed: %s", url.c_str());
       return HttpDownloader::HTTP_ERROR;
     }
@@ -112,10 +113,12 @@ HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std:
       continue;
     }
     if (status != 200) {
+      if (sink.responseInfo) sink.responseInfo->statusCode = status;
       LOG_ERR("HTTP", "wolfSSL unexpected status: %d", status);
       return HttpDownloader::HTTP_ERROR;
     }
     if (sink.responseInfo) {
+      sink.responseInfo->statusCode = status;
       sink.responseInfo->contentLength = sink.total;
       sink.responseInfo->sha256 = http.getHeader("x-content-sha256");
       sink.responseInfo->calendarDate = http.getHeader("x-calendar-date");
@@ -123,8 +126,13 @@ HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std:
     }
     if (http.callbackAborted()) return HttpDownloader::FILE_ERROR;
     if (!http.responseComplete()) {
+      if (sink.responseInfo) sink.responseInfo->downloadedBytes = sink.downloaded;
       LOG_ERR("HTTP", "wolfSSL incomplete: got %zu of %zu bytes", sink.downloaded, sink.total);
       return HttpDownloader::HTTP_ERROR;
+    }
+    if (sink.responseInfo) {
+      sink.responseInfo->downloadedBytes = sink.downloaded;
+      sink.responseInfo->complete = true;
     }
     return HttpDownloader::OK;
   }
@@ -181,6 +189,7 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
   // both redirect.
   esp_err_t err = esp_http_client_open(client, 0);
   if (err != ESP_OK) {
+    if (sink.responseInfo) sink.responseInfo->transportError = err;
     LOG_ERR("HTTP", "open failed: %s", esp_err_to_name(err));
     esp_http_client_cleanup(client);
     return HttpDownloader::HTTP_ERROR;
@@ -208,6 +217,7 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
     esp_http_client_close(client);
     err = esp_http_client_open(client, 0);
     if (err != ESP_OK) {
+      if (sink.responseInfo) sink.responseInfo->transportError = err;
       LOG_ERR("HTTP", "redirect open failed: %s", esp_err_to_name(err));
       esp_http_client_cleanup(client);
       return HttpDownloader::HTTP_ERROR;
@@ -217,12 +227,14 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
   }
 
   if (status != 200) {
+    if (sink.responseInfo) sink.responseInfo->statusCode = status;
     LOG_ERR("HTTP", "unexpected status: %d", status);
     esp_http_client_cleanup(client);
     return HttpDownloader::HTTP_ERROR;
   }
 
   if (sink.responseInfo) {
+    sink.responseInfo->statusCode = status;
     sink.responseInfo->contentLength = contentLength > 0 ? static_cast<size_t>(contentLength) : 0;
   }
 
@@ -244,6 +256,10 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
     }
     const int read = esp_http_client_read(client, buf.get(), READ_CHUNK);
     if (read < 0) {
+      if (sink.responseInfo) {
+        sink.responseInfo->transportError = read;
+        sink.responseInfo->downloadedBytes = sink.downloaded;
+      }
       LOG_ERR("HTTP", "read error after %zu bytes", sink.downloaded);
       esp_http_client_cleanup(client);
       return HttpDownloader::HTTP_ERROR;
@@ -260,8 +276,13 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
   const bool complete = esp_http_client_is_complete_data_received(client);
   esp_http_client_cleanup(client);
   if (!complete) {
+    if (sink.responseInfo) sink.responseInfo->downloadedBytes = sink.downloaded;
     LOG_ERR("HTTP", "incomplete: got %zu of %zu bytes", sink.downloaded, sink.total);
     return HttpDownloader::HTTP_ERROR;
+  }
+  if (sink.responseInfo) {
+    sink.responseInfo->downloadedBytes = sink.downloaded;
+    sink.responseInfo->complete = true;
   }
   return HttpDownloader::OK;
 }

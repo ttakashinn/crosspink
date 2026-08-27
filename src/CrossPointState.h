@@ -30,6 +30,10 @@ class CrossPointState : public PersistableStore<CrossPointState> {
     INVALID_IMAGE = 6,
     INSTALL = 7,
     METADATA = 8,
+    CONNECT = 9,
+    HTTP_RATE_LIMIT = 10,
+    HTTP_SERVER = 11,
+    INCOMPLETE = 12,
   };
 
   std::string openEpubPath;
@@ -46,6 +50,7 @@ class CrossPointState : public PersistableStore<CrossPointState> {
   uint16_t vanNhanSoLastAttemptMinute = UINT16_MAX;
   uint16_t vanNhanSoLastSuccessMinute = UINT16_MAX;
   uint8_t vanNhanSoConsecutiveFailures = 0;
+  uint16_t vanNhanSoLastHttpStatus = 0;
 
   static const char* getFilePath() { return "/.crosspoint/state.json"; }
   void toJson(JsonDocument& doc) const;

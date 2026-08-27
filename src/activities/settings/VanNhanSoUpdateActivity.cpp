@@ -9,6 +9,7 @@
 #include <Logging.h>
 #include <Memory.h>
 #include <WiFi.h>
+#include <ArduinoJson.h>
 #include <mbedtls/sha256.h>
 
 #include <algorithm>
@@ -23,28 +24,29 @@
 #include "activities/network/WifiSelectionActivity.h"
 #include "components/UITheme.h"
 #include "features/vannhanso/VanNhanSoCache.h"
+#include "features/vannhanso/VanNhanSoProfile.h"
 #include "fontIds.h"
 #include "network/HttpDownloader.h"
 
-#ifndef VANNHANSO_X3_URL
-#define VANNHANSO_X3_URL "https://vannhanso.com/eink/xteink-x3/sleep/dashboard/today.bmp"
+#ifndef VANNHANSO_X3_MANIFEST_URL
+#define VANNHANSO_X3_MANIFEST_URL "https://vannhanso.com/eink/v2/xteink-x3/manifest/today"
 #endif
 
-#ifndef VANNHANSO_X4_URL
-#define VANNHANSO_X4_URL "https://vannhanso.com/eink/xteink-x4/sleep/dashboard/today.bmp"
+#ifndef VANNHANSO_X4_MANIFEST_URL
+#define VANNHANSO_X4_MANIFEST_URL "https://vannhanso.com/eink/v2/xteink-x4/manifest/today"
 #endif
 
 namespace {
 using vannhanso_cache::CACHE_PATH;
 using vannhanso_cache::TEMP_PATH;
 constexpr const char* DATE_PATH = "/.crosspoint/vannhanso-date.txt";
-constexpr const char* DATE_TEMP_PATH = "/.crosspoint/vannhanso-date.tmp";
 constexpr const char* PROFILE_PATH = "/.crosspoint/vannhanso-profile.txt";
-constexpr const char* PROFILE_TEMP_PATH = "/.crosspoint/vannhanso-profile.tmp";
+constexpr const char* MANIFEST_TEMP_PATH = "/.crosspoint/vannhanso-manifest.tmp";
 constexpr int VIETNAM_UTC_OFFSET_HOURS = 7;
 constexpr size_t SHA256_HEX_LENGTH = 64;
 constexpr size_t PROFILE_MAX_LENGTH = 128;
 constexpr size_t REQUEST_URL_MAX_LENGTH = 384;
+constexpr size_t MANIFEST_MAX_LENGTH = 2048;
 
 const char* safeParam(const char* const* values, const size_t count, const uint8_t index) {
   return values[index < count ? index : 0];
@@ -64,13 +66,6 @@ bool buildProfileSignature(char* output, const size_t outputSize) {
                safeParam(VOCABULARY_LEVELS, std::size(VOCABULARY_LEVELS), SETTINGS.vanNhanSoVocabularyLevel),
                safeParam(WEATHER_LOCATIONS, std::size(WEATHER_LOCATIONS), SETTINGS.vanNhanSoWeatherLocation),
                SETTINGS.vanNhanSoFinance ? 1U : 0U);
-  return written > 0 && static_cast<size_t>(written) < outputSize;
-}
-
-bool buildRequestUrl(const char* baseUrl, char* output, const size_t outputSize) {
-  char profile[PROFILE_MAX_LENGTH];
-  if (!buildProfileSignature(profile, sizeof(profile))) return false;
-  const int written = snprintf(output, outputSize, "%s?%s", baseUrl, profile);
   return written > 0 && static_cast<size_t>(written) < outputSize;
 }
 
@@ -110,6 +105,14 @@ bool isSha256Hex(const std::string& value) {
     if (!std::isxdigit(static_cast<unsigned char>(ch))) return false;
   }
   return true;
+}
+
+bool isTrustedAssetUrl(const char* value) {
+  if (!value) return false;
+  static constexpr const char* ORIGIN_PREFIX = "https://vannhanso.com/";
+  static constexpr const char* R2_PREFIX = "https://eink-assets.vannhanso.com/";
+  return strncmp(value, ORIGIN_PREFIX, strlen(ORIGIN_PREFIX)) == 0 ||
+         strncmp(value, R2_PREFIX, strlen(R2_PREFIX)) == 0;
 }
 
 bool parseHttpDate(const std::string& value, Rtc::DateTime& dateTime) {
@@ -391,11 +394,22 @@ bool VanNhanSoUpdateActivity::resolveCurrentDate(const bool allowNetworkSync) {
 }
 
 bool VanNhanSoUpdateActivity::isCurrentCache() const {
-  if (currentDateKey == 0 || !Storage.exists(CACHE_PATH) ||
+  if (currentDateKey == 0) return false;
+
+  char profilePath[vannhanso_profile::PATH_MAX_LENGTH];
+  uint32_t storedDateKey = 0;
+  if (vannhanso_profile::buildImagePath(renderer.getScreenWidth(), renderer.getScreenHeight(), profilePath,
+                                        sizeof(profilePath)) &&
+      vannhanso_cache::validateImage(profilePath, renderer.getScreenWidth(), renderer.getScreenHeight()) &&
+      vannhanso_cache::readCurrentDate(renderer.getScreenWidth(), renderer.getScreenHeight(), storedDateKey)) {
+    return storedDateKey == currentDateKey;
+  }
+
+  // One-time compatibility path for the single-image cache written by vns.4.
+  if (!Storage.exists(CACHE_PATH) ||
       !vannhanso_cache::validateImage(CACHE_PATH, renderer.getScreenWidth(), renderer.getScreenHeight())) {
     return false;
   }
-  uint32_t storedDateKey = 0;
   char storedProfile[PROFILE_MAX_LENGTH];
   char currentProfile[PROFILE_MAX_LENGTH];
   return readDateMarker(storedDateKey) && storedDateKey == currentDateKey &&
@@ -413,12 +427,13 @@ bool VanNhanSoUpdateActivity::isBackoffActive() const {
   // attempts; a manual update still bypasses this gate and records server date.
   if (currentDateKey == 0) return true;
   if (APP_STATE.vanNhanSoLastAttemptDate != currentDateKey) return false;
+  if (APP_STATE.vanNhanSoConsecutiveFailures >= 3) return true;
   if (currentMinute >= 24U * 60U || APP_STATE.vanNhanSoLastAttemptMinute >= 24U * 60U ||
       currentMinute < APP_STATE.vanNhanSoLastAttemptMinute) {
     return false;
   }
 
-  static constexpr uint16_t RETRY_DELAYS_MINUTES[] = {5, 15, 60, 180};
+  static constexpr uint16_t RETRY_DELAYS_MINUTES[] = {5, 30, 180};
   const uint8_t delayIndex =
       std::min<uint8_t>(APP_STATE.vanNhanSoConsecutiveFailures - 1, std::size(RETRY_DELAYS_MINUTES) - 1);
   return currentMinute - APP_STATE.vanNhanSoLastAttemptMinute < RETRY_DELAYS_MINUTES[delayIndex];
@@ -439,28 +454,6 @@ bool VanNhanSoUpdateActivity::readDateMarker(uint32_t& dateKey) const {
   return true;
 }
 
-bool VanNhanSoUpdateActivity::writeDateMarker(const uint32_t dateKey) const {
-  char value[9];
-  snprintf(value, sizeof(value), "%08lu", static_cast<unsigned long>(dateKey));
-
-  Storage.remove(DATE_TEMP_PATH);
-  HalFile file;
-  if (!Storage.openFileForWrite("VNS", DATE_TEMP_PATH, file)) return false;
-  if (file.write(reinterpret_cast<const uint8_t*>(value), 8) != 8) {
-    file.close();
-    Storage.remove(DATE_TEMP_PATH);
-    return false;
-  }
-  file.close();
-
-  Storage.remove(DATE_PATH);
-  if (!Storage.rename(DATE_TEMP_PATH, DATE_PATH)) {
-    Storage.remove(DATE_TEMP_PATH);
-    return false;
-  }
-  return true;
-}
-
 bool VanNhanSoUpdateActivity::readProfileMarker(char* profile, const size_t profileSize) const {
   if (!profile || profileSize < 2) return false;
   HalFile file;
@@ -472,34 +465,11 @@ bool VanNhanSoUpdateActivity::readProfileMarker(char* profile, const size_t prof
   return true;
 }
 
-bool VanNhanSoUpdateActivity::writeProfileMarker() const {
-  char profile[PROFILE_MAX_LENGTH];
-  if (!buildProfileSignature(profile, sizeof(profile))) return false;
-  const size_t length = strlen(profile);
-
-  Storage.remove(PROFILE_TEMP_PATH);
-  HalFile file;
-  if (!Storage.openFileForWrite("VNS", PROFILE_TEMP_PATH, file)) return false;
-  if (file.write(reinterpret_cast<const uint8_t*>(profile), length) != static_cast<int>(length)) {
-    file.close();
-    Storage.remove(PROFILE_TEMP_PATH);
-    return false;
-  }
-  file.close();
-
-  Storage.remove(PROFILE_PATH);
-  if (!Storage.rename(PROFILE_TEMP_PATH, PROFILE_PATH)) {
-    Storage.remove(PROFILE_TEMP_PATH);
-    return false;
-  }
-  return true;
-}
-
 void VanNhanSoUpdateActivity::downloadSleepScreen() {
   const bool isX3 = renderer.getScreenWidth() >= 528;
-  const char* baseUrl = isX3 ? VANNHANSO_X3_URL : VANNHANSO_X4_URL;
+  const char* baseUrl = isX3 ? VANNHANSO_X3_MANIFEST_URL : VANNHANSO_X4_MANIFEST_URL;
   char url[REQUEST_URL_MAX_LENGTH];
-  if (!buildRequestUrl(baseUrl, url, sizeof(url))) {
+  if (!vannhanso_profile::buildManifestUrl(baseUrl, url, sizeof(url))) {
     fail(CrossPointState::VanNhanSoUpdateError::METADATA);
     return;
   }
@@ -507,12 +477,75 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
   downloadedBytes = 0;
   totalBytes = 0;
   cancelDownload = false;
-  HttpDownloader::ResponseInfo responseInfo;
   const uint32_t expectedDateKey = currentDateKey;
+  const uint32_t timeoutMs = automatic ? AUTOMATIC_DOWNLOAD_TIMEOUT_MS : MANUAL_DOWNLOAD_TIMEOUT_MS;
+
+  const auto pollCancellation = [this](const size_t, const size_t) {
+    mappedInput.update();
+    int x = 0;
+    int y = 0;
+    if (automatic) {
+      if (mappedInput.wasAnyPressed() || mappedInput.wasScreenTapped(x, y)) cancelDownload = true;
+    } else if (mappedInput.wasPressed(MappedInputManager::Button::Back) || mappedInput.wasScreenTapped(x, y)) {
+      cancelDownload = true;
+    }
+  };
+
+  HttpDownloader::ResponseInfo manifestResponse;
+  const auto manifestResult = HttpDownloader::downloadToFile(
+      url, MANIFEST_TEMP_PATH, pollCancellation, &cancelDownload, "", "", &manifestResponse, timeoutMs,
+      HttpDownloader::TransportSecurity::VERIFIED_TLS);
+  if (manifestResult == HttpDownloader::ABORTED) {
+    Storage.remove(MANIFEST_TEMP_PATH);
+    recordCancelled();
+    return;
+  }
+  if (manifestResult != HttpDownloader::OK) {
+    Storage.remove(MANIFEST_TEMP_PATH);
+    failDownload(manifestResult, manifestResponse);
+    return;
+  }
+
+  char manifestBody[MANIFEST_MAX_LENGTH + 1] = {};
+  const size_t manifestLength =
+      Storage.readFileToBuffer(MANIFEST_TEMP_PATH, manifestBody, sizeof(manifestBody), MANIFEST_MAX_LENGTH);
+  Storage.remove(MANIFEST_TEMP_PATH);
+  JsonDocument manifest;
+  const DeserializationError jsonError = deserializeJson(manifest, manifestBody, manifestLength);
+  const char* manifestDevice = manifest["device"] | "";
+  const char* assetUrl = manifest["asset_url"] | "";
+  const char* checksum = manifest["sha256"] | "";
+  const char* calendarDate = manifest["calendar_date"] | "";
+  const int expectedWidth = manifest["width"] | 0;
+  const int expectedHeight = manifest["height"] | 0;
+  const int expectedBpp = manifest["bits_per_pixel"] | 0;
+  const size_t expectedLength = manifest["content_length"] | static_cast<size_t>(0);
+  const char* expectedDevice = isX3 ? "xteink-x3" : "xteink-x4";
+  if (manifestLength == 0 || jsonError || (manifest["version"] | 0) != 2 || strcmp(manifestDevice, expectedDevice) != 0 ||
+      expectedWidth != renderer.getScreenWidth() || expectedHeight != renderer.getScreenHeight() || expectedBpp != 2 ||
+      expectedLength == 0 || expectedLength > 1024U * 1024U || !isSha256Hex(checksum) ||
+      !isTrustedAssetUrl(assetUrl) || strlen(assetUrl) >= REQUEST_URL_MAX_LENGTH) {
+    LOG_ERR("VNS", "Invalid v2 manifest: %s", jsonError ? jsonError.c_str() : "schema mismatch");
+    fail(CrossPointState::VanNhanSoUpdateError::METADATA);
+    return;
+  }
+
+  const uint32_t responseDateKey = parseIsoDateKey(calendarDate);
+  if (responseDateKey == 0 || (expectedDateKey != 0 && responseDateKey != expectedDateKey)) {
+    LOG_ERR("VNS", "Stale or invalid manifest date: expected=%lu received=%lu",
+            static_cast<unsigned long>(expectedDateKey), static_cast<unsigned long>(responseDateKey));
+    fail(CrossPointState::VanNhanSoUpdateError::METADATA);
+    return;
+  }
+
+  const std::string expectedChecksum(checksum);
+  const std::string resolvedAssetUrl(assetUrl);
+  const std::string serverDate = manifestResponse.serverDate;
 
   // The image body is streamed directly to SD and never buffered in heap.
+  HttpDownloader::ResponseInfo responseInfo;
   const auto result = HttpDownloader::downloadToFile(
-      url, TEMP_PATH,
+      resolvedAssetUrl, TEMP_PATH,
       [this](const size_t downloaded, const size_t total) {
         const size_t previousTotal = totalBytes.load();
         const size_t previousDownloaded = downloadedBytes.load();
@@ -524,7 +557,7 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
 
         // Automatic refresh must yield to the user. A transfer that is already
         // receiving data can be cancelled immediately; a stalled socket is
-        // bounded by DOWNLOAD_TIMEOUT_MS below.
+        // bounded by the per-mode timeout below.
         mappedInput.update();
         int x = 0;
         int y = 0;
@@ -534,7 +567,7 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
           cancelDownload = true;
         }
       },
-      &cancelDownload, "", "", &responseInfo, DOWNLOAD_TIMEOUT_MS, HttpDownloader::TransportSecurity::VERIFIED_TLS);
+      &cancelDownload, "", "", &responseInfo, timeoutMs, HttpDownloader::TransportSecurity::VERIFIED_TLS);
 
   if (result == HttpDownloader::ABORTED) {
     Storage.remove(TEMP_PATH);
@@ -543,19 +576,22 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
   }
   if (result != HttpDownloader::OK) {
     Storage.remove(TEMP_PATH);
-    fail(CrossPointState::VanNhanSoUpdateError::DOWNLOAD);
+    failDownload(result, responseInfo);
     return;
   }
 
-  state = VERIFYING;
-  if (!automatic) requestUpdateAndWait();
-  if (!isSha256Hex(responseInfo.sha256)) {
-    LOG_ERR("VNS", "Missing or invalid X-Content-SHA256 response header");
+  HalFile downloadedFile;
+  if (!Storage.openFileForRead("VNS", TEMP_PATH, downloadedFile) || downloadedFile.fileSize() != expectedLength) {
+    if (downloadedFile) downloadedFile.close();
     Storage.remove(TEMP_PATH);
-    fail(CrossPointState::VanNhanSoUpdateError::CHECKSUM_MISSING);
+    fail(CrossPointState::VanNhanSoUpdateError::INCOMPLETE);
     return;
   }
-  if (!validateChecksum(responseInfo.sha256)) {
+  downloadedFile.close();
+
+  state = VERIFYING;
+  if (!automatic) requestUpdateAndWait();
+  if (!validateChecksum(expectedChecksum)) {
     Storage.remove(TEMP_PATH);
     fail(CrossPointState::VanNhanSoUpdateError::CHECKSUM_MISMATCH);
     return;
@@ -566,17 +602,10 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
     return;
   }
 
-  const uint32_t responseDateKey = parseIsoDateKey(responseInfo.calendarDate);
-  if (responseDateKey == 0) {
-    LOG_ERR("VNS", "Missing or invalid X-Calendar-Date response header");
-    Storage.remove(TEMP_PATH);
-    fail(CrossPointState::VanNhanSoUpdateError::METADATA);
-    return;
-  }
   Rtc::DateTime serverDateTime;
   uint32_t serverVietnamDateKey = 0;
   uint16_t serverVietnamMinute = UINT16_MAX;
-  const bool haveServerTime = parseHttpDate(responseInfo.serverDate, serverDateTime);
+  const bool haveServerTime = parseHttpDate(serverDate, serverDateTime);
   if (haveServerTime && (!vietnamDateTime(serverDateTime, serverVietnamDateKey, serverVietnamMinute) ||
                          serverVietnamDateKey != responseDateKey)) {
     LOG_ERR("VNS", "Response Date and X-Calendar-Date headers disagree");
@@ -584,14 +613,7 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
     fail(CrossPointState::VanNhanSoUpdateError::METADATA);
     return;
   }
-  if (expectedDateKey != 0 && responseDateKey != expectedDateKey) {
-    LOG_ERR("VNS", "Stale or future response date: expected=%lu received=%lu",
-            static_cast<unsigned long>(expectedDateKey), static_cast<unsigned long>(responseDateKey));
-    Storage.remove(TEMP_PATH);
-    fail(CrossPointState::VanNhanSoUpdateError::METADATA);
-    return;
-  }
-  // The response header is authoritative for /today.bmp. It also lets X4
+  // The manifest is authoritative for the daily asset. It also lets X4
   // persist the data date after a full power loss, without waiting for NTP.
   currentDateKey = responseDateKey;
   if (haveServerTime && halClock.setDateTimeUtc(serverDateTime)) {
@@ -613,12 +635,9 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
   }
 
   bool metadataOk = true;
-  if (currentDateKey != 0 && !writeDateMarker(currentDateKey)) {
+  if (currentDateKey != 0 &&
+      !vannhanso_cache::writeCurrentDate(renderer.getScreenWidth(), renderer.getScreenHeight(), currentDateKey)) {
     LOG_ERR("VNS", "Could not save update date marker");
-    metadataOk = false;
-  }
-  if (!writeProfileMarker()) {
-    LOG_ERR("VNS", "Could not save dashboard profile marker");
     metadataOk = false;
   }
   if (!metadataOk) {
@@ -637,6 +656,7 @@ void VanNhanSoUpdateActivity::recordAttempt() {
   APP_STATE.vanNhanSoUpdateError = CrossPointState::VanNhanSoUpdateError::NONE;
   APP_STATE.vanNhanSoLastAttemptDate = currentDateKey;
   APP_STATE.vanNhanSoLastAttemptMinute = currentMinute;
+  APP_STATE.vanNhanSoLastHttpStatus = 0;
   APP_STATE.saveToFile();
 }
 
@@ -649,6 +669,7 @@ void VanNhanSoUpdateActivity::recordSuccess() {
   APP_STATE.vanNhanSoLastAttemptMinute = currentMinute;
   APP_STATE.vanNhanSoLastSuccessMinute = currentMinute;
   APP_STATE.vanNhanSoConsecutiveFailures = 0;
+  APP_STATE.vanNhanSoLastHttpStatus = 0;
   APP_STATE.saveToFile();
 }
 
@@ -677,6 +698,25 @@ void VanNhanSoUpdateActivity::fail(const CrossPointState::VanNhanSoUpdateError e
     state = FAILED;
   }
   requestUpdate();
+}
+
+void VanNhanSoUpdateActivity::failDownload(const HttpDownloader::DownloadError result,
+                                           const HttpDownloader::ResponseInfo& responseInfo) {
+  APP_STATE.vanNhanSoLastHttpStatus =
+      responseInfo.statusCode > 0 && responseInfo.statusCode <= UINT16_MAX ? responseInfo.statusCode : 0;
+  if (responseInfo.statusCode == 429) {
+    fail(CrossPointState::VanNhanSoUpdateError::HTTP_RATE_LIMIT);
+  } else if (responseInfo.statusCode >= 500) {
+    fail(CrossPointState::VanNhanSoUpdateError::HTTP_SERVER);
+  } else if (responseInfo.downloadedBytes > 0 && !responseInfo.complete) {
+    fail(CrossPointState::VanNhanSoUpdateError::INCOMPLETE);
+  } else if (responseInfo.transportError != 0) {
+    fail(CrossPointState::VanNhanSoUpdateError::CONNECT);
+  } else if (result == HttpDownloader::FILE_ERROR) {
+    fail(CrossPointState::VanNhanSoUpdateError::INSTALL);
+  } else {
+    fail(CrossPointState::VanNhanSoUpdateError::DOWNLOAD);
+  }
 }
 
 bool VanNhanSoUpdateActivity::validateChecksum(const std::string& expectedChecksum) const {
@@ -744,6 +784,14 @@ const char* VanNhanSoUpdateActivity::errorText(const CrossPointState::VanNhanSoU
       return tr(STR_VANNHANSO_ERROR_INSTALL);
     case CrossPointState::VanNhanSoUpdateError::METADATA:
       return tr(STR_VANNHANSO_ERROR_METADATA);
+    case CrossPointState::VanNhanSoUpdateError::CONNECT:
+      return "Lỗi kết nối HTTPS";
+    case CrossPointState::VanNhanSoUpdateError::HTTP_RATE_LIMIT:
+      return "Máy chủ đang giới hạn yêu cầu";
+    case CrossPointState::VanNhanSoUpdateError::HTTP_SERVER:
+      return "Máy chủ tạm thời gặp lỗi";
+    case CrossPointState::VanNhanSoUpdateError::INCOMPLETE:
+      return "Dữ liệu tải về chưa đủ";
     case CrossPointState::VanNhanSoUpdateError::NONE:
     default:
       return "";
@@ -763,7 +811,9 @@ void VanNhanSoUpdateActivity::render(RenderLock&&) {
 
   const int midY = pageHeight / 2;
   uint32_t cachedDateKey = 0;
-  readDateMarker(cachedDateKey);
+  if (!vannhanso_cache::readCurrentDate(renderer.getScreenWidth(), renderer.getScreenHeight(), cachedDateKey)) {
+    readDateMarker(cachedDateKey);
+  }
   const std::string cachedDate = formatDateKey(cachedDateKey);
   char currentText[80];
   snprintf(currentText, sizeof(currentText), tr(STR_VANNHANSO_CURRENT_DATA), cachedDate.c_str());
@@ -796,7 +846,14 @@ void VanNhanSoUpdateActivity::render(RenderLock&&) {
     renderer.drawCenteredText(UI_10_FONT_ID, midY + 22, currentText);
   } else if (state == FAILED) {
     renderer.drawCenteredText(UI_12_FONT_ID, midY - 30, tr(STR_VANNHANSO_UPDATE_FAILED), true, EpdFontFamily::BOLD);
-    renderer.drawCenteredText(UI_10_FONT_ID, midY + 5, errorText(APP_STATE.vanNhanSoUpdateError));
+    if (APP_STATE.vanNhanSoLastHttpStatus > 0) {
+      char statusText[48];
+      snprintf(statusText, sizeof(statusText), "%s (HTTP %u)", errorText(APP_STATE.vanNhanSoUpdateError),
+               APP_STATE.vanNhanSoLastHttpStatus);
+      renderer.drawCenteredText(UI_10_FONT_ID, midY + 5, statusText);
+    } else {
+      renderer.drawCenteredText(UI_10_FONT_ID, midY + 5, errorText(APP_STATE.vanNhanSoUpdateError));
+    }
     renderer.drawCenteredText(UI_10_FONT_ID, midY + 40, currentText);
   } else if (state == CANCELLED) {
     renderer.drawCenteredText(UI_12_FONT_ID, midY - 18, tr(STR_CANCEL), true, EpdFontFamily::BOLD);

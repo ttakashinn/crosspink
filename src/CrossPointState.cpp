@@ -36,6 +36,7 @@ void CrossPointState::toJson(JsonDocument& doc) const {
   doc["vanNhanSoLastAttemptMinute"] = vanNhanSoLastAttemptMinute;
   doc["vanNhanSoLastSuccessMinute"] = vanNhanSoLastSuccessMinute;
   doc["vanNhanSoConsecutiveFailures"] = vanNhanSoConsecutiveFailures;
+  doc["vanNhanSoLastHttpStatus"] = vanNhanSoLastHttpStatus;
 }
 
 bool CrossPointState::fromJson(JsonVariantConst doc) {
@@ -63,7 +64,7 @@ bool CrossPointState::fromJson(JsonVariantConst doc) {
                               ? static_cast<VanNhanSoUpdateResult>(updateResult)
                               : VanNhanSoUpdateResult::NEVER;
   const uint8_t updateError = doc["vanNhanSoUpdateError"] | static_cast<uint8_t>(VanNhanSoUpdateError::NONE);
-  vanNhanSoUpdateError = updateError <= static_cast<uint8_t>(VanNhanSoUpdateError::METADATA)
+  vanNhanSoUpdateError = updateError <= static_cast<uint8_t>(VanNhanSoUpdateError::INCOMPLETE)
                              ? static_cast<VanNhanSoUpdateError>(updateError)
                              : VanNhanSoUpdateError::NONE;
   vanNhanSoLastAttemptDate = doc["vanNhanSoLastAttemptDate"] | static_cast<uint32_t>(0);
@@ -74,5 +75,6 @@ bool CrossPointState::fromJson(JsonVariantConst doc) {
   if (vanNhanSoLastSuccessMinute >= 24U * 60U) vanNhanSoLastSuccessMinute = UINT16_MAX;
   vanNhanSoConsecutiveFailures = doc["vanNhanSoConsecutiveFailures"] | static_cast<uint8_t>(0);
   vanNhanSoConsecutiveFailures = std::min<uint8_t>(vanNhanSoConsecutiveFailures, 4);
+  vanNhanSoLastHttpStatus = doc["vanNhanSoLastHttpStatus"] | static_cast<uint16_t>(0);
   return true;
 }

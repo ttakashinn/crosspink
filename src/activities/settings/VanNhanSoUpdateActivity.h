@@ -5,6 +5,7 @@
 #include <atomic>
 
 #include "activities/Activity.h"
+#include "network/HttpDownloader.h"
 
 class VanNhanSoUpdateActivity final : public Activity {
  public:
@@ -44,8 +45,9 @@ class VanNhanSoUpdateActivity final : public Activity {
   std::atomic<size_t> downloadedBytes{0};
   std::atomic<size_t> totalBytes{0};
 
-  static constexpr unsigned long AUTO_CONNECTION_TIMEOUT_MS = 3000;
-  static constexpr uint32_t DOWNLOAD_TIMEOUT_MS = 5000;
+  static constexpr unsigned long AUTO_CONNECTION_TIMEOUT_MS = 8000;
+  static constexpr uint32_t AUTOMATIC_DOWNLOAD_TIMEOUT_MS = 5000;
+  static constexpr uint32_t MANUAL_DOWNLOAD_TIMEOUT_MS = 15000;
 
   void onWifiSelectionComplete(bool connected);
   void beginManualUpdate();
@@ -55,14 +57,13 @@ class VanNhanSoUpdateActivity final : public Activity {
   bool isCurrentCache() const;
   bool isBackoffActive() const;
   bool readDateMarker(uint32_t& dateKey) const;
-  bool writeDateMarker(uint32_t dateKey) const;
   bool readProfileMarker(char* profile, size_t profileSize) const;
-  bool writeProfileMarker() const;
   void downloadSleepScreen();
   void recordAttempt();
   void recordSuccess();
   void recordCancelled();
   void fail(CrossPointState::VanNhanSoUpdateError error);
+  void failDownload(HttpDownloader::DownloadError result, const HttpDownloader::ResponseInfo& responseInfo);
   bool validateChecksum(const std::string& expectedChecksum) const;
   const char* errorText(CrossPointState::VanNhanSoUpdateError error) const;
 };

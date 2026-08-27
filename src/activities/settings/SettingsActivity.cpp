@@ -24,6 +24,7 @@
 #include "StatusBarSettingsActivity.h"
 #include "TextSettingsActivity.h"
 #include "VanNhanSoUpdateActivity.h"
+#include "VanNhanSoSettingsActivity.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "activities/util/IntervalSelectionActivity.h"
 #include "components/UITheme.h"
@@ -55,16 +56,15 @@ void SettingsActivity::rebuildSettingsLists() {
                                     setting.valuePtr == &CrossPointSettings::vanNhanSoVocabularyLevel ||
                                     setting.valuePtr == &CrossPointSettings::vanNhanSoWeatherLocation ||
                                     setting.valuePtr == &CrossPointSettings::vanNhanSoFinance;
-    if (isVanNhanSoSetting && SETTINGS.sleepScreen != CrossPointSettings::SLEEP_SCREEN_MODE::VANNHANSO) continue;
-    const bool isVanNhanSoFullLayoutSetting = setting.valuePtr == &CrossPointSettings::vanNhanSoVocabularyLevel ||
-                                              setting.valuePtr == &CrossPointSettings::vanNhanSoWeatherLocation ||
-                                              setting.valuePtr == &CrossPointSettings::vanNhanSoFinance;
-    if (isVanNhanSoFullLayoutSetting &&
-        SETTINGS.vanNhanSoLayout != CrossPointSettings::VANNHANSO_LAYOUT::VANNHANSO_LAYOUT_FULL) {
-      continue;
-    }
+    if (isVanNhanSoSetting) continue;
     if (setting.category == StrId::STR_CAT_DISPLAY) {
       displaySettings.push_back(setting);
+#if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3
+      if (setting.valuePtr == &CrossPointSettings::sleepScreen &&
+          SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::VANNHANSO) {
+        displaySettings.push_back(SettingInfo::Action(StrId::STR_VANNHANSO, SettingAction::ConfigureVanNhanSo));
+      }
+#endif
     } else if (setting.category == StrId::STR_CAT_READER) {
       // Settings merged into "Text Settings"
       // (they stay in the shared list for the web settings API)
@@ -82,11 +82,6 @@ void SettingsActivity::rebuildSettingsLists() {
   }
 
   // Append device-only ACTION items
-#if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3
-  if (SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::VANNHANSO) {
-    displaySettings.push_back(SettingInfo::Action(StrId::STR_VANNHANSO_REFRESH, SettingAction::UpdateVanNhanSo));
-  }
-#endif
   if (!BoardConfig::hasTouch()) {
     controlsSettings.insert(controlsSettings.begin(),
                             SettingInfo::Action(StrId::STR_REMAP_FRONT_BUTTONS, SettingAction::RemapFrontButtons));
@@ -435,6 +430,9 @@ void SettingsActivity::toggleCurrentSetting() {
         if (activity) startActivityForResult(std::move(activity), resultHandler);
         break;
       }
+      case SettingAction::ConfigureVanNhanSo:
+        startActivityForResult(std::make_unique<VanNhanSoSettingsActivity>(renderer, mappedInput), resultHandler);
+        break;
       case SettingAction::None:
         // Do nothing
         break;
