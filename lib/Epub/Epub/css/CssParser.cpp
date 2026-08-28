@@ -144,8 +144,8 @@ constexpr std::array STYLE_LENGTH_FIELDS = {
 };
 constexpr size_t STYLE_LENGTH_FIELD_COUNT = STYLE_LENGTH_FIELDS.size();
 constexpr size_t STYLE_WIRE_BYTES =
-    5 + STYLE_LENGTH_FIELD_COUNT * (sizeof(decltype(CssLength::value)) + 1) + 2 + sizeof(uint32_t);
-constexpr uint32_t CSS_DEFINED_BITS_MASK = (1u << 18) - 1;
+    5 + STYLE_LENGTH_FIELD_COUNT * (sizeof(decltype(CssLength::value)) + 1) + 4 + sizeof(uint32_t);
+constexpr uint32_t CSS_DEFINED_BITS_MASK = (1u << 20) - 1;
 
 void encodeStyleWire(const CssStyle& style, uint8_t (&out)[STYLE_WIRE_BYTES]) {
   size_t offset = 0;
@@ -163,6 +163,8 @@ void encodeStyleWire(const CssStyle& style, uint8_t (&out)[STYLE_WIRE_BYTES]) {
   for (const auto field : STYLE_LENGTH_FIELDS) {
     putLength(style.*field);
   }
+  out[offset++] = static_cast<uint8_t>(style.pageBreakBefore);
+  out[offset++] = static_cast<uint8_t>(style.pageBreakAfter);
   out[offset++] = static_cast<uint8_t>(style.display);
   out[offset++] = static_cast<uint8_t>(style.verticalAlign);
 
@@ -185,6 +187,8 @@ void encodeStyleWire(const CssStyle& style, uint8_t (&out)[STYLE_WIRE_BYTES]) {
   if (style.defined.display) definedBits |= 1 << 15;
   if (style.defined.direction) definedBits |= 1 << 16;
   if (style.defined.verticalAlign) definedBits |= 1 << 17;
+  if (style.defined.pageBreakBefore) definedBits |= 1 << 18;
+  if (style.defined.pageBreakAfter) definedBits |= 1 << 19;
   memcpy(out + offset, &definedBits, sizeof(definedBits));
 }
 
@@ -220,11 +224,17 @@ bool decodeStyleWire(const uint8_t (&in)[STYLE_WIRE_BYTES], CssStyle& style) {
     if (!getLength(style.*field)) return false;
   }
 
+  const uint8_t pageBreakBefore = in[offset++];
+  const uint8_t pageBreakAfter = in[offset++];
   const uint8_t display = in[offset++];
   const uint8_t verticalAlign = in[offset++];
-  if (display > static_cast<uint8_t>(CssDisplay::None) || verticalAlign > static_cast<uint8_t>(CssVerticalAlign::Sub)) {
+  if (pageBreakBefore > static_cast<uint8_t>(CssPageBreak::Always) ||
+      pageBreakAfter > static_cast<uint8_t>(CssPageBreak::Always) || display > static_cast<uint8_t>(CssDisplay::None) ||
+      verticalAlign > static_cast<uint8_t>(CssVerticalAlign::Sub)) {
     return false;
   }
+  style.pageBreakBefore = static_cast<CssPageBreak>(pageBreakBefore);
+  style.pageBreakAfter = static_cast<CssPageBreak>(pageBreakAfter);
   style.display = static_cast<CssDisplay>(display);
   style.verticalAlign = static_cast<CssVerticalAlign>(verticalAlign);
 
@@ -249,6 +259,8 @@ bool decodeStyleWire(const uint8_t (&in)[STYLE_WIRE_BYTES], CssStyle& style) {
   style.defined.display = (definedBits & 1 << 15) != 0;
   style.defined.direction = (definedBits & 1 << 16) != 0;
   style.defined.verticalAlign = (definedBits & 1 << 17) != 0;
+  style.defined.pageBreakBefore = (definedBits & 1 << 18) != 0;
+  style.defined.pageBreakAfter = (definedBits & 1 << 19) != 0;
   return true;
 }
 
@@ -299,6 +311,16 @@ std::string_view CssParser::selectorAt(const size_t index) const {
   return {selectorPool_.get() + entry.offset, entry.length};
 }
 
+std::string_view CssParser::descendantAncestorAt(const size_t index) const {
+  const DescendantEntry& entry = descendantEntries_[index];
+  return {selectorPool_.get() + entry.ancestorOffset, entry.ancestorLength};
+}
+
+std::string_view CssParser::descendantSubjectAt(const size_t index) const {
+  const DescendantEntry& entry = descendantEntries_[index];
+  return {selectorPool_.get() + entry.subjectOffset, entry.subjectLength};
+}
+
 CssParser::PoolResult CssParser::ensureEntryCapacity(const size_t needed) {
   if (needed <= entryCapacity_) return PoolResult::Ready;
   if (needed > MAX_RULES) return PoolResult::Limit;
@@ -314,6 +336,26 @@ CssParser::PoolResult CssParser::ensureEntryCapacity(const size_t needed) {
   if (entryCount_ > 0) memcpy(grown.get(), entries_.get(), entryCount_ * sizeof(SelectorEntry));
   entries_ = std::move(grown);
   entryCapacity_ = static_cast<uint16_t>(capacity);
+  return PoolResult::Ready;
+}
+
+CssParser::PoolResult CssParser::ensureDescendantEntryCapacity(const size_t needed) {
+  if (needed <= descendantEntryCapacity_) return PoolResult::Ready;
+  if (needed > MAX_DESCENDANT_RULES) return PoolResult::Limit;
+
+  size_t capacity = descendantEntryCapacity_ ? descendantEntryCapacity_ * 2u : 8u;
+  while (capacity < needed) capacity *= 2u;
+  capacity = std::min(capacity, MAX_DESCENDANT_RULES);
+  auto grown = makeUniqueNoThrow<DescendantEntry[]>(capacity);
+  if (!grown) {
+    LOG_ERR("CSS", "OOM: descendant selector index (%zu entries)", capacity);
+    return PoolResult::OutOfMemory;
+  }
+  if (descendantEntryCount_ > 0) {
+    memcpy(grown.get(), descendantEntries_.get(), descendantEntryCount_ * sizeof(DescendantEntry));
+  }
+  descendantEntries_ = std::move(grown);
+  descendantEntryCapacity_ = static_cast<uint16_t>(capacity);
   return PoolResult::Ready;
 }
 
@@ -387,6 +429,9 @@ CssParser::RuleInsertResult CssParser::insertOrMerge(const std::string_view sele
         break;
       }
     }
+    for (uint16_t i = 0; !styleIsShared && i < descendantEntryCount_; ++i) {
+      styleIsShared = descendantEntries_[i].styleIndex == currentStyleIndex;
+    }
     if (!styleIsShared) {
       stylePool_[currentStyleIndex] = merged;
       return RuleInsertResult::Merged;
@@ -400,6 +445,7 @@ CssParser::RuleInsertResult CssParser::insertOrMerge(const std::string_view sele
     return RuleInsertResult::Merged;
   }
 
+  if (ruleCount() >= MAX_RULES) return RuleInsertResult::Limit;
   const PoolResult entryResult = ensureEntryCapacity(static_cast<size_t>(entryCount_) + 1);
   if (entryResult == PoolResult::Limit) return RuleInsertResult::Limit;
   if (entryResult == PoolResult::OutOfMemory) return RuleInsertResult::OutOfMemory;
@@ -423,6 +469,74 @@ CssParser::RuleInsertResult CssParser::insertOrMerge(const std::string_view sele
   memmove(entries + position + 1, entries + position, (entryCount_ - position) * sizeof(SelectorEntry));
   entries[position] = {selectorOffset, styleIndex, static_cast<uint16_t>(selector.size())};
   ++entryCount_;
+  return RuleInsertResult::Inserted;
+}
+
+CssParser::RuleInsertResult CssParser::insertOrMergeDescendant(const std::string_view ancestor,
+                                                               const std::string_view subject, const CssStyle& style) {
+  for (uint16_t i = 0; i < descendantEntryCount_; ++i) {
+    const DescendantEntry& entry = descendantEntries_[i];
+    const SelectorEntry ancestorEntry = {entry.ancestorOffset, entry.styleIndex, entry.ancestorLength};
+    const SelectorEntry subjectEntry = {entry.subjectOffset, entry.styleIndex, entry.subjectLength};
+    if (compareEntryToPieces(ancestorEntry, ancestor, {}, {}) != 0 ||
+        compareEntryToPieces(subjectEntry, subject, {}, {}) != 0) {
+      continue;
+    }
+
+    const uint16_t currentStyleIndex = entry.styleIndex;
+    CssStyle merged = stylePool_[currentStyleIndex];
+    merged.applyOver(style);
+
+    bool styleIsShared = false;
+    for (uint16_t simple = 0; simple < entryCount_; ++simple) {
+      if (entries_[simple].styleIndex == currentStyleIndex) {
+        styleIsShared = true;
+        break;
+      }
+    }
+    for (uint16_t descendant = 0; !styleIsShared && descendant < descendantEntryCount_; ++descendant) {
+      if (descendant != i && descendantEntries_[descendant].styleIndex == currentStyleIndex) {
+        styleIsShared = true;
+      }
+    }
+    if (!styleIsShared) {
+      stylePool_[currentStyleIndex] = merged;
+      return RuleInsertResult::Merged;
+    }
+
+    uint16_t styleIndex = 0;
+    const PoolResult styleResult = internStyle(merged, styleIndex);
+    if (styleResult == PoolResult::Limit) return RuleInsertResult::Limit;
+    if (styleResult == PoolResult::OutOfMemory) return RuleInsertResult::OutOfMemory;
+    descendantEntries_[i].styleIndex = styleIndex;
+    return RuleInsertResult::Merged;
+  }
+
+  if (ruleCount() >= MAX_RULES) return RuleInsertResult::Limit;
+  const PoolResult entryResult = ensureDescendantEntryCapacity(static_cast<size_t>(descendantEntryCount_) + 1);
+  if (entryResult == PoolResult::Limit) return RuleInsertResult::Limit;
+  if (entryResult == PoolResult::OutOfMemory) return RuleInsertResult::OutOfMemory;
+
+  const size_t requiredSelectorBytes = static_cast<size_t>(selectorPoolSize_) + ancestor.size() + subject.size();
+  const PoolResult selectorResult = ensureSelectorPoolCapacity(requiredSelectorBytes);
+  if (selectorResult == PoolResult::Limit) return RuleInsertResult::Limit;
+  if (selectorResult == PoolResult::OutOfMemory) return RuleInsertResult::OutOfMemory;
+
+  uint16_t styleIndex = 0;
+  const PoolResult styleResult = internStyle(style, styleIndex);
+  if (styleResult == PoolResult::Limit) return RuleInsertResult::Limit;
+  if (styleResult == PoolResult::OutOfMemory) return RuleInsertResult::OutOfMemory;
+
+  const uint32_t ancestorOffset = selectorPoolSize_;
+  char* destination = selectorPool_.get() + ancestorOffset;
+  for (const char c : ancestor) *destination++ = asciiToLower(c);
+  const uint32_t subjectOffset = static_cast<uint32_t>(ancestorOffset + ancestor.size());
+  for (const char c : subject) *destination++ = asciiToLower(c);
+  selectorPoolSize_ = static_cast<uint32_t>(requiredSelectorBytes);
+
+  descendantEntries_[descendantEntryCount_++] = {ancestorOffset, subjectOffset, styleIndex,
+                                                 static_cast<uint16_t>(ancestor.size()),
+                                                 static_cast<uint16_t>(subject.size())};
   return RuleInsertResult::Inserted;
 }
 
@@ -611,6 +725,22 @@ void CssParser::parseDeclarationIntoStyle(std::string_view decl, CssStyle& style
     const std::string_view displayValue = stripTrailingImportant(value);
     style.display = iequalsAscii(displayValue, "none") ? CssDisplay::None : CssDisplay::Block;
     style.defined.display = 1;
+  } else if (iequalsAscii(name, "page-break-before") || iequalsAscii(name, "break-before")) {
+    const std::string_view breakValue = stripTrailingImportant(value);
+    style.pageBreakBefore = iequalsAscii(breakValue, "always") || iequalsAscii(breakValue, "page") ||
+                                    iequalsAscii(breakValue, "left") || iequalsAscii(breakValue, "right") ||
+                                    iequalsAscii(breakValue, "recto") || iequalsAscii(breakValue, "verso")
+                                ? CssPageBreak::Always
+                                : CssPageBreak::Auto;
+    style.defined.pageBreakBefore = 1;
+  } else if (iequalsAscii(name, "page-break-after") || iequalsAscii(name, "break-after")) {
+    const std::string_view breakValue = stripTrailingImportant(value);
+    style.pageBreakAfter = iequalsAscii(breakValue, "always") || iequalsAscii(breakValue, "page") ||
+                                   iequalsAscii(breakValue, "left") || iequalsAscii(breakValue, "right") ||
+                                   iequalsAscii(breakValue, "recto") || iequalsAscii(breakValue, "verso")
+                               ? CssPageBreak::Always
+                               : CssPageBreak::Auto;
+    style.defined.pageBreakAfter = 1;
   } else if (iequalsAscii(name, "direction")) {
     const std::string_view directionValue = stripTrailingImportant(value);
     if (iequalsAscii(directionValue, "rtl")) {
@@ -665,8 +795,8 @@ void CssParser::processRuleBlockWithStyle(std::string_view selectorGroup, const 
           return;
         }
 
-        // TODO: Support richer CSS selector syntax in the future. For now we only
-        // handle `tag`, `.class`, or `tag.class`. Reject anything containing a
+        // Support a bounded two-part descendant selector in addition to
+        // `tag`, `.class`, or `tag.class`. Reject anything containing a
         // character that introduces unsupported syntax:
         //   '+'  adjacent sibling combinator
         //   '>'  child combinator
@@ -675,24 +805,71 @@ void CssParser::processRuleBlockWithStyle(std::string_view selectorGroup, const 
         //   '#'  ID selector
         //   '~'  general sibling combinator
         //   '*'  wildcard
-        //   ' '  descendant combinator
-        // Single-pass scan via find_first_of instead of eight sequential find() calls.
-        constexpr std::string_view kUnsupportedSelectorChars = "+>[:#~* ";
+        constexpr std::string_view kUnsupportedSelectorChars = "+>[:#~*";
         if (sel.find_first_of(kUnsupportedSelectorChars) != std::string_view::npos) return;
+
+        std::string_view parts[3];
+        size_t partCount = 0;
+        forEachDelimitedToken(sel, isCssWhitespace, [&](const std::string_view part) {
+          if (partCount < std::size(parts)) parts[partCount] = part;
+          ++partCount;
+        });
+        if (partCount == 0 || partCount > 2) return;
+
+        const auto isSimpleSelector = [](const std::string_view selector) {
+          if (selector.empty()) return false;
+          size_t dotCount = 0;
+          for (const char c : selector) {
+            if (c == '.') ++dotCount;
+          }
+          if (dotCount > 1 || selector.back() == '.') return false;
+          return selector.front() != '.' || selector.size() > 1;
+        };
+        if (!isSimpleSelector(parts[0]) || (partCount == 2 && !isSimpleSelector(parts[1]))) return;
+
+        const bool descendant = partCount == 2;
+        if (descendant && parts[0].size() + 1 + parts[1].size() > MAX_SELECTOR_LENGTH) return;
+        if (descendant && descendantEntryCount_ >= MAX_DESCENDANT_RULES) {
+          bool existing = false;
+          for (uint16_t i = 0; i < descendantEntryCount_ && !existing; ++i) {
+            const DescendantEntry& entry = descendantEntries_[i];
+            const SelectorEntry ancestorEntry = {entry.ancestorOffset, entry.styleIndex, entry.ancestorLength};
+            const SelectorEntry subjectEntry = {entry.subjectOffset, entry.styleIndex, entry.subjectLength};
+            existing = compareEntryToPieces(ancestorEntry, parts[0], {}, {}) == 0 &&
+                       compareEntryToPieces(subjectEntry, parts[1], {}, {}) == 0;
+          }
+          if (!existing) {
+            descendantRulesTruncated_ = true;
+            return;
+          }
+        }
 
         if (ruleGrowthStopped_) {
           // Continue the cascade for stored selectors without retrying failed
           // allocations for new rules.
-          bool exact = false;
-          const size_t matchingIndex = lowerBound(sel, {}, {}, exact);
-          if (!exact || matchingIndex >= entryCount_) return;
+          if (!descendant) {
+            bool exact = false;
+            const size_t matchingIndex = lowerBound(parts[0], {}, {}, exact);
+            if (!exact || matchingIndex >= entryCount_) return;
+          } else {
+            bool exact = false;
+            for (uint16_t i = 0; i < descendantEntryCount_ && !exact; ++i) {
+              const DescendantEntry& entry = descendantEntries_[i];
+              const SelectorEntry ancestorEntry = {entry.ancestorOffset, entry.styleIndex, entry.ancestorLength};
+              const SelectorEntry subjectEntry = {entry.subjectOffset, entry.styleIndex, entry.subjectLength};
+              exact = compareEntryToPieces(ancestorEntry, parts[0], {}, {}) == 0 &&
+                      compareEntryToPieces(subjectEntry, parts[1], {}, {}) == 0;
+            }
+            if (!exact) return;
+          }
         }
-        const RuleInsertResult result = insertOrMerge(sel, style);
+        const RuleInsertResult result =
+            descendant ? insertOrMergeDescendant(parts[0], parts[1], style) : insertOrMerge(parts[0], style);
         if (result == RuleInsertResult::Limit) {
-          LOG_ERR("CSS", "CSS rule store limit reached at %u rules", entryCount_);
+          LOG_ERR("CSS", "CSS rule store limit reached at %zu rules", ruleCount());
           ruleGrowthStopped_ = true;
         } else if (result == RuleInsertResult::OutOfMemory) {
-          LOG_ERR("CSS", "OOM while growing CSS rule store at %u rules", entryCount_);
+          LOG_ERR("CSS", "OOM while growing CSS rule store at %zu rules", ruleCount());
           ruleGrowthStopped_ = true;
         }
       });
@@ -854,12 +1031,49 @@ CssParser::ParseResult CssParser::loadFromStream(HalFile& source) {
   }
   const bool incompleteInput = bodyDepth > 0 || inAtRule || inComment || !selector.empty();
   LOG_DBG("CSS", "Parsed %zu rules from %zu bytes", ruleCount(), totalRead);
-  return ruleGrowthStopped_ || inputTruncated || incompleteInput ? ParseResult::Partial : ParseResult::Complete;
+  return ruleGrowthStopped_ || descendantRulesTruncated_ || inputTruncated || incompleteInput ? ParseResult::Partial
+                                                                                              : ParseResult::Complete;
 }
 
 // Style resolution
 
-CssStyle CssParser::resolveStyle(std::string_view tagName, std::string_view classAttr) const {
+bool CssParser::selectorMatchesElement(const std::string_view selector, const std::string_view tagName,
+                                       const std::string_view classAttr) {
+  if (selector.empty()) return false;
+  const auto equalsLowerSelector = [](const std::string_view value, const std::string_view lowerSelector) {
+    return value.size() == lowerSelector.size() &&
+           std::equal(
+               value.begin(), value.end(), lowerSelector.begin(), lowerSelector.end(),
+               [](const char valueByte, const char selectorByte) { return asciiToLower(valueByte) == selectorByte; });
+  };
+
+  const size_t dot = selector.find('.');
+  if (dot == std::string_view::npos) return equalsLowerSelector(tagName, selector);
+
+  const std::string_view selectorTag = selector.substr(0, dot);
+  const std::string_view selectorClass = selector.substr(dot + 1);
+  if ((!selectorTag.empty() && !equalsLowerSelector(tagName, selectorTag)) || selectorClass.empty()) return false;
+
+  bool matched = false;
+  forEachDelimitedToken(classAttr, isCssWhitespace, [&](const std::string_view cls) {
+    matched = matched || equalsLowerSelector(cls, selectorClass);
+  });
+  return matched;
+}
+
+CssParser::DescendantMask CssParser::matchingAncestorMask(const std::string_view tagName,
+                                                          const std::string_view classAttr) const {
+  DescendantMask mask = 0;
+  for (uint16_t i = 0; i < descendantEntryCount_; ++i) {
+    if (selectorMatchesElement(descendantAncestorAt(i), tagName, classAttr)) {
+      mask |= DescendantMask{1} << i;
+    }
+  }
+  return mask;
+}
+
+CssStyle CssParser::resolveStyle(const std::string_view tagName, const std::string_view classAttr,
+                                 const DescendantMask activeAncestors) const {
   static bool lowHeapWarningLogged = false;
   if (ESP.getFreeHeap() < MIN_FREE_HEAP_FOR_CSS) {
     if (!lowHeapWarningLogged) {
@@ -877,10 +1091,22 @@ CssStyle CssParser::resolveStyle(std::string_view tagName, std::string_view clas
     result.applyOver(*style);
   }
 
+  // 2. Descendant selectors have more specificity than a bare element. The
+  // parser passes a cumulative bit mask, so matching does not retain tag/class
+  // strings for every open HTML node.
+  if (activeAncestors != 0) {
+    for (uint16_t i = 0; i < descendantEntryCount_; ++i) {
+      if ((activeAncestors & (DescendantMask{1} << i)) != 0 &&
+          selectorMatchesElement(descendantSubjectAt(i), tagName, classAttr)) {
+        result.applyOver(stylePool_[descendantEntries_[i].styleIndex]);
+      }
+    }
+  }
+
   if (classAttr.empty()) return result;
 
   // TODO: Support combinations of classes (e.g. style on .class1.class2)
-  // 2. Apply class styles (medium priority).
+  // 3. Apply class styles (medium priority).
   forEachDelimitedToken(classAttr, isCssWhitespace, [&](std::string_view cls) {
     if (const CssStyle* style = findStyle(".", cls)) {
       result.applyOver(*style);
@@ -888,7 +1114,7 @@ CssStyle CssParser::resolveStyle(std::string_view tagName, std::string_view clas
   });
 
   // TODO: Support combinations of classes (e.g. style on p.class1.class2)
-  // 3. Apply element.class styles (higher priority).
+  // 4. Apply element.class styles (higher priority).
   forEachDelimitedToken(classAttr, isCssWhitespace, [&](std::string_view cls) {
     if (const CssStyle* style = findStyle(tagName, ".", cls)) {
       result.applyOver(*style);
@@ -1023,8 +1249,8 @@ bool CssParser::saveToCache(const bool complete) const {
   writeByte(complete ? 0 : CSS_CACHE_FLAG_PARTIAL);
 
   // Write rule count
-  const uint16_t ruleCount = entryCount_;
-  writeBytes(&ruleCount, sizeof(ruleCount));
+  const uint16_t serializedRuleCount = static_cast<uint16_t>(ruleCount());
+  writeBytes(&serializedRuleCount, sizeof(serializedRuleCount));
 
   // Write each rule: selector string + CssStyle fields
   for (uint16_t i = 0; i < entryCount_; ++i) {
@@ -1038,6 +1264,23 @@ bool CssParser::saveToCache(const bool complete) const {
     encodeStyleWire(stylePool_[entries_[i].styleIndex], styleWire);
     writeBytes(styleWire, sizeof(styleWire));
     if (!writeOk) break;
+  }
+
+  // Descendant selectors use the same wire record as simple selectors, with
+  // one canonical ASCII space between their two parts. Cache hydration
+  // dispatches them back into the bounded descendant index.
+  for (uint16_t i = 0; writeOk && i < descendantEntryCount_; ++i) {
+    const std::string_view ancestor = descendantAncestorAt(i);
+    const std::string_view subject = descendantSubjectAt(i);
+    const auto selectorLen = static_cast<uint16_t>(ancestor.size() + 1 + subject.size());
+    writeBytes(&selectorLen, sizeof(selectorLen));
+    writeBytes(ancestor.data(), ancestor.size());
+    writeBytes(" ", 1);
+    writeBytes(subject.data(), subject.size());
+
+    uint8_t styleWire[STYLE_WIRE_BYTES];
+    encodeStyleWire(stylePool_[descendantEntries_[i].styleIndex], styleWire);
+    writeBytes(styleWire, sizeof(styleWire));
   }
 
   if (!writeOk || !file.close()) {
@@ -1068,7 +1311,7 @@ bool CssParser::saveToCache(const bool complete) const {
 
   Storage.remove(backupPath.c_str());
 
-  LOG_DBG("CSS", "Saved %u rules to %s cache", ruleCount, complete ? "complete" : "partial");
+  LOG_DBG("CSS", "Saved %u rules to %s cache", serializedRuleCount, complete ? "complete" : "partial");
   return true;
 }
 
@@ -1116,7 +1359,9 @@ CssParser::CacheLoadResult CssParser::loadFromCache() {
     return CacheLoadResult::Invalid;
   }
 
-  const PoolResult entryCapacityResult = ensureEntryCapacity(ruleCount);
+  // The wire count includes descendants. Reserve only the first flat-index
+  // chunk here; each store grows independently as records are dispatched.
+  const PoolResult entryCapacityResult = ensureEntryCapacity(std::min<uint16_t>(ruleCount, 128));
   if (entryCapacityResult == PoolResult::OutOfMemory) {
     clear();
     return CacheLoadResult::LowMemory;
@@ -1164,7 +1409,19 @@ CssParser::CacheLoadResult CssParser::loadFromCache() {
       return CacheLoadResult::Invalid;
     }
 
-    const RuleInsertResult insertResult = insertOrMerge(std::string_view(selectorBuffer.get(), selectorLen), style);
+    const std::string_view selector(selectorBuffer.get(), selectorLen);
+    std::string_view parts[3];
+    size_t partCount = 0;
+    forEachDelimitedToken(selector, isCssWhitespace, [&](const std::string_view part) {
+      if (partCount < std::size(parts)) parts[partCount] = part;
+      ++partCount;
+    });
+    if (partCount == 0 || partCount > 2) {
+      clear();
+      return CacheLoadResult::Invalid;
+    }
+    const RuleInsertResult insertResult =
+        partCount == 2 ? insertOrMergeDescendant(parts[0], parts[1], style) : insertOrMerge(parts[0], style);
     if (insertResult == RuleInsertResult::OutOfMemory) {
       clear();
       return CacheLoadResult::LowMemory;

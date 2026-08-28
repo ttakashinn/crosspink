@@ -278,6 +278,51 @@ void ChapterHtmlSlimParser::updateEffectiveInlineStyle() {
   }
 }
 
+CssParser::DescendantMask ChapterHtmlSlimParser::activeCssAncestorMask() const {
+  if (!cssParser || depth <= 0) return 0;
+  const size_t index = std::min(static_cast<size_t>(depth - 1), MAX_CSS_ANCESTOR_DEPTH - 1);
+  return cssAncestorMasks[index];
+}
+
+void ChapterHtmlSlimParser::trackCssAncestor(const std::string_view tagName, const std::string_view classAttr) {
+  if (!cssParser || depth < 0 || static_cast<size_t>(depth) >= MAX_CSS_ANCESTOR_DEPTH) return;
+  cssAncestorMasks[static_cast<size_t>(depth)] =
+      activeCssAncestorMask() | cssParser->matchingAncestorMask(tagName, classAttr);
+}
+
+void ChapterHtmlSlimParser::forcePageBreak() {
+  if (partWordBufferIndex > 0) flushPartWordBuffer();
+  if (currentTextBlock && !currentTextBlock->isEmpty()) makePages();
+  if (!currentPage || currentPage->elements.empty()) return;
+
+  setCurrentPageVisibleOffset(visibleTextOffset);
+  completePageFn(std::move(currentPage), xpathParagraphIndex, xpathListItemIndex, currentPageVisibleOffset);
+  completedPageCount++;
+  currentPage.reset();
+  currentPageNextY = 0;
+  currentPageVisibleOffsetSet = false;
+}
+
+void ChapterHtmlSlimParser::registerPageBreakAfter(const int elementDepth) {
+  if (pageBreakAfterCount >= pageBreakAfterDepths.size()) {
+    LOG_DBG("EHP", "Page-break-after stack full at depth %d", elementDepth);
+    return;
+  }
+  pageBreakAfterDepths[pageBreakAfterCount++] = elementDepth;
+}
+
+bool ChapterHtmlSlimParser::consumePageBreakAfter(const int elementDepth) {
+  for (size_t i = pageBreakAfterCount; i > 0; --i) {
+    if (pageBreakAfterDepths[i - 1] != elementDepth) continue;
+    for (size_t tail = i; tail < pageBreakAfterCount; ++tail) {
+      pageBreakAfterDepths[tail - 1] = pageBreakAfterDepths[tail];
+    }
+    pageBreakAfterCount--;
+    return true;
+  }
+  return false;
+}
+
 void ChapterHtmlSlimParser::flushPendingAnchor() {
   if (pendingAnchorId.empty()) return;
 
@@ -738,7 +783,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
   // before tag-specific branches emit any content or metadata.
   CssStyle cssStyle;
   if (self->cssParser) {
-    cssStyle = self->cssParser->resolveStyle(name, classAttr);
+    cssStyle = self->cssParser->resolveStyle(name, classAttr, self->activeCssAncestorMask());
     if (!styleAttr.empty()) {
       CssStyle inlineStyle = CssParser::parseInlineStyle(styleAttr);
       cssStyle.applyOver(inlineStyle);
@@ -768,6 +813,17 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     self->skipUntilDepth = self->depth;
     self->depth += 1;
     return;
+  }
+
+  self->trackCssAncestor(name, classAttr);
+
+  if (self->tableDepth == 0 && isHeaderOrBlock(name)) {
+    if (cssStyle.hasPageBreakBefore() && cssStyle.pageBreakBefore == CssPageBreak::Always) {
+      self->forcePageBreak();
+    }
+    if (cssStyle.hasPageBreakAfter() && cssStyle.pageBreakAfter == CssPageBreak::Always) {
+      self->registerPageBreakAfter(self->depth);
+    }
   }
 
   // Buffer one simple row; oversized rows fall back to full-width flow.
@@ -1955,6 +2011,9 @@ void XMLCALL ChapterHtmlSlimParser::endElement(void* userData, const XML_Char* n
       self->listItemBulletOnly = false;
     }
   }
+  if (!insideSkippedSubtree && self->consumePageBreakAfter(self->depth)) {
+    self->forcePageBreak();
+  }
   if (strcmp(name, "body") == 0) {
     self->insideBody = false;
   }
@@ -1967,6 +2026,8 @@ ChapterHtmlSlimParser::~ChapterHtmlSlimParser() { abortParse(); }
 
 bool ChapterHtmlSlimParser::beginParse() {
   htmlEnded_ = false;
+  cssAncestorMasks.fill(0);
+  pageBreakAfterCount = 0;
   // Initialize block style stack with a root entry representing "no ancestor block elements".
   // The user's paragraph alignment is set as the default so child elements without explicit
   // text-align inherit it correctly through getCombinedBlockStyle.

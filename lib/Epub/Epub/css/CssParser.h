@@ -21,9 +21,10 @@
  *   - Class selectors: .classname
  *   - Combined: element.classname
  *   - Grouped: selector1, selector2 { }
+ *   - Two-part descendants: ancestor subject
  *
  * Not supported (silently ignored):
- *   - Descendant/child selectors
+ *   - Three-or-more-part descendants and child/sibling combinators
  *   - Pseudo-classes and pseudo-elements
  *   - Media queries (content is skipped)
  *   - @import, @font-face, etc.
@@ -50,7 +51,9 @@ class CssParser {
   };
 
   // Bump when CSS cache format or rules change; section caches are invalidated when this changes
-  static constexpr uint8_t CSS_CACHE_VERSION = 10;
+  static constexpr uint8_t CSS_CACHE_VERSION = 11;
+  static constexpr size_t MAX_DESCENDANT_RULES = 64;
+  using DescendantMask = uint64_t;
 
   explicit CssParser(std::string cachePath) : cachePath(std::move(cachePath)) {}
   ~CssParser() = default;
@@ -75,7 +78,11 @@ class CssParser {
    * @param classAttr The class attribute value (may contain multiple space-separated classes)
    * @return Combined style with all applicable rules merged
    */
-  [[nodiscard]] CssStyle resolveStyle(std::string_view tagName, std::string_view classAttr) const;
+  [[nodiscard]] CssStyle resolveStyle(std::string_view tagName, std::string_view classAttr,
+                                      DescendantMask activeAncestors = 0) const;
+
+  /** Return the descendant-rule bits for which this element is a matching ancestor. */
+  [[nodiscard]] DescendantMask matchingAncestorMask(std::string_view tagName, std::string_view classAttr) const;
 
   /**
    * Parse an inline style attribute string.
@@ -87,24 +94,27 @@ class CssParser {
   /**
    * Check if any rules have been loaded
    */
-  [[nodiscard]] bool empty() const { return entryCount_ == 0; }
+  [[nodiscard]] bool empty() const { return entryCount_ == 0 && descendantEntryCount_ == 0; }
 
   /**
    * Get count of loaded rule sets
    */
-  [[nodiscard]] size_t ruleCount() const { return entryCount_; }
+  [[nodiscard]] size_t ruleCount() const { return static_cast<size_t>(entryCount_) + descendantEntryCount_; }
 
   /**
    * Clear all loaded rules
    */
   void clear() {
     entries_.reset();
+    descendantEntries_.reset();
     selectorPool_.reset();
     stylePool_.reset();
     entryCount_ = entryCapacity_ = 0;
+    descendantEntryCount_ = descendantEntryCapacity_ = 0;
     selectorPoolSize_ = selectorPoolCapacity_ = 0;
     styleCount_ = styleCapacity_ = 0;
     ruleGrowthStopped_ = false;
+    descendantRulesTruncated_ = false;
   }
 
   /**
@@ -154,18 +164,31 @@ class CssParser {
   };
   static_assert(sizeof(SelectorEntry) == 8);
 
+  struct DescendantEntry {
+    uint32_t ancestorOffset;
+    uint32_t subjectOffset;
+    uint16_t styleIndex;
+    uint16_t ancestorLength;
+    uint16_t subjectLength;
+  };
+  static_assert(sizeof(DescendantEntry) == 16);
+
   // Bounded flat storage keeps every growth operation fallible and avoids the
   // throwing node allocations used by std::unordered_map.
   std::unique_ptr<SelectorEntry[]> entries_;
+  std::unique_ptr<DescendantEntry[]> descendantEntries_;
   std::unique_ptr<char[]> selectorPool_;
   std::unique_ptr<CssStyle[]> stylePool_;
   uint16_t entryCount_ = 0;
   uint16_t entryCapacity_ = 0;
+  uint16_t descendantEntryCount_ = 0;
+  uint16_t descendantEntryCapacity_ = 0;
   uint32_t selectorPoolSize_ = 0;
   uint32_t selectorPoolCapacity_ = 0;
   uint16_t styleCount_ = 0;
   uint16_t styleCapacity_ = 0;
   bool ruleGrowthStopped_ = false;
+  bool descendantRulesTruncated_ = false;
 
   std::string cachePath;
 
@@ -178,11 +201,17 @@ class CssParser {
   [[nodiscard]] const CssStyle* findStyle(std::string_view p0, std::string_view p1 = {},
                                           std::string_view p2 = {}) const;
   [[nodiscard]] std::string_view selectorAt(size_t index) const;
+  [[nodiscard]] std::string_view descendantAncestorAt(size_t index) const;
+  [[nodiscard]] std::string_view descendantSubjectAt(size_t index) const;
   RuleInsertResult insertOrMerge(std::string_view selector, const CssStyle& style);
+  RuleInsertResult insertOrMergeDescendant(std::string_view ancestor, std::string_view subject, const CssStyle& style);
   PoolResult ensureEntryCapacity(size_t needed);
+  PoolResult ensureDescendantEntryCapacity(size_t needed);
   PoolResult ensureSelectorPoolCapacity(size_t needed);
   PoolResult ensureStyleCapacity(size_t needed);
   PoolResult internStyle(const CssStyle& style, uint16_t& indexOut);
+  [[nodiscard]] static bool selectorMatchesElement(std::string_view selector, std::string_view tagName,
+                                                   std::string_view classAttr);
   static CssStyle parseDeclarations(std::string_view declBlock);
   static void parseDeclarationIntoStyle(std::string_view decl, CssStyle& style);
 

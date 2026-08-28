@@ -36,7 +36,7 @@ Sau khi diff là thay đổi chủ ý:
 .venv/bin/python scripts/render_lab.py verify --suite full --accept
 ```
 
-Review cả ảnh và `result.json`, đặc biệt `page_count`, `page_index`, `visible_text_offset`, kích thước logic và trạng thái grayscale plane. Với table, manifest khóa riêng hành vi theo viewport: X3 giữ grid 4 cột; X4 480 px fallback sang stacked để tránh cột quá hẹp.
+Review cả ảnh và `result.json`, đặc biệt `page_count`, `page_index`, `visible_text_offset`, kích thước logic và trạng thái grayscale plane. Với table, manifest khóa riêng hành vi theo viewport: X3 giữ grid 4 cột; X4 480 px fallback sang stacked để tránh cột quá hẹp. Checkpoint CSS và pagination còn khóa selector descendant 2 phần cùng `page-break-before/after`; thay đổi page count ở 2 checkpoint này phải được review như thay đổi layout, không chỉ pixel.
 
 ## Giới hạn
 

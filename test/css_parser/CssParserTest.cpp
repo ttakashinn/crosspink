@@ -84,6 +84,78 @@ TEST_F(CssParserTest, ResolvesCaseInsensitiveCascadeAndMergesDuplicates) {
   EXPECT_EQ(style.marginTop.unit, CssUnit::Em);
 }
 
+TEST_F(CssParserTest, ResolvesBoundedTwoPartDescendantSelectors) {
+  CssParser parser(cachePath());
+  ASSERT_EQ(loadCss(parser,
+                    "div p { font-style: italic; }\n"
+                    ".chapter p.target { font-weight: bold; text-align: center; }\n"
+                    "body .target { margin-top: 2em; }\n"),
+            CssParser::ParseResult::Complete);
+
+  const auto sectionMask = parser.matchingAncestorMask("SECTION", "chapter");
+  const auto bodyMask = parser.matchingAncestorMask("body", "");
+  const auto divMask = parser.matchingAncestorMask("div", "other");
+  EXPECT_NE(sectionMask, 0u);
+  EXPECT_NE(bodyMask, 0u);
+  EXPECT_NE(divMask, 0u);
+
+  const CssStyle chapterTarget = parser.resolveStyle("p", "TARGET", sectionMask | bodyMask);
+  EXPECT_EQ(chapterTarget.fontWeight, CssFontWeight::Bold);
+  EXPECT_EQ(chapterTarget.textAlign, CssTextAlign::Center);
+  ASSERT_TRUE(chapterTarget.hasMarginTop());
+  EXPECT_FLOAT_EQ(chapterTarget.marginTop.value, 2.0f);
+
+  EXPECT_EQ(parser.resolveStyle("p", "", divMask).fontStyle, CssFontStyle::Italic);
+  EXPECT_FALSE(parser.resolveStyle("p", "target").hasFontWeight());
+}
+
+TEST_F(CssParserTest, RejectsUnsupportedDescendantSyntax) {
+  CssParser parser(cachePath());
+  ASSERT_EQ(loadCss(parser,
+                    "main section p { font-weight: bold; }\n"
+                    "main > p { font-style: italic; }\n"
+                    "main p:first-child { text-align: center; }\n"
+                    ".valid { text-align: right; }\n"),
+            CssParser::ParseResult::Complete);
+
+  EXPECT_EQ(parser.ruleCount(), 1u);
+  EXPECT_EQ(parser.resolveStyle("p", "valid").textAlign, CssTextAlign::Right);
+}
+
+TEST_F(CssParserTest, ParsesPageBreakAliasesAndCacheRoundTrip) {
+  CssParser writer(cachePath());
+  ASSERT_EQ(loadCss(writer,
+                    ".before { page-break-before: always; }\n"
+                    ".after { break-after: page; }\n"
+                    ".avoid { page-break-after: avoid; }\n"),
+            CssParser::ParseResult::Complete);
+  EXPECT_EQ(writer.resolveStyle("div", "before").pageBreakBefore, CssPageBreak::Always);
+  EXPECT_EQ(writer.resolveStyle("p", "after").pageBreakAfter, CssPageBreak::Always);
+  EXPECT_EQ(writer.resolveStyle("p", "avoid").pageBreakAfter, CssPageBreak::Auto);
+  ASSERT_TRUE(writer.saveToCache(true));
+
+  CssParser reader(cachePath());
+  ASSERT_EQ(reader.loadFromCache(), CssParser::CacheLoadResult::Complete);
+  EXPECT_EQ(reader.resolveStyle("div", "before").pageBreakBefore, CssPageBreak::Always);
+  EXPECT_EQ(reader.resolveStyle("p", "after").pageBreakAfter, CssPageBreak::Always);
+}
+
+TEST_F(CssParserTest, DescendantRuleCapIsPartialAndKeepsSimpleRules) {
+  CssParser parser(cachePath());
+  std::string css;
+  for (size_t i = 0; i < CssParser::MAX_DESCENDANT_RULES + 4; ++i) {
+    css += ".ancestor-" + std::to_string(i) + " p { text-indent: " + std::to_string(i + 1) + "px; }\n";
+  }
+  css += ".plain { font-weight: bold; }\n";
+
+  EXPECT_EQ(loadCss(parser, css), CssParser::ParseResult::Partial);
+  EXPECT_EQ(parser.ruleCount(), CssParser::MAX_DESCENDANT_RULES + 1);
+  EXPECT_EQ(parser.resolveStyle("span", "plain").fontWeight, CssFontWeight::Bold);
+  const auto acceptedMask = parser.matchingAncestorMask("div", "ancestor-63");
+  EXPECT_FLOAT_EQ(parser.resolveStyle("p", "", acceptedMask).textIndent.value, 64.0f);
+  EXPECT_EQ(parser.matchingAncestorMask("div", "ancestor-64"), 0u);
+}
+
 TEST_F(CssParserTest, DeduplicatedStylesReachTheBoundedRuleCap) {
   CssParser parser(cachePath());
   std::string css;
@@ -171,7 +243,8 @@ TEST_F(CssParserTest, CanonicalCacheRoundTripPreservesStyles) {
   ASSERT_EQ(loadCss(writer,
                     "p { text-align: justify; margin-top: 2em; }\n"
                     ".bold { font-weight: bolder; }\n"
-                    ".hidden { display: none; }\n"),
+                    ".hidden { display: none; }\n"
+                    ".chapter p.note { font-style: italic; }\n"),
             CssParser::ParseResult::Complete);
   ASSERT_TRUE(writer.saveToCache(true));
   EXPECT_EQ(writer.inspectCache(), CssParser::CacheStatus::Complete);
@@ -181,6 +254,8 @@ TEST_F(CssParserTest, CanonicalCacheRoundTripPreservesStyles) {
   EXPECT_EQ(reader.ruleCount(), writer.ruleCount());
   EXPECT_EQ(reader.resolveStyle("span", "bold").fontWeight, CssFontWeight::Bold);
   EXPECT_EQ(reader.resolveStyle("div", "hidden").display, CssDisplay::None);
+  const auto ancestorMask = reader.matchingAncestorMask("section", "chapter");
+  EXPECT_EQ(reader.resolveStyle("p", "note", ancestorMask).fontStyle, CssFontStyle::Italic);
   const CssStyle paragraph = reader.resolveStyle("p", "");
   EXPECT_EQ(paragraph.textAlign, CssTextAlign::Justify);
   EXPECT_FLOAT_EQ(paragraph.marginTop.value, 2.0f);
@@ -249,6 +324,8 @@ TEST_F(CssParserTest, CacheHydrationRejectsInvalidStyleEnumBytes) {
   }
   enumOffsets.push_back(kStyleEnumPrefixBytes + kStyleLengthFieldCount * kStyleLengthBytes);
   enumOffsets.push_back(kStyleEnumPrefixBytes + kStyleLengthFieldCount * kStyleLengthBytes + 1);
+  enumOffsets.push_back(kStyleEnumPrefixBytes + kStyleLengthFieldCount * kStyleLengthBytes + 2);
+  enumOffsets.push_back(kStyleEnumPrefixBytes + kStyleLengthFieldCount * kStyleLengthBytes + 3);
 
   for (const size_t enumOffset : enumOffsets) {
     SCOPED_TRACE(enumOffset);

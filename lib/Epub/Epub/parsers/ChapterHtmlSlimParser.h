@@ -8,6 +8,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "Epub/FootnoteEntry.h"
@@ -56,6 +57,8 @@ class ChapterHtmlSlimParser {
   bool hyphenationEnabled;
   bool focusReadingEnabled;
   const CssParser* cssParser;
+  static constexpr size_t MAX_CSS_ANCESTOR_DEPTH = 64;
+  std::array<CssParser::DescendantMask, MAX_CSS_ANCESTOR_DEPTH> cssAncestorMasks = {};
   bool embeddedStyle;
   uint8_t imageRendering;
   std::string contentBase;
@@ -101,6 +104,9 @@ class ChapterHtmlSlimParser {
   std::array<std::vector<std::shared_ptr<TextBlock>>, MAX_GRID_TABLE_COLUMNS> tableCellLines;
   std::vector<uint32_t> tableLineVisibleOffsets;
   bool listItemBulletOnly = false;  // true when currentTextBlock has only the <li> bullet
+  static constexpr size_t MAX_PENDING_PAGE_BREAKS = 16;
+  std::array<int, MAX_PENDING_PAGE_BREAKS> pageBreakAfterDepths = {};
+  size_t pageBreakAfterCount = 0;
 
   // Anchor-to-page mapping: tracks which page each HTML id attribute lands on
   int completedPageCount = 0;
@@ -140,8 +146,13 @@ class ChapterHtmlSlimParser {
   uint32_t parseStartTime_ = 0;
 
   void updateEffectiveInlineStyle();
+  [[nodiscard]] CssParser::DescendantMask activeCssAncestorMask() const;
+  void trackCssAncestor(std::string_view tagName, std::string_view classAttr);
   void startNewTextBlock(const BlockStyle& blockStyle);
   void flushPendingAnchor();
+  void forcePageBreak();
+  void registerPageBreakAfter(int elementDepth);
+  bool consumePageBreakAfter(int elementDepth);
   void flushPartWordBuffer();
   void fallbackTableRowToStacked();
   void closeTableCell();

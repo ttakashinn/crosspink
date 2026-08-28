@@ -33,7 +33,7 @@ Vị trí nguồn: `src/activities/reader/EpubReaderActivity.cpp`, `lib/GfxRende
 
 - Render lab đã khóa framebuffer X3/X4 trên host, nhưng chưa đối chiếu với ảnh panel thật; waveform, ghosting và độ đậm vẫn chưa có oracle phần cứng.
 - Golden hiện xác nhận pagination, CSS cascade, table, image placement và output pixel; benchmark heap/timing trên ESP32 và kiểm tra cache cũ vẫn chưa đầy đủ.
-- CSS parser trên `vns-next` chỉ hỗ trợ selector element, class, `element.class` và grouped selector; chưa hỗ trợ descendant selector.
+- CSS parser trên nhánh tích hợp đã hỗ trợ selector descendant 2 phần với bộ nhớ chặn trên; selector phức tạp hơn vẫn được bỏ qua có chủ ý.
 - Table layout upstream đã được tích hợp và khóa regression theo viewport; X3 giữ grid 4 cột còn X4 480 px fallback sang stacked khi cell quá hẹp.
 - CrossInk có render mode theo sách và fallback khi thiếu RAM; `vns-next` chưa có cơ chế tương đương.
 
@@ -136,6 +136,8 @@ Cơ chế tham khảo: CrossInk commit `c5a615b`; CSS mới nhất tại `lib/Ep
 - Lợi ích dự kiến: EPUB giữ đúng style theo ngữ cảnh, chapter opener và paragraph class tốt hơn.
 - Rủi ro: tăng chi phí lookup và RAM trong parse/layout.
 - Cách bác bỏ: bỏ thay đổi nếu corpus không cải thiện đáng kể hoặc p95 indexing/tổng heap xấu đi không thể khống chế.
+
+Trạng thái ngày 28/08/2026: đã triển khai matcher descendant 2 phần bằng mask 64 bit và ancestor stack cố định, không giữ chuỗi theo từng node. Rule descendant bị chặn ở 64; khi chạm giới hạn hoặc thiếu heap, parser giữ phần rule đã nhận và không lặp cấp phát thất bại. `page-break-before/after` cùng alias `break-before/after` đã đi qua pipeline layout. CSS cache tăng lên v11, section cache lên v42. 184/184 host tests và 33/33 render case qua 2 lần chạy; 6 golden thay đổi đã được review trực quan. Build `default` dùng RAM tĩnh 57.180 B, flash 5.646.425 B; `sticky` dùng RAM tĩnh 66.828 B, flash 5.434.939 B. So với baseline trước thay đổi, RAM tĩnh không tăng, flash tăng lần lượt 4.780 B và 4.664 B. Kiểm chứng panel thật vẫn chưa thực hiện.
 
 #### 3.2. Typography profile — ưu tiên 2
 
