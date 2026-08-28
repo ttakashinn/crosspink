@@ -189,6 +189,24 @@ Trạng thái ngày 28/08/2026: phần mềm Giai đoạn 4 đã hoàn thành. K
 
 Không đổi waveform trong giai đoạn phần mềm này. Reader hiện đã tách base refresh cho trang ảnh, tiled grayscale và cleanup; HAL/driver tự chọn chuỗi riêng cho X3, X4 và Paper Mono, trong đó Paper Mono ghép base với gray planes. Simulator không mô hình hóa LUT, ghosting hoặc độ đậm panel nên mọi chỉnh waveform khi chưa có ảnh/đo thiết bị sẽ là suy đoán. Gate text → image → text trên thiết bị vẫn phải được ghi rõ là chưa thực hiện khi phát hành.
 
+## Rà soát hợp nhất với CrossInk trước phát hành
+
+Ngày 29/08/2026, mã được đối chiếu lại với `uxjulia/CrossInk` tại commit `cab4f24922f`. Kết luận là không có một nhánh thắng toàn bộ; bản tích hợp giữ hoặc nhập từng cơ chế theo chi phí thực tế trên X3/X4.
+
+| Hạng mục | Quyết định cho VNS | Căn cứ |
+| --- | --- | --- |
+| Font mặc định | Giữ Noto Serif/Sans của VNS | Bao phủ tiếng Việt trực tiếp, NFC hóa NFD trước layout, đủ 4 style và có golden cho font built-in/SD. Không thêm Bitter/Lexend vào flash chỉ để tăng số lựa chọn. |
+| Độ đậm chữ AA | Chưa dùng ngưỡng `--darken-aa` của CrossInk làm mặc định | CrossInk hạ ngưỡng lượng tử để nét đậm hơn, nhưng simulator không xác nhận được bết nét, counter và ghosting trên panel. VNS vẫn cho phép tắt text AA; đổi mặc định cần A/B thiết bị. |
+| CSS selector/cache | Giữ kho phẳng có giới hạn của VNS; giữ descendant selector và page break đã nhập chọn lọc | Mọi lần tăng dung lượng đều có thể thất bại an toàn, selector/style pool bị chặn; phù hợp heap X3 hơn `unordered_map` của CrossInk. CrossInk hỗ trợ tối đa 100 descendant rule và disk fallback, còn VNS chủ động chặn ở 64 để dùng mask 64 bit không cấp phát. |
+| CSS visual extras | Chưa nhập black background và small caps | Corpus chuẩn chưa chứng minh nhu cầu. Small-caps của CrossInk chưa ánh xạ đầy đủ `ơ`, `ư` và Latin Extended Additional tiếng Việt; nhập nguyên trạng sẽ tạo lỗi nhìn thấy được. |
+| Layout khi thiếu RAM | Nhập ngưỡng bảo vệ và giải phóng cache font, giữ fallback `Standard → Safe` của VNS | Parser dừng trước các vùng tăng STL/shared pointer ở 44 KiB free heap hoặc 32 KiB largest block, thử giải phóng cache font SD 1 lần rồi trả lỗi có phân loại để reader dựng lại Safe. CrossInk vẫn hơn về kiến trúc arena và 4 cấp giảm chất lượng; đây là phần còn lại cho vòng sau. |
+| Ảnh ngoài viewport | VNS đã nhập clipping nhưng siết chặt hơn CrossInk | PXC chỉ đọc hàng/cột nhìn thấy; decode một phần không được ghi cache. PNG cold path chặn cả tọa độ âm lẫn vượt mép, tránh ghi ngoài framebuffer. |
+| Kiểm thử render | Giữ render lab của VNS | Fixture tiếng Việt, NFC/NFD, 4 style SD font, CSS, bảng, ảnh và cold/warm được khóa pixel/cấu trúc qua nhiều profile. |
+
+Đợt rà soát phát hiện 2 lỗi có thể ảnh hưởng production và đã sửa: ảnh giao mép trước đây bị bỏ toàn bộ; PNG cold decode có thể ghi ngoài framebuffer khi tọa độ âm. Đồng thời đường dựng section được chặn sớm khi heap phân mảnh, thử nhả cache font SD và chuyển sang Safe thay vì tiếp tục đi vào các allocation không thể bắt lỗi khi firmware tắt exception.
+
+Sau bản sửa, 191/191 host test đạt; full render 48 case, font 4 case và Safe 2 case đều ổn định qua 2 lần chạy. Build `default`, `sticky`, `x4pro` và `papermono` đều thành công. RAM tĩnh của `default`/`sticky` giữ ở 57.180 B/66.828 B; flash tương ứng là 5.649.099 B/5.437.639 B. `papermono` dùng 106.380 B RAM tĩnh và 5.551.434 B flash. Chưa có thiết bị vật lý nên boot, OTA, độ đậm font, LUT và ghosting vẫn là gate chưa xác nhận.
+
 ## Chỉ số và gate đề xuất
 
 Các ngưỡng dưới đây là gate ban đầu của kế hoạch, không phải dữ liệu đã đo. Sau Giai đoạn 1 phải hiệu chỉnh bằng corpus và thiết bị thật.
