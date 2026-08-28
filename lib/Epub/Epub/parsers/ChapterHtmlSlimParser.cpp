@@ -180,9 +180,16 @@ void ChapterHtmlSlimParser::applyTextDecorationToEntry(StyleStackEntry& entry, c
   }
 }
 
+void ChapterHtmlSlimParser::applySmallCapsToEntry(StyleStackEntry& entry, const CssStyle& css) {
+  if (css.hasFontVariantCaps()) {
+    entry.hasSmallCaps = true;
+    entry.smallCaps = css.fontVariantCaps == CssFontVariantCaps::SmallCaps;
+  }
+}
+
 void ChapterHtmlSlimParser::pushTableTextStyleEntry(const CssStyle& cssStyle) {
-  if (!cssStyle.hasFontWeight() && !cssStyle.hasFontStyle() && !cssStyle.hasTextDecoration() &&
-      !cssStyle.hasDirection() && !cssStyle.hasTextAlign()) {
+  if (!cssStyle.hasFontWeight() && !cssStyle.hasFontStyle() && !cssStyle.hasFontVariantCaps() &&
+      !cssStyle.hasTextDecoration() && !cssStyle.hasDirection() && !cssStyle.hasTextAlign()) {
     return;
   }
 
@@ -196,6 +203,7 @@ void ChapterHtmlSlimParser::pushTableTextStyleEntry(const CssStyle& cssStyle) {
     entry.hasItalic = true;
     entry.italic = cssStyle.fontStyle == CssFontStyle::Italic;
   }
+  applySmallCapsToEntry(entry, cssStyle);
   applyTextDecorationToEntry(entry, cssStyle);
   applyDirectionToEntry(entry, cssStyle);
   if (cssStyle.hasTextAlign()) {
@@ -220,6 +228,7 @@ void ChapterHtmlSlimParser::pushDecorationStyleEntry(const CssTextDecoration def
     entry.hasItalic = true;
     entry.italic = cssStyle.fontStyle == CssFontStyle::Italic;
   }
+  applySmallCapsToEntry(entry, cssStyle);
   applyDirectionToEntry(entry, cssStyle);
   inlineStyleStack.push_back(entry);
   updateEffectiveInlineStyle();
@@ -230,6 +239,8 @@ void ChapterHtmlSlimParser::updateEffectiveInlineStyle() {
   // Start with block-level styles
   effectiveBold = currentCssStyle.hasFontWeight() && currentCssStyle.fontWeight == CssFontWeight::Bold;
   effectiveItalic = currentCssStyle.hasFontStyle() && currentCssStyle.fontStyle == CssFontStyle::Italic;
+  effectiveSmallCaps =
+      currentCssStyle.hasFontVariantCaps() && currentCssStyle.fontVariantCaps == CssFontVariantCaps::SmallCaps;
   effectiveTextDecoration =
       currentCssStyle.hasTextDecoration() ? currentCssStyle.textDecoration : CssTextDecoration::None;
   effectiveDirectionDefined = currentCssStyle.hasDirection();
@@ -246,6 +257,9 @@ void ChapterHtmlSlimParser::updateEffectiveInlineStyle() {
     }
     if (entry.hasItalic) {
       effectiveItalic = entry.italic;
+    }
+    if (entry.hasSmallCaps) {
+      effectiveSmallCaps = entry.smallCaps;
     }
     // CSS line decorations propagate through descendants; child entries add
     // their own lines but cannot cancel an ancestor's already active line.
@@ -415,6 +429,9 @@ void ChapterHtmlSlimParser::flushPartWordBuffer() {
     fontStyle = static_cast<EpdFontFamily::Style>(fontStyle | EpdFontFamily::SUP);
   } else if (effectiveSub) {
     fontStyle = static_cast<EpdFontFamily::Style>(fontStyle | EpdFontFamily::SUB);
+  }
+  if (effectiveSmallCaps) {
+    fontStyle = static_cast<EpdFontFamily::Style>(fontStyle | EpdFontFamily::SMALL_CAPS);
   }
 
   // flush the buffer
@@ -858,6 +875,13 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
   if (!cssStyle.hasDirection() && self->effectiveDirectionDefined) {
     cssStyle.direction = self->effectiveDirection;
     cssStyle.defined.direction = 1;
+  }
+
+  // font-variant-caps is inherited. Preserve an explicit `normal` on a child,
+  // otherwise carry the active small-caps state into its computed style.
+  if (!cssStyle.hasFontVariantCaps() && self->effectiveSmallCaps) {
+    cssStyle.fontVariantCaps = CssFontVariantCaps::SmallCaps;
+    cssStyle.defined.fontVariantCaps = 1;
   }
 
   // Skip elements with display:none before all fast paths (tables, links, etc.).
@@ -1420,6 +1444,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       entry.depth = self->depth;
       entry.hasTextDecoration = true;
       entry.textDecoration = CssTextDecoration::Underline;
+      applySmallCapsToEntry(entry, cssStyle);
       applyDirectionToEntry(entry, cssStyle);
       self->inlineStyleStack.push_back(entry);
       self->updateEffectiveInlineStyle();
@@ -1463,6 +1488,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     const auto accumulated =
         self->blockStyleStack.back().getCombinedBlockStyle(headerBlockStyle, BlockStyle::CombineAxis::Horizontal);
     self->blockStyleStack.push_back(accumulated);
+    self->blockCssStyleStack.push_back(cssStyle);
     self->startNewTextBlock(accumulated.withoutBottom());
     self->boldUntilDepth = std::min(self->boldUntilDepth, self->depth);
     self->updateEffectiveInlineStyle();
@@ -1495,6 +1521,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       const auto accumulated = self->blockStyleStack.back().getCombinedBlockStyle(userAlignmentBlockStyle,
                                                                                   BlockStyle::CombineAxis::Horizontal);
       self->blockStyleStack.push_back(accumulated);
+      self->blockCssStyleStack.push_back(cssStyle);
       self->startNewTextBlock(accumulated.withoutBottom());
       self->updateEffectiveInlineStyle();
 
@@ -1534,6 +1561,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       entry.italic = cssStyle.fontStyle == CssFontStyle::Italic;
     }
     applyTextDecorationToEntry(entry, cssStyle);
+    applySmallCapsToEntry(entry, cssStyle);
     applyDirectionToEntry(entry, cssStyle);
     self->inlineStyleStack.push_back(entry);
     self->updateEffectiveInlineStyle();
@@ -1554,6 +1582,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       entry.bold = cssStyle.fontWeight == CssFontWeight::Bold;
     }
     applyTextDecorationToEntry(entry, cssStyle);
+    applySmallCapsToEntry(entry, cssStyle);
     applyDirectionToEntry(entry, cssStyle);
     self->inlineStyleStack.push_back(entry);
     self->updateEffectiveInlineStyle();
@@ -1564,6 +1593,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     }
     StyleStackEntry entry;
     entry.depth = self->depth;
+    applySmallCapsToEntry(entry, cssStyle);
     if (strcmp(name, "sup") == 0) {
       entry.hasSup = true;
       entry.sup = true;
@@ -1576,8 +1606,9 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
   } else if (strcmp(name, "span") == 0 || !isHeaderOrBlock(name)) {
     // Handle span and other inline elements for CSS styling
     const bool inheritedTableTextAlign = self->tableDepth >= 1 && cssStyle.hasTextAlign();
-    if (cssStyle.hasFontWeight() || cssStyle.hasFontStyle() || cssStyle.hasTextDecoration() ||
-        cssStyle.hasDirection() || cssStyle.hasVerticalAlign() || inheritedTableTextAlign) {
+    if (cssStyle.hasFontWeight() || cssStyle.hasFontStyle() || cssStyle.hasFontVariantCaps() ||
+        cssStyle.hasTextDecoration() || cssStyle.hasDirection() || cssStyle.hasVerticalAlign() ||
+        inheritedTableTextAlign) {
       // Flush buffer before style change so preceding text gets current style
       if (self->partWordBufferIndex > 0) {
         self->flushPartWordBuffer();
@@ -1593,6 +1624,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
         entry.hasItalic = true;
         entry.italic = cssStyle.fontStyle == CssFontStyle::Italic;
       }
+      applySmallCapsToEntry(entry, cssStyle);
       applyTextDecorationToEntry(entry, cssStyle);
       applyDirectionToEntry(entry, cssStyle);
       if (inheritedTableTextAlign) {
@@ -2047,9 +2079,6 @@ void XMLCALL ChapterHtmlSlimParser::endElement(void* userData, const XML_Char* n
 
   // Clear block style when leaving header or block elements
   if (headerOrBlockTag && !insideSkippedSubtree) {
-    self->currentCssStyle.reset();
-    self->updateEffectiveInlineStyle();
-
     // br is self-closing and not a container — it doesn't push/pop the stack.
     if (strcmp(name, "br") != 0 && self->blockStyleStack.size() > 1) {
       // Apply closing element's bottom margin to the current text block so
@@ -2060,6 +2089,9 @@ void XMLCALL ChapterHtmlSlimParser::endElement(void* userData, const XML_Char* n
         self->currentTextBlock->setBlockStyle(style.addBottom(self->blockStyleStack.back()));
       }
       self->blockStyleStack.pop_back();
+      if (self->blockCssStyleStack.size() > 1) self->blockCssStyleStack.pop_back();
+      self->currentCssStyle = self->blockCssStyleStack.back();
+      self->updateEffectiveInlineStyle();
       // Start a new text block with the parent style to prevent subsequent bare text
       // from inheriting the closed block style (e.g. alignment or margins).
       self->startNewTextBlock(self->blockStyleStack.back());
@@ -2102,6 +2134,10 @@ bool ChapterHtmlSlimParser::beginParse() {
   blockStyleStack.clear();
   blockStyleStack.reserve(8);
   blockStyleStack.push_back(rootBlockStyle);
+  blockCssStyleStack.clear();
+  blockCssStyleStack.reserve(8);
+  blockCssStyleStack.emplace_back();
+  currentCssStyle = blockCssStyleStack.back();
 
   tableDepth = 0;
   insideTableCell = false;

@@ -114,6 +114,21 @@ TEST(FontCacheManagerTest, PrewarmScopePreservesUniqueMultibyteCodepoints) {
   EXPECT_STREQ("\xC3\xA9\xE4\xB8\xAD\xF0\x9F\x98\x80", font.prewarmCalls[0].text);
 }
 
+TEST(FontCacheManagerTest, PrewarmScopeUsesVietnameseUppercaseGlyphsForSmallCaps) {
+  SdCardFont font;
+  const std::map<int, EpdFontFamily> noBuiltinFonts;
+  const std::map<int, SdCardFont*> sdFonts{{7, &font}};
+  FontCacheManager manager(noBuiltinFonts, sdFonts);
+
+  auto scope = manager.createPrewarmScope();
+  manager.recordText("ăơưđộ", 7, EpdFontFamily::SMALL_CAPS);
+  scope.endScanAndPrewarm();
+
+  ASSERT_EQ(1, font.prewarmCallCount);
+  EXPECT_STREQ("ĂĐƠƯỘ", font.prewarmCalls[0].text);
+  EXPECT_EQ(0x01, font.prewarmCalls[0].styleMask);
+}
+
 TEST(FontCacheManagerTest, PrewarmScanDoesNotAllocateHeapMemory) {
   SdCardFont font;
   const std::map<int, EpdFontFamily> noBuiltinFonts;

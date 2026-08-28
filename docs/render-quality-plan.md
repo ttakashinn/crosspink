@@ -173,6 +173,10 @@ Trạng thái ngày 28/08/2026: đã triển khai fallback có chủ đích `Sta
 
 Các ứng viên gồm simple black background/redaction (`e11e792`) và small caps. Chỉ triển khai khi có fixture/sách thực tế cần; không đưa vào critical path trước descendant CSS, typography và OOM fallback.
 
+Trạng thái ngày 29/08/2026: đã triển khai small caps theo hướng chọn lọc, không chép nguyên ánh xạ Unicode của CrossInk. `font-variant: small-caps` và `font-variant-caps: small-caps` đi qua CSS cascade, block/inline inheritance, cache và renderer; giá trị `normal` trên phần tử con khôi phục chữ thường đúng cách. Renderer dùng glyph hoa ở tỉ lệ 75%, giữ cùng đường đo advance/kerning với đường vẽ và lấy mẫu theo footprint để tránh làm mất nét mảnh hoặc dấu tiếng Việt. Bảng ánh xạ bổ sung đầy đủ `ă`, `đ`, `ơ`, `ư` và các cặp chữ Việt dựng sẵn trong Latin Extended Additional; ký tự cần biến đổi thành nhiều codepoint như `ß` được giữ nguyên để không phá offset/layout. CSS cache tăng lên v12, section cache lên v44. Quá trình triển khai cũng sửa lỗi có sẵn khiến style chữ của block cha bị mất sau khi đóng block con.
+
+Fixture chuẩn bổ sung checkpoint small caps riêng với tiếng Việt NFC/NFD, font built-in, font SD và chế độ không AA. 196/196 host test đạt; full render 51 case, font 5 case và Safe 2 case đều ổn định qua 2 lần chạy. Golden thay đổi ngoài checkpoint mới chỉ nằm ở số trang/chỉ số tiến độ do fixture có thêm 1 trang; vùng nội dung cũ không đổi. Kiểm chứng nét chữ trên panel thật vẫn chưa thực hiện.
+
 ### Giai đoạn 4 — Tối ưu image tone và panel waveform
 
 Mục tiêu: xử lý chất lượng ảnh sau khi layout đã ổn định.
@@ -198,14 +202,14 @@ Ngày 29/08/2026, mã được đối chiếu lại với `uxjulia/CrossInk` t�
 | Font mặc định | Giữ Noto Serif/Sans của VNS | Bao phủ tiếng Việt trực tiếp, NFC hóa NFD trước layout, đủ 4 style và có golden cho font built-in/SD. Không thêm Bitter/Lexend vào flash chỉ để tăng số lựa chọn. |
 | Độ đậm chữ AA | Chưa dùng ngưỡng `--darken-aa` của CrossInk làm mặc định | CrossInk hạ ngưỡng lượng tử để nét đậm hơn, nhưng simulator không xác nhận được bết nét, counter và ghosting trên panel. VNS vẫn cho phép tắt text AA; đổi mặc định cần A/B thiết bị. |
 | CSS selector/cache | Giữ kho phẳng có giới hạn của VNS; giữ descendant selector và page break đã nhập chọn lọc | Mọi lần tăng dung lượng đều có thể thất bại an toàn, selector/style pool bị chặn; phù hợp heap X3 hơn `unordered_map` của CrossInk. CrossInk hỗ trợ tối đa 100 descendant rule và disk fallback, còn VNS chủ động chặn ở 64 để dùng mask 64 bit không cấp phát. |
-| CSS visual extras | Chưa nhập black background và small caps | Corpus chuẩn chưa chứng minh nhu cầu. Small-caps của CrossInk chưa ánh xạ đầy đủ `ơ`, `ư` và Latin Extended Additional tiếng Việt; nhập nguyên trạng sẽ tạo lỗi nhìn thấy được. |
+| CSS visual extras | Nhập small caps có sửa ánh xạ tiếng Việt; chưa nhập black background | Bản VNS hỗ trợ cascade/inheritance/reset, font built-in/SD và NFC/NFD; ánh xạ bổ sung `ơ`, `ư` cùng Latin Extended Additional thay vì dùng nguyên bản CrossInk. Black background chưa có fixture/lợi ích đủ rõ để nhận thêm nhánh render đảo màu. |
 | Layout khi thiếu RAM | Nhập ngưỡng bảo vệ và giải phóng cache font, giữ fallback `Standard → Safe` của VNS | Parser dừng trước các vùng tăng STL/shared pointer ở 44 KiB free heap hoặc 32 KiB largest block, thử giải phóng cache font SD 1 lần rồi trả lỗi có phân loại để reader dựng lại Safe. CrossInk vẫn hơn về kiến trúc arena và 4 cấp giảm chất lượng; đây là phần còn lại cho vòng sau. |
 | Ảnh ngoài viewport | VNS đã nhập clipping nhưng siết chặt hơn CrossInk | PXC chỉ đọc hàng/cột nhìn thấy; decode một phần không được ghi cache. PNG cold path chặn cả tọa độ âm lẫn vượt mép, tránh ghi ngoài framebuffer. |
 | Kiểm thử render | Giữ render lab của VNS | Fixture tiếng Việt, NFC/NFD, 4 style SD font, CSS, bảng, ảnh và cold/warm được khóa pixel/cấu trúc qua nhiều profile. |
 
 Đợt rà soát phát hiện 2 lỗi có thể ảnh hưởng production và đã sửa: ảnh giao mép trước đây bị bỏ toàn bộ; PNG cold decode có thể ghi ngoài framebuffer khi tọa độ âm. Đồng thời đường dựng section được chặn sớm khi heap phân mảnh, thử nhả cache font SD và chuyển sang Safe thay vì tiếp tục đi vào các allocation không thể bắt lỗi khi firmware tắt exception.
 
-Sau bản sửa, 191/191 host test đạt; full render 48 case, font 4 case và Safe 2 case đều ổn định qua 2 lần chạy. Build `default`, `sticky`, `x4pro` và `papermono` đều thành công. RAM tĩnh của `default`/`sticky` giữ ở 57.180 B/66.828 B; flash tương ứng là 5.649.099 B/5.437.639 B. `papermono` dùng 106.380 B RAM tĩnh và 5.551.434 B flash. Chưa có thiết bị vật lý nên boot, OTA, độ đậm font, LUT và ghosting vẫn là gate chưa xác nhận.
+Sau bản sửa small caps, 196/196 host test đạt; full render 51 case, font 5 case và Safe 2 case đều ổn định qua 2 lần chạy. Build phát triển `default`/`sticky` dùng 57.180 B/66.828 B RAM tĩnh và 5.651.755 B/5.440.439 B flash. So với mốc rà soát trước đó, RAM tĩnh không đổi; flash tăng lần lượt 2.656 B và 2.800 B. Không tạo artifact release trong bước này. Chưa có thiết bị vật lý nên boot, OTA, độ đậm font, LUT và ghosting vẫn là gate chưa xác nhận.
 
 ## Chỉ số và gate đề xuất
 

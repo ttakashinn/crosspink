@@ -7,7 +7,7 @@
 Fixture khóa các đường chạy sau:
 
 - tiếng Việt NFC/NFD, combining marks và toàn bộ ma trận thanh điệu;
-- regular, bold, italic, bold-italic, kerning, ligature, superscript và subscript;
+- regular, bold, italic, bold-italic, small caps tiếng Việt, kerning, ligature, superscript và subscript;
 - CSS cascade, grouped/descendant/attribute selector và `display: none`;
 - pagination, page break, heading orphan, URL dài, anchor và footnote;
 - bảng, cell wrap và danh sách lồng nhau;
@@ -52,14 +52,14 @@ Build simulator và chạy smoke suite. Mỗi case chạy trong SD root riêng; 
 .venv/bin/python scripts/render_lab.py verify --suite smoke
 ```
 
-Suite đầy đủ chạy 48 case trên X4, X3 và X4 không AA. Checkpoint `table-continuation` dùng `page_offset: 1` để khóa trang tiếp nối của bảng. 5 checkpoint ảnh bổ sung khóa PNG alpha, line art, JPEG + ảnh rộng, ảnh cao và trang chữ ngay sau ảnh; trang caption-only không được giữ làm golden vì không thêm tín hiệu chất lượng ảnh. Checkpoint chính còn kiểm tra cấu trúc hàng/cột của table và thống kê layout của 6 ảnh, gồm số ảnh bị scale, số trang ảnh và số ảnh vượt viewport. Golden chỉ được thay đổi sau khi review ảnh diff và truyền `--accept` rõ ràng:
+Suite đầy đủ chạy 51 case trên X4, X3 và X4 không AA. Checkpoint `table-continuation` dùng `page_offset: 1` để khóa trang tiếp nối của bảng. 5 checkpoint ảnh bổ sung khóa PNG alpha, line art, JPEG + ảnh rộng, ảnh cao và trang chữ ngay sau ảnh; trang caption-only không được giữ làm golden vì không thêm tín hiệu chất lượng ảnh. Checkpoint chính còn kiểm tra cấu trúc hàng/cột của table và thống kê layout của 6 ảnh, gồm số ảnh bị scale, số trang ảnh và số ảnh vượt viewport. Golden chỉ được thay đổi sau khi review ảnh diff và truyền `--accept` rõ ràng:
 
 ```sh
 .venv/bin/python scripts/render_lab.py verify --suite full
 .venv/bin/python scripts/render_lab.py verify --suite full --accept
 ```
 
-Suite font chạy thêm 4 case với fixture `.cpfont` v4 `CrossPointTest`, gồm tiếng Việt NFC/NFD, 4 style và cold/warm section cache:
+Suite font chạy thêm 5 case với fixture `.cpfont` v4 `CrossPointTest`, gồm tiếng Việt NFC/NFD, 4 style, small caps và cold/warm section cache:
 
 ```sh
 .venv/bin/python scripts/render_lab.py verify --suite font

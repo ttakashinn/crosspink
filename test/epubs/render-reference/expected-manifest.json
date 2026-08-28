@@ -40,6 +40,16 @@
       ]
     },
     {
+      "id": "vi-small-caps",
+      "href": "text/02-kieu-chu.xhtml#small-caps",
+      "covers": [
+        "CSS font-variant-caps inheritance and reset",
+        "Vietnamese precomposed small caps",
+        "Vietnamese decomposed small caps",
+        "small-caps measurement and rendering parity"
+      ]
+    },
+    {
       "id": "css-cascade",
       "href": "text/03-css.xhtml#selector-matrix",
       "covers": [
@@ -381,6 +391,7 @@
       "checkpoints": [
         "vi-nfc-nfd",
         "typography",
+        "vi-small-caps",
         "stress-cold-warm"
       ],
       "cache_states": [

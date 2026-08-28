@@ -70,6 +70,7 @@ class ChapterHtmlSlimParser {
     int depth = 0;
     bool hasBold = false, bold = false;
     bool hasItalic = false, italic = false;
+    bool hasSmallCaps = false, smallCaps = false;
     bool hasTextDecoration = false;
     CssTextDecoration textDecoration = CssTextDecoration::None;
     bool hasDirection = false;
@@ -80,10 +81,12 @@ class ChapterHtmlSlimParser {
     bool hasSub = false, sub = false;
   };
   std::vector<StyleStackEntry> inlineStyleStack;
-  std::vector<BlockStyle> blockStyleStack;  // accumulated block styles from open ancestor elements
+  std::vector<BlockStyle> blockStyleStack;   // accumulated block styles from open ancestor elements
+  std::vector<CssStyle> blockCssStyleStack;  // inherited text styles from open block elements
   CssStyle currentCssStyle;
   bool effectiveBold = false;
   bool effectiveItalic = false;
+  bool effectiveSmallCaps = false;
   CssTextDecoration effectiveTextDecoration = CssTextDecoration::None;
   bool effectiveDirectionDefined = false;
   CssTextDirection effectiveDirection = CssTextDirection::Ltr;
@@ -167,6 +170,7 @@ class ChapterHtmlSlimParser {
   static EpdFontFamily::Style fontStyleForTextDecoration(CssTextDecoration decoration);
   static void applyDirectionToEntry(StyleStackEntry& entry, const CssStyle& css);
   static void applyTextDecorationToEntry(StyleStackEntry& entry, const CssStyle& css);
+  static void applySmallCapsToEntry(StyleStackEntry& entry, const CssStyle& css);
   void pushTableTextStyleEntry(const CssStyle& cssStyle);
   void pushDecorationStyleEntry(CssTextDecoration defaultDecoration, const CssStyle& cssStyle);
   void emitHorizontalRule(const BlockStyle& blockStyle);

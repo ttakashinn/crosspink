@@ -144,14 +144,15 @@ constexpr std::array STYLE_LENGTH_FIELDS = {
 };
 constexpr size_t STYLE_LENGTH_FIELD_COUNT = STYLE_LENGTH_FIELDS.size();
 constexpr size_t STYLE_WIRE_BYTES =
-    5 + STYLE_LENGTH_FIELD_COUNT * (sizeof(decltype(CssLength::value)) + 1) + 4 + sizeof(uint32_t);
-constexpr uint32_t CSS_DEFINED_BITS_MASK = (1u << 20) - 1;
+    6 + STYLE_LENGTH_FIELD_COUNT * (sizeof(decltype(CssLength::value)) + 1) + 4 + sizeof(uint32_t);
+constexpr uint32_t CSS_DEFINED_BITS_MASK = (1u << 21) - 1;
 
 void encodeStyleWire(const CssStyle& style, uint8_t (&out)[STYLE_WIRE_BYTES]) {
   size_t offset = 0;
   out[offset++] = static_cast<uint8_t>(style.textAlign);
   out[offset++] = static_cast<uint8_t>(style.fontStyle);
   out[offset++] = static_cast<uint8_t>(style.fontWeight);
+  out[offset++] = static_cast<uint8_t>(style.fontVariantCaps);
   out[offset++] = static_cast<uint8_t>(style.textDecoration);
   out[offset++] = static_cast<uint8_t>(style.direction);
 
@@ -189,6 +190,7 @@ void encodeStyleWire(const CssStyle& style, uint8_t (&out)[STYLE_WIRE_BYTES]) {
   if (style.defined.verticalAlign) definedBits |= 1 << 17;
   if (style.defined.pageBreakBefore) definedBits |= 1 << 18;
   if (style.defined.pageBreakAfter) definedBits |= 1 << 19;
+  if (style.defined.fontVariantCaps) definedBits |= 1 << 20;
   memcpy(out + offset, &definedBits, sizeof(definedBits));
 }
 
@@ -197,16 +199,19 @@ bool decodeStyleWire(const uint8_t (&in)[STYLE_WIRE_BYTES], CssStyle& style) {
   const uint8_t textAlign = in[offset++];
   const uint8_t fontStyle = in[offset++];
   const uint8_t fontWeight = in[offset++];
+  const uint8_t fontVariantCaps = in[offset++];
   const uint8_t textDecoration = in[offset++];
   const uint8_t direction = in[offset++];
   if (textAlign > static_cast<uint8_t>(CssTextAlign::None) || fontStyle > static_cast<uint8_t>(CssFontStyle::Italic) ||
-      fontWeight > static_cast<uint8_t>(CssFontWeight::Bold) || (textDecoration & ~CSS_TEXT_DECORATION_MASK) != 0 ||
-      direction > static_cast<uint8_t>(CssTextDirection::Rtl)) {
+      fontWeight > static_cast<uint8_t>(CssFontWeight::Bold) ||
+      fontVariantCaps > static_cast<uint8_t>(CssFontVariantCaps::SmallCaps) ||
+      (textDecoration & ~CSS_TEXT_DECORATION_MASK) != 0 || direction > static_cast<uint8_t>(CssTextDirection::Rtl)) {
     return false;
   }
   style.textAlign = static_cast<CssTextAlign>(textAlign);
   style.fontStyle = static_cast<CssFontStyle>(fontStyle);
   style.fontWeight = static_cast<CssFontWeight>(fontWeight);
+  style.fontVariantCaps = static_cast<CssFontVariantCaps>(fontVariantCaps);
   style.textDecoration = static_cast<CssTextDecoration>(textDecoration);
   style.direction = static_cast<CssTextDirection>(direction);
 
@@ -261,6 +266,7 @@ bool decodeStyleWire(const uint8_t (&in)[STYLE_WIRE_BYTES], CssStyle& style) {
   style.defined.verticalAlign = (definedBits & 1 << 17) != 0;
   style.defined.pageBreakBefore = (definedBits & 1 << 18) != 0;
   style.defined.pageBreakAfter = (definedBits & 1 << 19) != 0;
+  style.defined.fontVariantCaps = (definedBits & 1 << 20) != 0;
   return true;
 }
 
@@ -577,6 +583,19 @@ CssFontWeight CssParser::interpretFontWeight(std::string_view val) {
   return CssFontWeight::Normal;
 }
 
+CssFontVariantCaps CssParser::interpretFontVariantCaps(std::string_view val) {
+  val = trimCssWhitespace(stripTrailingImportant(val));
+  CssFontVariantCaps result = CssFontVariantCaps::Normal;
+  forEachDelimitedToken(val, isCssWhitespace, [&](const std::string_view token) {
+    if (iequalsAscii(token, "small-caps")) {
+      result = CssFontVariantCaps::SmallCaps;
+    } else if (iequalsAscii(token, "normal")) {
+      result = CssFontVariantCaps::Normal;
+    }
+  });
+  return result;
+}
+
 CssTextDecoration CssParser::interpretDecoration(std::string_view val) {
   // text-decoration can have multiple space-separated values. Compare whole tokens
   // so malformed values like "notunderline" do not accidentally enable a line.
@@ -658,6 +677,9 @@ void CssParser::parseDeclarationIntoStyle(std::string_view decl, CssStyle& style
   } else if (iequalsAscii(name, "font-weight")) {
     style.fontWeight = interpretFontWeight(value);
     style.defined.fontWeight = 1;
+  } else if (iequalsAscii(name, "font-variant") || iequalsAscii(name, "font-variant-caps")) {
+    style.fontVariantCaps = interpretFontVariantCaps(value);
+    style.defined.fontVariantCaps = 1;
   } else if (iequalsAscii(name, "text-decoration") || iequalsAscii(name, "text-decoration-line")) {
     style.textDecoration = interpretDecoration(value);
     style.defined.textDecoration = 1;

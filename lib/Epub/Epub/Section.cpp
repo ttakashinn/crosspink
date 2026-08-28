@@ -47,7 +47,7 @@ namespace {
 //      flattened paragraphs with synthetic row/cell labels.
 // v42: Two-part descendant selectors and page-break-before/after change layout.
 // v43: Cache header records the automatic EPUB render mode.
-constexpr uint8_t SECTION_FILE_VERSION = 43;
+constexpr uint8_t SECTION_FILE_VERSION = 44;
 // Written into the version field while a build is in progress; patched to
 // SECTION_FILE_VERSION only when the build is finalized. An abandoned /
 // crash-interrupted .bin therefore carries version 0, which loadSectionFile rejects

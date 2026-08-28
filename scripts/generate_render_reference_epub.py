@@ -75,6 +75,8 @@ pre {
 .indent { text-indent: 1.5em; }
 .small { font-size: 0.82em; }
 .large { font-size: 1.25em; }
+.small-caps { font-variant-caps: small-caps; }
+.small-caps-reset { font-variant-caps: normal; }
 .nfd { letter-spacing: 0; }
 .css-group-a, .css-group-b { font-weight: bold; }
 .descendant-test .target { font-style: italic; }
@@ -234,6 +236,13 @@ def typography_chapter() -> str:
 
 <h2 id="decorations">Baseline và trang trí</h2>
 <p>H<sub>2</sub>O, CO<sub>2</sub>, x<sup>2</sup> + y<sup>2</sup>, ngày 28<sup>th</sup>; <u>gạch chân</u>; <s>gạch bỏ</s>.</p>
+
+<div id="small-caps" class="force-page-before small-caps">
+  <h2>Small caps tiếng Việt</h2>
+  <p>Văn Nhân Số — tiếng Việt: ă â ê ô ơ ư đ; ằ ấ ệ ộ ợ ự ỳ.</p>
+  <p>NFD tương đương: Văn Nhân Số — tiếng Việt, người đọc kỹ.</p>
+  <p class="small-caps-reset">Dòng này đặt lại normal: chữ thường phải trở về đúng cỡ gốc.</p>
+</div>
 """,
     )
 
@@ -428,6 +437,7 @@ def checkpoints_chapter() -> str:
   <li><a href="01-tieng-viet.xhtml#nfc-nfd">NFC/NFD tiếng Việt</a></li>
   <li><a href="01-tieng-viet.xhtml#tone-matrix">Ma trận thanh điệu</a></li>
   <li><a href="02-kieu-chu.xhtml#style-matrix">Ma trận kiểu chữ</a></li>
+  <li><a href="02-kieu-chu.xhtml#small-caps">Small caps tiếng Việt</a></li>
   <li><a href="03-css.xhtml#selector-matrix">CSS cascade</a></li>
   <li><a href="04-phan-trang.xhtml#page-breaks">Page break</a></li>
   <li><a href="05-bang-danh-sach.xhtml#wide-table">Bảng rộng</a></li>

@@ -17,7 +17,7 @@ namespace {
 constexpr size_t kMaxRules = 1500;
 constexpr size_t kMaxUniqueStyles = 256;
 constexpr size_t kCacheHeaderBytes = sizeof(uint8_t) * 2 + sizeof(uint16_t);
-constexpr size_t kStyleEnumPrefixBytes = 5;
+constexpr size_t kStyleEnumPrefixBytes = 6;
 constexpr size_t kStyleLengthFieldCount = 11;
 constexpr size_t kStyleLengthBytes = sizeof(decltype(CssLength::value)) + sizeof(uint8_t);
 
@@ -82,6 +82,27 @@ TEST_F(CssParserTest, ResolvesCaseInsensitiveCascadeAndMergesDuplicates) {
   ASSERT_TRUE(style.hasMarginTop());
   EXPECT_FLOAT_EQ(style.marginTop.value, 2.0f);
   EXPECT_EQ(style.marginTop.unit, CssUnit::Em);
+}
+
+TEST_F(CssParserTest, ParsesAndCachesSmallCapsVariants) {
+  CssParser writer(cachePath());
+  ASSERT_EQ(loadCss(writer,
+                    ".chapter { font-variant: small-caps; }\n"
+                    ".reset { font-variant-caps: normal !important; }\n"),
+            CssParser::ParseResult::Complete);
+
+  const CssStyle chapter = writer.resolveStyle("h1", "chapter");
+  ASSERT_TRUE(chapter.hasFontVariantCaps());
+  EXPECT_EQ(chapter.fontVariantCaps, CssFontVariantCaps::SmallCaps);
+  const CssStyle reset = writer.resolveStyle("span", "reset");
+  ASSERT_TRUE(reset.hasFontVariantCaps());
+  EXPECT_EQ(reset.fontVariantCaps, CssFontVariantCaps::Normal);
+
+  ASSERT_TRUE(writer.saveToCache(true));
+  CssParser reader(cachePath());
+  ASSERT_EQ(reader.loadFromCache(), CssParser::CacheLoadResult::Complete);
+  EXPECT_EQ(reader.resolveStyle("h1", "chapter").fontVariantCaps, CssFontVariantCaps::SmallCaps);
+  EXPECT_EQ(reader.resolveStyle("span", "reset").fontVariantCaps, CssFontVariantCaps::Normal);
 }
 
 TEST_F(CssParserTest, ResolvesBoundedTwoPartDescendantSelectors) {
@@ -318,7 +339,7 @@ TEST_F(CssParserTest, CacheHydrationRejectsInvalidStyleEnumBytes) {
   memcpy(&selectorLength, validCache.data() + kCacheHeaderBytes, sizeof(selectorLength));
   const size_t styleOffset = kCacheHeaderBytes + sizeof(selectorLength) + selectorLength;
 
-  std::vector<size_t> enumOffsets = {0, 1, 2, 3, 4};
+  std::vector<size_t> enumOffsets = {0, 1, 2, 3, 4, 5};
   for (size_t i = 0; i < kStyleLengthFieldCount; ++i) {
     enumOffsets.push_back(kStyleEnumPrefixBytes + i * kStyleLengthBytes + sizeof(decltype(CssLength::value)));
   }

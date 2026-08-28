@@ -52,6 +52,9 @@ enum class CssFontStyle : uint8_t { Normal = 0, Italic = 1 };
 // Font weight options - CSS supports 100-900, we simplify to normal/bold
 enum class CssFontWeight : uint8_t { Normal = 0, Bold = 1 };
 
+// CSS font-variant / font-variant-caps values supported by the renderer.
+enum class CssFontVariantCaps : uint8_t { Normal = 0, SmallCaps = 1 };
+
 // Text decoration options. Values are bit flags so CSS can combine multiple line decorations.
 enum class CssTextDecoration : uint8_t { None = 0, Underline = 1, LineThrough = 2 };
 
@@ -95,6 +98,7 @@ struct CssPropertyFlags {
   uint16_t verticalAlign : 1;
   uint16_t pageBreakBefore : 1;
   uint16_t pageBreakAfter : 1;
+  uint16_t fontVariantCaps : 1;
 
   CssPropertyFlags()
       : textAlign(0),
@@ -116,23 +120,25 @@ struct CssPropertyFlags {
         direction(0),
         verticalAlign(0),
         pageBreakBefore(0),
-        pageBreakAfter(0) {}
+        pageBreakAfter(0),
+        fontVariantCaps(0) {}
 
   [[nodiscard]] bool anySet() const {
     return textAlign || fontStyle || fontWeight || textDecoration || textIndent || marginTop || marginBottom ||
            marginLeft || marginRight || paddingTop || paddingBottom || paddingLeft || paddingRight || imageHeight ||
-           imageWidth || display || direction || verticalAlign || pageBreakBefore || pageBreakAfter;
+           imageWidth || display || direction || verticalAlign || pageBreakBefore || pageBreakAfter || fontVariantCaps;
   }
 
   void clearAll() {
     textAlign = fontStyle = fontWeight = textDecoration = textIndent = 0;
     marginTop = marginBottom = marginLeft = marginRight = 0;
     paddingTop = paddingBottom = paddingLeft = paddingRight = 0;
-    imageHeight = imageWidth = display = direction = verticalAlign = pageBreakBefore = pageBreakAfter = 0;
+    imageHeight = imageWidth = display = direction = verticalAlign = pageBreakBefore = pageBreakAfter =
+        fontVariantCaps = 0;
   }
 };
 
-// Cache serializes defined flags as uint32_t with bit indices 0..19.
+// Cache serializes defined flags as uint32_t with bit indices 0..20.
 static_assert(sizeof(CssPropertyFlags) <= sizeof(uint32_t),
               "CssPropertyFlags exceeds 32 bits; update cache read/write in CssParser.cpp");
 
@@ -143,6 +149,7 @@ struct CssStyle {
   CssTextAlign textAlign = CssTextAlign::Left;
   CssFontStyle fontStyle = CssFontStyle::Normal;
   CssFontWeight fontWeight = CssFontWeight::Normal;
+  CssFontVariantCaps fontVariantCaps = CssFontVariantCaps::Normal;
   CssTextDecoration textDecoration = CssTextDecoration::None;
   CssTextDirection direction = CssTextDirection::Ltr;
 
@@ -178,6 +185,10 @@ struct CssStyle {
     if (base.hasFontWeight()) {
       fontWeight = base.fontWeight;
       defined.fontWeight = 1;
+    }
+    if (base.hasFontVariantCaps()) {
+      fontVariantCaps = base.fontVariantCaps;
+      defined.fontVariantCaps = 1;
     }
     if (base.hasTextDecoration()) {
       textDecoration = base.textDecoration;
@@ -252,6 +263,7 @@ struct CssStyle {
   [[nodiscard]] bool hasTextAlign() const { return defined.textAlign; }
   [[nodiscard]] bool hasFontStyle() const { return defined.fontStyle; }
   [[nodiscard]] bool hasFontWeight() const { return defined.fontWeight; }
+  [[nodiscard]] bool hasFontVariantCaps() const { return defined.fontVariantCaps; }
   [[nodiscard]] bool hasTextDecoration() const { return defined.textDecoration; }
   [[nodiscard]] bool hasTextIndent() const { return defined.textIndent; }
   [[nodiscard]] bool hasMarginTop() const { return defined.marginTop; }
@@ -274,6 +286,7 @@ struct CssStyle {
     textAlign = CssTextAlign::Left;
     fontStyle = CssFontStyle::Normal;
     fontWeight = CssFontWeight::Normal;
+    fontVariantCaps = CssFontVariantCaps::Normal;
     textDecoration = CssTextDecoration::None;
     direction = CssTextDirection::Ltr;
     textIndent = CssLength{};
