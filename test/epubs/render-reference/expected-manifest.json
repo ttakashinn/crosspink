@@ -251,6 +251,7 @@
     {
       "id": "stress-cold-warm",
       "href": "text/08-stress.xhtml#stress-start",
+      "full_build": true,
       "covers": [
         "long Vietnamese chapter",
         "cold and warm cache",
@@ -308,6 +309,24 @@
       "line_spacing": "normal",
       "paragraph_alignment": "justified",
       "screen_margin": 5
+    },
+    {
+      "id": "x4-sd-font",
+      "environment": "simulator_x4",
+      "viewport": {
+        "width": 480,
+        "height": 800
+      },
+      "orientation": "portrait",
+      "text_antialiasing": true,
+      "embedded_styles": true,
+      "font_family": "CrossPointTest",
+      "font_point_size": 14,
+      "line_spacing": "normal",
+      "paragraph_alignment": "justified",
+      "screen_margin": 5,
+      "sd_font_family": "CrossPointTest",
+      "sd_font_fixture": "test/fonts/CrossPointTest_14.cpfont"
     }
   ],
   "suites": {
@@ -331,6 +350,22 @@
         "x4-no-text-aa"
       ],
       "checkpoints": "all",
+      "cache_states": [
+        "cold"
+      ],
+      "warm_cache_checkpoints": [
+        "stress-cold-warm"
+      ]
+    },
+    "font": {
+      "profiles": [
+        "x4-sd-font"
+      ],
+      "checkpoints": [
+        "vi-nfc-nfd",
+        "typography",
+        "stress-cold-warm"
+      ],
       "cache_states": [
         "cold"
       ],

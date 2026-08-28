@@ -118,7 +118,7 @@ Mục tiêu: tận dụng phần đã được upstream giải quyết trước 
 
 Điều kiện hoàn thành: không có regression golden ngoài thay đổi đã duyệt; không tăng peak heap hoặc thời gian trang một cách không giải thích được.
 
-Trạng thái ngày 28/08/2026: mục 1 đã hoàn thành trên nhánh `codex/render-regression-phase-2`. Manifest khóa 4 hàng/4 cột của fixture, grid/stacked fallback, số cell wrap và page split theo từng profile. Checkpoint `table-continuation` thêm golden cho trang sau split; full suite tăng từ 30 lên 33 case.
+Trạng thái ngày 28/08/2026: phần mềm Giai đoạn 2 đã hoàn thành trên nhánh tích hợp. Full suite hiện có 48 case chạy qua X4, X3 và X4 không AA; khóa table grid/stacked, clipping/alpha/JPEG/line-art, 6 image placement và trang image → text. Suite font SD bổ sung 4 case dùng `.cpfont` v4 có 4 style và Latin mở rộng/combining marks tiếng Việt; cold/warm đều đi qua loader/cache thật. Checkpoint stress full-build khóa tổng trang chính xác thay vì ước lượng incremental. Script kiểm tra font nén built-in đạt 32/32 round-trip; 5 font không nén được bỏ qua đúng thiết kế. Không có thay đổi firmware trong nhóm test này nên RAM/flash runtime không đổi; timing/heap simulator chỉ dùng chẩn đoán, chưa thay cho số đo thiết bị.
 
 ### Giai đoạn 3 — Backport CrossInk chọn lọc
 

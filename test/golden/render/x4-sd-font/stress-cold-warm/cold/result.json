@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "status": "ok",
-  "profile": "x4-no-text-aa",
+  "profile": "x4-sd-font",
   "checkpoint": "stress-cold-warm",
   "href": "text/08-stress.xhtml#stress-start",
   "cache_state": "cold",
@@ -13,14 +13,14 @@
   "physical_height": 480,
   "spine_index": 8,
   "page_index": 0,
-  "page_count": 115,
+  "page_count": 114,
   "visible_text_offset": 0,
-  "font_family": "notoserif",
+  "font_family": "CrossPointTest",
   "font_point_size": 14,
-  "text_antialiasing": false,
+  "text_antialiasing": true,
   "embedded_styles": true,
-  "grayscale_lsb_captured": false,
-  "grayscale_msb_captured": false,
+  "grayscale_lsb_captured": true,
+  "grayscale_msb_captured": true,
   "framebuffer_pbm": "framebuffer.pbm",
   "framebuffer_pgm": "framebuffer.pgm"
 }

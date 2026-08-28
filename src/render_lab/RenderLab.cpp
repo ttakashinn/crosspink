@@ -232,7 +232,9 @@ void configureSettings(CrossPointSettings& settings) {
   settings.statusBarTitle = CrossPointSettings::CHAPTER_TITLE;
   settings.statusBarProgressBar = CrossPointSettings::HIDE_PROGRESS;
   settings.statusBarBattery = 0;
-  settings.sdFontFamilyName[0] = '\0';
+  const char* sdFontFamily = envOr("CROSSPOINT_RENDER_LAB_SD_FONT_FAMILY");
+  std::strncpy(settings.sdFontFamilyName, sdFontFamily, sizeof(settings.sdFontFamilyName) - 1);
+  settings.sdFontFamilyName[sizeof(settings.sdFontFamilyName) - 1] = '\0';
   state.configured = true;
 }
 
@@ -363,7 +365,8 @@ void recordTimings(const unsigned long prewarmMs, const unsigned long bwRenderMs
   result["page_index"] = pageIndex;
   result["page_count"] = pageCount;
   result["visible_text_offset"] = visibleTextOffset;
-  result["font_family"] = "notoserif";
+  const char* sdFontFamily = envOr("CROSSPOINT_RENDER_LAB_SD_FONT_FAMILY");
+  result["font_family"] = sdFontFamily[0] != '\0' ? sdFontFamily : "notoserif";
   result["font_point_size"] = envInt("CROSSPOINT_RENDER_LAB_FONT_SIZE", 14);
   result["text_antialiasing"] = envBool("CROSSPOINT_RENDER_LAB_TEXT_AA", true);
   result["embedded_styles"] = envBool("CROSSPOINT_RENDER_LAB_EMBEDDED_STYLES", true);

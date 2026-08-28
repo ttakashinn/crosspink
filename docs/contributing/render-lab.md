@@ -17,8 +17,10 @@ Mỗi lần chạy là một process riêng để settings, global state và cac
 - `x4-default`: portrait `480 × 800`, Noto Serif 14 pt, text AA bật.
 - `x3-default`: portrait `528 × 792`, cùng render settings để khóa khác biệt pagination do viewport.
 - `x4-no-text-aa`: portrait `480 × 800`, text AA tắt; ảnh vẫn đi qua grayscale plane.
+- `x4-sd-font`: portrait `480 × 800`, dùng fixture `.cpfont` v4 `CrossPointTest` có đủ 4 style và Latin mở rộng/combining marks cho tiếng Việt.
 - `smoke`: 3 checkpoint tiếng Việt, bảng/danh sách và ảnh trên X4.
 - `full`: 15 checkpoint trên 3 profile; checkpoint stress chạy cả cold và warm, tổng cộng 48 case. `table-continuation` khóa trang ngay sau anchor bảng; 5 checkpoint ảnh bổ sung khóa từng đường PNG alpha, line art, JPEG/ảnh rộng, ảnh cao và chuyển ảnh → text.
+- `font`: 3 checkpoint trên profile SD font; checkpoint stress chạy cả cold và warm, tổng cộng 4 case. Fixture được chép vào `/.fonts/CrossPointTest/` trong SD root tạm để đi qua đúng loader và cache font của firmware.
 
 ## Review regression
 
@@ -26,6 +28,7 @@ Chạy:
 
 ```sh
 .venv/bin/python scripts/render_lab.py verify --suite smoke
+.venv/bin/python scripts/render_lab.py verify --suite font
 ```
 
 Khi pixel khác, output thực tế và log nằm dưới `build/render-lab/actual/`. Nếu Pillow có sẵn, harness sinh thêm `expected.png`, `actual.png` và `diff.png`. Không chấp nhận golden chỉ để làm CI xanh; trước tiên phải xác định thay đổi đến từ parser, render spec, font, decoder hay viewport.
@@ -36,7 +39,7 @@ Sau khi diff là thay đổi chủ ý:
 .venv/bin/python scripts/render_lab.py verify --suite full --accept
 ```
 
-Review cả ảnh và `result.json`, đặc biệt `page_count`, `page_index`, `visible_text_offset`, kích thước logic và trạng thái grayscale plane. Với table, manifest khóa riêng hành vi theo viewport: X3 giữ grid 4 cột; X4 480 px fallback sang stacked để tránh cột quá hẹp. Checkpoint CSS và pagination còn khóa selector descendant 2 phần cùng `page-break-before/after`; thay đổi page count ở 2 checkpoint này phải được review như thay đổi layout, không chỉ pixel.
+Review cả ảnh và `result.json`, đặc biệt `page_count`, `page_index`, `visible_text_offset`, kích thước logic và trạng thái grayscale plane. Với table, manifest khóa riêng hành vi theo viewport: X3 giữ grid 4 cột; X4 480 px fallback sang stacked để tránh cột quá hẹp. Checkpoint CSS và pagination còn khóa selector descendant 2 phần cùng `page-break-before/after`; thay đổi page count ở 2 checkpoint này phải được review như thay đổi layout, không chỉ pixel. Checkpoint stress luôn dựng xong section trước khi chụp nên `page_count` là tổng chính xác, không phải ước lượng tạm thời của incremental parser.
 
 ## Giới hạn
 

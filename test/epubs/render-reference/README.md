@@ -59,6 +59,14 @@ Suite đầy đủ chạy 48 case trên X4, X3 và X4 không AA. Checkpoint `tab
 .venv/bin/python scripts/render_lab.py verify --suite full --accept
 ```
 
+Suite font chạy thêm 4 case với fixture `.cpfont` v4 `CrossPointTest`, gồm tiếng Việt NFC/NFD, 4 style và cold/warm section cache:
+
+```sh
+.venv/bin/python scripts/render_lab.py verify --suite font
+```
+
+Checkpoint stress bật full build để `page_count` trong golden là tổng chính xác; giá trị ước lượng khi mới dựng trang đầu không được dùng làm oracle.
+
 `framebuffer.pbm` khóa base framebuffer 1-bit. `framebuffer.pgm` khóa kết quả ghép base với 2 grayscale plane theo 4 mức simulator. Các trường timing và heap host được ghi để chẩn đoán nhưng không tham gia golden vì không tất định và không đại diện cho ESP32.
 
 ## Kiểm chứng phần cứng

@@ -127,6 +127,16 @@ def load_and_validate_manifest() -> dict[str, Any]:
         require_keys(profile["viewport"], ("width", "height"), f"viewport của {profile['id']}")
         if profile["orientation"] != "portrait":
             raise RenderLabError(f"Giai đoạn 1 chỉ khóa orientation=portrait: {profile['id']}")
+        sd_font_fixture = profile.get("sd_font_fixture")
+        sd_font_family = profile.get("sd_font_family")
+        if (sd_font_fixture is None) != (sd_font_family is None):
+            raise RenderLabError(f"Profile {profile['id']} phải khai báo đồng thời sd_font_fixture và sd_font_family")
+        if sd_font_fixture is not None:
+            fixture_path = Path(sd_font_fixture)
+            if fixture_path.is_absolute() or fixture_path.parent != Path("test/fonts") or not (ROOT / fixture_path).is_file():
+                raise RenderLabError(f"Profile {profile['id']} có SD font fixture không hợp lệ: {sd_font_fixture}")
+            if not isinstance(sd_font_family, str) or not sd_font_family or "/" in sd_font_family:
+                raise RenderLabError(f"Profile {profile['id']} có sd_font_family không hợp lệ")
         expected_viewport = (528, 792) if profile["environment"] == "simulator_x3" else (480, 800)
         actual_viewport = (profile["viewport"]["width"], profile["viewport"]["height"])
         if actual_viewport != expected_viewport:
@@ -261,10 +271,16 @@ def normalize_result(result: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in result.items() if key not in NONDETERMINISTIC_RESULT_FIELDS}
 
 
-def prepare_sd_root(root: Path) -> None:
+def prepare_sd_root(root: Path, profile: dict[str, Any]) -> None:
     books = root / "books"
     books.mkdir(parents=True, exist_ok=True)
     shutil.copy2(EPUB_PATH, books / "render-reference.epub")
+    sd_font_fixture = profile.get("sd_font_fixture")
+    sd_font_family = profile.get("sd_font_family")
+    if sd_font_fixture and sd_font_family:
+        font_dir = root / ".fonts" / sd_font_family
+        font_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / sd_font_fixture, font_dir / Path(sd_font_fixture).name)
 
 
 def render_process(case: RenderCase, sd_root: Path, output_dir: Path, cache_state: str) -> dict[str, Any]:
@@ -297,6 +313,7 @@ def render_process(case: RenderCase, sd_root: Path, output_dir: Path, cache_stat
             "CROSSPOINT_RENDER_LAB_EMBEDDED_STYLES": "1" if profile["embedded_styles"] else "0",
             "CROSSPOINT_RENDER_LAB_FONT_SIZE": str(profile["font_point_size"]),
             "CROSSPOINT_RENDER_LAB_SCREEN_MARGIN": str(profile["screen_margin"]),
+            "CROSSPOINT_RENDER_LAB_SD_FONT_FAMILY": profile.get("sd_font_family", ""),
             "SDL_VIDEODRIVER": child_env.get("SDL_VIDEODRIVER", "dummy"),
             "SDL_RENDER_DRIVER": child_env.get("SDL_RENDER_DRIVER", "software"),
         }
@@ -358,7 +375,7 @@ def assert_structural_expectations(case: RenderCase, result: dict[str, Any]) -> 
 def run_once(case: RenderCase, run_dir: Path) -> tuple[dict[str, Any], Path]:
     with tempfile.TemporaryDirectory(prefix="crosspoint-render-lab-") as temp_name:
         sd_root = Path(temp_name)
-        prepare_sd_root(sd_root)
+        prepare_sd_root(sd_root, case.profile)
         if case.cache_state == "warm":
             prime_dir = run_dir / "warm-prime"
             render_process(case, sd_root, prime_dir, "cold")
@@ -461,7 +478,7 @@ def parse_args() -> argparse.Namespace:
     subparsers.add_parser("validate", help="Kiểm tra fixture, schema và simulator pin")
 
     verify = subparsers.add_parser("verify", help="Build simulator và so sánh golden")
-    verify.add_argument("--suite", choices=("smoke", "full"), default="smoke")
+    verify.add_argument("--suite", choices=("smoke", "full", "font"), default="smoke")
     verify.add_argument("--accept", action="store_true", help="Ghi output đã review thành golden mới")
     verify.add_argument("--runs", type=int, default=2, help="Số lần chạy độc lập để kiểm tra tính tất định")
     verify.add_argument("--no-build", action="store_true", help="Dùng simulator binary đã build")
