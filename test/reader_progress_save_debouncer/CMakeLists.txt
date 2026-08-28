@@ -1,0 +1,4 @@
+add_executable(ReaderProgressSaveDebouncerTest ReaderProgressSaveDebouncerTest.cpp)
+target_include_directories(ReaderProgressSaveDebouncerTest PRIVATE ${REPO_ROOT}/src/activities/reader)
+target_link_libraries(ReaderProgressSaveDebouncerTest PRIVATE crosspoint_test_common GTest::gtest_main)
+gtest_discover_tests(ReaderProgressSaveDebouncerTest)

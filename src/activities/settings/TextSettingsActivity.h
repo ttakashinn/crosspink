@@ -3,6 +3,7 @@
 #include <SdCardFontRegistry.h>
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -21,7 +22,8 @@ class TextSettingsActivity final : public UiTabListActivity {
   enum class Tab : uint8_t { Family, Size, Layout, Style, Count };
 
   TextSettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const SdCardFontRegistry* registry,
-                       Tab initialTab = Tab::Family);
+                       Tab initialTab = Tab::Family, bool persistGlobally = true,
+                       std::function<void()> onSettingsChanged = {});
 
   void onEnter() override;
   void render(RenderLock&&) override;
@@ -61,6 +63,7 @@ class TextSettingsActivity final : public UiTabListActivity {
   // True when the focused list row is a setting the preview cannot reflect.
   bool focusedRowHasNoPreview() const;
   void switchTab(int direction = 1);
+  void persistSettings();
 
   // Row storage for the active tab: rowItems_ (label/actionValue) is
   // rebuilt only when the tab or its backing data changes (rebuildRowItems(),
@@ -84,6 +87,8 @@ class TextSettingsActivity final : public UiTabListActivity {
   };
 
   const SdCardFontRegistry* registry_;
+  bool persistGlobally_ = true;
+  std::function<void()> onSettingsChanged_;
   OptionPopup optionPopup_;
   std::vector<FontEntry> fonts_;
   std::vector<SizeEntry> sizes_;

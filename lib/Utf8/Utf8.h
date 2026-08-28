@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #define REPLACEMENT_GLYPH 0xFFFD
 
 uint32_t utf8NextCodepoint(const unsigned char** string);
@@ -22,6 +23,9 @@ std::string utf8ComposeNfc(const std::string& in);
 // Returns the new length (<= len). If the buffer ends mid-sequence, the
 // incomplete trailing bytes are excluded.
 int utf8SafeTruncateBuffer(const char* buf, int len);
+// Strict structural validation: rejects truncated, overlong, surrogate and
+// out-of-range sequences while accepting literal U+FFFD.
+bool utf8IsValid(std::string_view text);
 
 // Returns true for CJK characters that allow line breaks on either side without hyphenation.
 // Covers CJK Unified Ideographs, Hiragana, Katakana, Hangul Syllables, CJK punctuation,

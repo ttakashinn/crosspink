@@ -51,8 +51,21 @@ constexpr int MARGIN_STEP = CrossPointSettings::SCREEN_MARGIN_STEP;
 }  // namespace
 
 TextSettingsActivity::TextSettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
-                                           const SdCardFontRegistry* registry, Tab initialTab)
-    : UiTabListActivity("TextSettings", renderer, mappedInput), registry_(registry), tab_(initialTab) {}
+                                           const SdCardFontRegistry* registry, Tab initialTab,
+                                           const bool persistGlobally, std::function<void()> onSettingsChanged)
+    : UiTabListActivity("TextSettings", renderer, mappedInput),
+      registry_(registry),
+      persistGlobally_(persistGlobally),
+      onSettingsChanged_(std::move(onSettingsChanged)),
+      tab_(initialTab) {}
+
+void TextSettingsActivity::persistSettings() {
+  if (persistGlobally_) {
+    SETTINGS.saveToFile();
+  } else if (onSettingsChanged_) {
+    onSettingsChanged_();
+  }
+}
 
 const char* TextSettingsActivity::tabLabel(const int index) const { return I18N.get(TAB_NAME_IDS[index]); }
 
@@ -334,7 +347,7 @@ void TextSettingsActivity::activateRow(int row) {
         // gesture/key or a sleep. Saved here, not inside applyFamily, so the
         // SD write happens outside its RenderLock.
         if (currentFamilyIndex_ == row) {
-          SETTINGS.saveToFile();
+          persistSettings();
         }
         requestUpdate();
       }
@@ -342,7 +355,7 @@ void TextSettingsActivity::activateRow(int row) {
     case Tab::Size:
       if (row != currentSizeIndex_) {
         applySize(row);
-        SETTINGS.saveToFile();
+        persistSettings();
         requestUpdate();
       }
       break;
@@ -371,22 +384,22 @@ void TextSettingsActivity::confirmLayoutRow(int row) {
   switch (static_cast<LayoutRow>(row)) {
     case LayoutRow::ParaSpacing:
       SETTINGS.extraParagraphSpacing = !SETTINGS.extraParagraphSpacing;
-      SETTINGS.saveToFile();
+      persistSettings();
       requestUpdate();
       break;
     case LayoutRow::LineSpacing:
       optionPopup_.show(StrId::STR_LINE_SPACING, LINE_SPACING_IDS, static_cast<int>(std::size(LINE_SPACING_IDS)),
-                        SETTINGS.lineSpacing, [](int idx) {
+                        SETTINGS.lineSpacing, [this](int idx) {
                           SETTINGS.lineSpacing = static_cast<uint8_t>(idx);
-                          SETTINGS.saveToFile();
+                          persistSettings();
                         });
       requestUpdate();
       break;
     case LayoutRow::Alignment:
       optionPopup_.show(StrId::STR_ALIGNMENT, ALIGNMENT_IDS, static_cast<int>(std::size(ALIGNMENT_IDS)),
-                        SETTINGS.paragraphAlignment, [](int idx) {
+                        SETTINGS.paragraphAlignment, [this](int idx) {
                           SETTINGS.paragraphAlignment = static_cast<uint8_t>(idx);
-                          SETTINGS.saveToFile();
+                          persistSettings();
                         });
       requestUpdate();
       break;
@@ -395,9 +408,9 @@ void TextSettingsActivity::confirmLayoutRow(int row) {
       options.reserve((MARGIN_MAX - MARGIN_MIN) / MARGIN_STEP + 1);
       for (int m = MARGIN_MIN; m <= MARGIN_MAX; m += MARGIN_STEP) options.push_back(std::to_string(m));
       const int cur = (std::clamp<int>(SETTINGS.screenMargin, MARGIN_MIN, MARGIN_MAX) - MARGIN_MIN) / MARGIN_STEP;
-      optionPopup_.show(StrId::STR_SCREEN_MARGIN, options, cur, [](int idx) {
+      optionPopup_.show(StrId::STR_SCREEN_MARGIN, options, cur, [this](int idx) {
         SETTINGS.screenMargin = static_cast<uint8_t>(MARGIN_MIN + idx * MARGIN_STEP);
-        SETTINGS.saveToFile();
+        persistSettings();
       });
       requestUpdate();
       break;
@@ -446,7 +459,7 @@ void TextSettingsActivity::confirmStyleRow(int row) {
     default:
       return;
   }
-  SETTINGS.saveToFile();
+  persistSettings();
   requestUpdate();
 }
 

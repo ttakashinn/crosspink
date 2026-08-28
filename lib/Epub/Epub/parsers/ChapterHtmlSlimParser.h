@@ -1,5 +1,7 @@
 #pragma once
 
+#include <Arena.h>
+#include <ArenaVector.h>
 #include <HalStorage.h>
 #include <expat.h>
 
@@ -80,7 +82,8 @@ class ChapterHtmlSlimParser {
     bool hasSup = false, sup = false;
     bool hasSub = false, sub = false;
   };
-  std::vector<StyleStackEntry> inlineStyleStack;
+  Arena styleArena;
+  ArenaVector<StyleStackEntry> inlineStyleStack{styleArena};
   std::vector<BlockStyle> blockStyleStack;   // accumulated block styles from open ancestor elements
   std::vector<CssStyle> blockCssStyleStack;  // inherited text styles from open block elements
   CssStyle currentCssStyle;
@@ -151,6 +154,7 @@ class ChapterHtmlSlimParser {
   bool attemptedLowMemoryFontCacheRelease_ = false;
 
   void updateEffectiveInlineStyle();
+  bool pushInlineStyle(const StyleStackEntry& entry);
   [[nodiscard]] CssParser::DescendantMask activeCssAncestorMask() const;
   void trackCssAncestor(std::string_view tagName, std::string_view classAttr);
   void startNewTextBlock(const BlockStyle& blockStyle);

@@ -34,6 +34,10 @@ class ReaderActivity : public Activity {
   virtual void renderBook() = 0;
   virtual void applyInitialOrientation();
   virtual void onEndOfBookRendered() {}
+  virtual void flushReaderState() {}
+  virtual void requestProgressSaveIfDue() {}
+  virtual bool prepareReaderSettings() { return true; }
+  virtual void restoreReaderSettings() {}
 
   bool handleBackNavigation();
   bool handleEndOfBookMenu(bool suppressConfirmRelease = false);

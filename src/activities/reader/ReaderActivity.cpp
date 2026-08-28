@@ -55,6 +55,11 @@ void ReaderActivity::onEnter() {
     return;
   }
 
+  if (!prepareReaderSettings()) {
+    finish();
+    return;
+  }
+
   sdFontSystem.ensureLoaded(renderer);
   applyInitialOrientation();
 
@@ -70,7 +75,10 @@ void ReaderActivity::onEnter() {
 }
 
 void ReaderActivity::onExit() {
+  flushReaderState();
   Activity::onExit();
+
+  restoreReaderSettings();
 
   renderer.setOrientation(GfxRenderer::Orientation::Portrait);
   APP_STATE.readerActivityLoadCount = 0;
@@ -137,6 +145,7 @@ bool ReaderActivity::handleEndOfBookPageTurn(const bool prevTriggered, const boo
 }
 
 void ReaderActivity::loop() {
+  requestProgressSaveIfDue();
   clearEndOfBookOptionsIfNeeded();
   if (handleEndOfBookMenu()) return;
   if (handleFormatInput()) return;

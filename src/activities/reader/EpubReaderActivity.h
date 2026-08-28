@@ -11,9 +11,12 @@
 
 #include "BookmarkEntry.h"
 #include "EpubReaderMenuActivity.h"
+#include "PerBookReaderSettings.h"
 #include "ProgressMapper.h"
 #include "ReaderActivity.h"
+#include "ReaderProgressSaveDebouncer.h"
 #include "ReaderToolbarUi.h"
+#include "clippings/ClippingCodec.h"
 #include "components/OptionPopup.h"
 
 class EpubReaderActivity final : public ReaderActivity {
@@ -41,13 +44,18 @@ class EpubReaderActivity final : public ReaderActivity {
   bool automaticPageTurnActive = false;
   bool showBookmarkMessage = false;
   bool showDictionaryMessage = false;
+  bool showClippingMessage = false;
+  StrId clippingMessage = StrId::STR_HIGHLIGHT_SAVED;
   unsigned long dictionaryMessageTime = 0UL;
+  unsigned long clippingMessageTime = 0UL;
   bool currentPageBookmarked = false;
   int idlePrewarmSpine = -1;
   int idlePrewarmPage = -1;
   unsigned long lastRenderCompleteMs = 0;
   bool bookmarkRemoved = false;
   std::vector<BookmarkEntry> cachedBookmarks;
+  std::vector<ClippingCodec::Record> cachedClippings;
+  bool clippingsWritable = true;
   bool recentsEntryRemoved = false;
   unsigned long bookmarkMessageTime = 0UL;
   bool pendingReadFolderMove = false;
@@ -101,6 +109,11 @@ class EpubReaderActivity final : public ReaderActivity {
   int lastSavedSpineIndex = -1;
   int lastSavedPage = -1;
   int lastSavedPageCount = -1;
+  ReaderProgressSaveDebouncer progressSaveDebouncer;
+  PerBookReaderSettings globalReaderSettings;
+  PerBookReaderSettings bookReaderSettings;
+  bool readerSettingsPrepared = false;
+  bool perBookSettingsWritable = true;
 
   static constexpr int BUILD_PAGES_PER_CHUNK = 8;
   static constexpr int BACKGROUND_BUILD_PAGES_PER_TICK = 2;
@@ -124,6 +137,12 @@ class EpubReaderActivity final : public ReaderActivity {
   void clearDeferredReposition();
   void rememberCurrentContentOffset();
   bool saveProgress(int spineIndex, int currentPage, int pageCount);
+  void queueProgressSave();
+  void flushReaderState() override;
+  void requestProgressSaveIfDue() override;
+  bool prepareReaderSettings() override;
+  void restoreReaderSettings() override;
+  void saveBookReaderSettings();
   void jumpToPercent(int percent);
   void onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction action);
   void openReaderMenu();
@@ -151,6 +170,8 @@ class EpubReaderActivity final : public ReaderActivity {
   std::string moreRowValue(int row) const;
   void activateMoreRow(int row);
   void openDictionaryWordSelect();
+  void openClipSelection();
+  void toggleClipping(const ClippingSelectionResult& selection);
   bool launchKOReaderSync();
   unsigned long confirmLongPressThreshold() const;
   void toggleAutoPageTurn(uint8_t selectedPageTurnOption);

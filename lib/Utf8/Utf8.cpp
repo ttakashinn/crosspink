@@ -178,3 +178,38 @@ void utf8TruncateChars(std::string& str, const size_t numChars) {
     utf8RemoveLastChar(str);
   }
 }
+
+bool utf8IsValid(const std::string_view text) {
+  const auto* bytes = reinterpret_cast<const uint8_t*>(text.data());
+  size_t offset = 0;
+  while (offset < text.size()) {
+    const uint8_t lead = bytes[offset++];
+    if (lead < 0x80) continue;
+    size_t count = 0;
+    uint32_t codepoint = 0;
+    uint32_t minimum = 0;
+    if ((lead & 0xE0) == 0xC0) {
+      count = 1;
+      codepoint = lead & 0x1F;
+      minimum = 0x80;
+    } else if ((lead & 0xF0) == 0xE0) {
+      count = 2;
+      codepoint = lead & 0x0F;
+      minimum = 0x800;
+    } else if ((lead & 0xF8) == 0xF0) {
+      count = 3;
+      codepoint = lead & 0x07;
+      minimum = 0x10000;
+    } else {
+      return false;
+    }
+    if (count > text.size() - offset) return false;
+    for (size_t i = 0; i < count; ++i) {
+      const uint8_t continuation = bytes[offset++];
+      if ((continuation & 0xC0) != 0x80) return false;
+      codepoint = (codepoint << 6) | (continuation & 0x3F);
+    }
+    if (codepoint < minimum || codepoint > 0x10FFFF || (codepoint >= 0xD800 && codepoint <= 0xDFFF)) return false;
+  }
+  return true;
+}

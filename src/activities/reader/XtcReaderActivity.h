@@ -6,10 +6,12 @@
 #include <string>
 
 #include "ReaderActivity.h"
+#include "ReaderProgressSaveDebouncer.h"
 
 class XtcReaderActivity final : public ReaderActivity {
   std::shared_ptr<Xtc> xtc;
   uint32_t currentPage = 0;
+  ReaderProgressSaveDebouncer progressSaveDebouncer;
 
   enum class StatusBarOverlayPosition { Bottom, Top };
   struct StatusBarInfo {
@@ -22,7 +24,10 @@ class XtcReaderActivity final : public ReaderActivity {
   void openChapterSelection();
   void renderStatusBarOverlay(GfxRenderer& renderer, StatusBarOverlayPosition position) const;
   StatusBarInfo getStatusBarInfo() const;
-  void saveProgress() const;
+  bool saveProgress();
+  void queueProgressSave();
+  void flushReaderState() override;
+  void requestProgressSaveIfDue() override;
   void loadProgress();
 
   bool loadBook() override;

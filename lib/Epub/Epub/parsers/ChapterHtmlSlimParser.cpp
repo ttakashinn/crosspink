@@ -210,8 +210,14 @@ void ChapterHtmlSlimParser::pushTableTextStyleEntry(const CssStyle& cssStyle) {
     entry.hasTextAlign = true;
     entry.textAlign = cssStyle.textAlign;
   }
-  inlineStyleStack.push_back(entry);
+  if (!pushInlineStyle(entry)) return;
   updateEffectiveInlineStyle();
+}
+
+bool ChapterHtmlSlimParser::pushInlineStyle(const StyleStackEntry& entry) {
+  if (inlineStyleStack.push_back(entry)) return true;
+  markLowMemoryFailure("inline style arena");
+  return false;
 }
 
 void ChapterHtmlSlimParser::pushDecorationStyleEntry(const CssTextDecoration defaultDecoration,
@@ -230,7 +236,7 @@ void ChapterHtmlSlimParser::pushDecorationStyleEntry(const CssTextDecoration def
   }
   applySmallCapsToEntry(entry, cssStyle);
   applyDirectionToEntry(entry, cssStyle);
-  inlineStyleStack.push_back(entry);
+  if (!pushInlineStyle(entry)) return;
   updateEffectiveInlineStyle();
 }
 
@@ -1446,7 +1452,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       entry.textDecoration = CssTextDecoration::Underline;
       applySmallCapsToEntry(entry, cssStyle);
       applyDirectionToEntry(entry, cssStyle);
-      self->inlineStyleStack.push_back(entry);
+      if (!self->pushInlineStyle(entry)) return;
       self->updateEffectiveInlineStyle();
 
       // Skip CSS resolution — we already handled styling for this <a> tag
@@ -1563,7 +1569,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     applyTextDecorationToEntry(entry, cssStyle);
     applySmallCapsToEntry(entry, cssStyle);
     applyDirectionToEntry(entry, cssStyle);
-    self->inlineStyleStack.push_back(entry);
+    if (!self->pushInlineStyle(entry)) return;
     self->updateEffectiveInlineStyle();
   } else if (matches(name, ITALIC_TAGS, std::size(ITALIC_TAGS))) {
     // Flush buffer before style change so preceding text gets current style
@@ -1584,7 +1590,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     applyTextDecorationToEntry(entry, cssStyle);
     applySmallCapsToEntry(entry, cssStyle);
     applyDirectionToEntry(entry, cssStyle);
-    self->inlineStyleStack.push_back(entry);
+    if (!self->pushInlineStyle(entry)) return;
     self->updateEffectiveInlineStyle();
   } else if (strcmp(name, "sup") == 0 || strcmp(name, "sub") == 0) {
     if (self->partWordBufferIndex > 0) {
@@ -1601,7 +1607,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       entry.hasSub = true;
       entry.sub = true;
     }
-    self->inlineStyleStack.push_back(entry);
+    if (!self->pushInlineStyle(entry)) return;
     self->updateEffectiveInlineStyle();
   } else if (strcmp(name, "span") == 0 || !isHeaderOrBlock(name)) {
     // Handle span and other inline elements for CSS styling
@@ -1640,7 +1646,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
           entry.sub = true;
         }
       }
-      self->inlineStyleStack.push_back(entry);
+      if (!self->pushInlineStyle(entry)) return;
       self->updateEffectiveInlineStyle();
     }
   }
@@ -2122,6 +2128,15 @@ bool ChapterHtmlSlimParser::beginParse() {
   attemptedLowMemoryFontCacheRelease_ = false;
   htmlEnded_ = false;
   if (shouldAbortForLowMemory("parser initialization")) return false;
+  if (!styleArena.initialized()) {
+    if (!styleArena.init(2048, 16 * 1024)) {
+      markLowMemoryFailure("style arena initialization");
+      return false;
+    }
+  } else {
+    styleArena.clear();
+  }
+  inlineStyleStack.resetStorage();
   cssAncestorMasks.fill(0);
   pageBreakAfterCount = 0;
   // Initialize block style stack with a root entry representing "no ancestor block elements".

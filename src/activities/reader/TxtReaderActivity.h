@@ -8,6 +8,7 @@
 
 #include "CrossPointSettings.h"
 #include "ReaderActivity.h"
+#include "ReaderProgressSaveDebouncer.h"
 
 class TxtReaderActivity final : public ReaderActivity {
   std::unique_ptr<Txt> txt;
@@ -21,6 +22,7 @@ class TxtReaderActivity final : public ReaderActivity {
   int linesPerPage = 0;
   int viewportWidth = 0;
   bool initialized = false;
+  ReaderProgressSaveDebouncer progressSaveDebouncer;
 
   // Cached settings for cache validation
   int cachedFontId = 0;
@@ -37,7 +39,10 @@ class TxtReaderActivity final : public ReaderActivity {
   void buildPageIndex(GfxRenderer& renderer);
   bool loadPageIndexCache();
   void savePageIndexCache() const;
-  void saveProgress() const;
+  bool saveProgress();
+  void queueProgressSave();
+  void flushReaderState() override;
+  void requestProgressSaveIfDue() override;
   void loadProgress();
   void renderStatusBar() const;
 

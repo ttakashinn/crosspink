@@ -1,0 +1,7 @@
+add_executable(PerBookReaderSettingsCodecTest PerBookReaderSettingsCodecTest.cpp)
+target_include_directories(PerBookReaderSettingsCodecTest PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/stubs
+  ${REPO_ROOT}/src/activities/reader
+)
+target_link_libraries(PerBookReaderSettingsCodecTest PRIVATE crosspoint_test_common GTest::gtest_main)
+gtest_discover_tests(PerBookReaderSettingsCodecTest)

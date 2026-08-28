@@ -52,3 +52,17 @@ TEST(Utf8ComposeNfc, ComposesWithinWord) {
   // "Ti" + e+circ+acute + "ng" -> "Tiếng"
   EXPECT_EQ(utf8ComposeNfc("Ti" + std::string("e") + kCombCirc + kCombAcute + "ng"), "Ti\xE1\xBA\xBFng");
 }
+
+TEST(Utf8Validation, AcceptsVietnameseAndValidFourByteCodepoints) {
+  EXPECT_TRUE(utf8IsValid(""));
+  EXPECT_TRUE(utf8IsValid("Văn Nhân Số"));
+  EXPECT_TRUE(utf8IsValid("\xF0\x9F\x93\x9A"));  // U+1F4DA BOOKS
+}
+
+TEST(Utf8Validation, RejectsMalformedAndNonScalarSequences) {
+  EXPECT_FALSE(utf8IsValid("\xC0\xAF"));          // overlong '/'
+  EXPECT_FALSE(utf8IsValid("\xE2\x82"));          // truncated U+20AC
+  EXPECT_FALSE(utf8IsValid("\xED\xA0\x80"));      // surrogate U+D800
+  EXPECT_FALSE(utf8IsValid("\xF4\x90\x80\x80"));  // beyond U+10FFFF
+  EXPECT_FALSE(utf8IsValid("\x80"));              // stray continuation
+}

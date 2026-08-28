@@ -66,7 +66,7 @@ void XtcReaderActivity::renderBook() {
   }
 
   renderPage();
-  saveProgress();
+  queueProgressSave();
 }
 
 XtcReaderActivity::StatusBarInfo XtcReaderActivity::getStatusBarInfo() const {
@@ -325,8 +325,8 @@ void XtcReaderActivity::onReturnFromEndOfBook() {
   }
 }
 
-void XtcReaderActivity::saveProgress() const {
-  if (!xtc) return;
+bool XtcReaderActivity::saveProgress() {
+  if (!xtc) return false;
   uint8_t data[4];
   data[0] = currentPage & 0xFF;
   data[1] = (currentPage >> 8) & 0xFF;
@@ -334,7 +334,23 @@ void XtcReaderActivity::saveProgress() const {
   data[3] = (currentPage >> 24) & 0xFF;
   if (!ProgressFile::writeAtomic(xtc->getCachePath(), data, sizeof(data))) {
     LOG_ERR("XTC", "Failed to save progress: page %lu", currentPage);
+    progressSaveDebouncer.markAttemptFailed(millis());
+    return false;
   }
+  progressSaveDebouncer.seedPersisted(currentPage, xtc->getPageCount(), millis());
+  return true;
+}
+
+void XtcReaderActivity::queueProgressSave() {
+  if (xtc && progressSaveDebouncer.observe(currentPage, xtc->getPageCount(), millis())) saveProgress();
+}
+
+void XtcReaderActivity::flushReaderState() {
+  if (xtc && progressSaveDebouncer.hasPending()) saveProgress();
+}
+
+void XtcReaderActivity::requestProgressSaveIfDue() {
+  if (progressSaveDebouncer.due(millis())) requestUpdate();
 }
 
 void XtcReaderActivity::loadProgress() {
@@ -350,6 +366,7 @@ void XtcReaderActivity::loadProgress() {
       LOG_DBG("XTC", "Loaded progress: page %lu/%lu", currentPage + 1, xtc->getPageCount());
     }
   }
+  progressSaveDebouncer.seedPersisted(currentPage, xtc->getPageCount(), millis());
 }
 
 ScreenshotInfo XtcReaderActivity::getScreenshotInfo() const {
