@@ -89,7 +89,7 @@ Mục tiêu: mọi tuyên bố “render đẹp hơn” phải có output so sá
 
 Fixture end-to-end chuẩn là `test/epubs/crosspoint-render-reference-v1.0.epub`. Source sinh file và checkpoint nằm tại `scripts/generate_render_reference_epub.py` và `test/epubs/render-reference/`; sách thực tế chỉ dùng làm corpus bổ sung, không thay fixture chuẩn nếu không đại diện cho nội dung tiếng Việt và đường chạy của CrossPoint.
 
-1. Port tối thiểu env simulator/HAL từ CrossInk hoặc `crossink-simulator`; không port UI/tính năng CrossInk không liên quan.
+1. Tích hợp tối thiểu simulator/HAL chính thức của CrossPoint, pin theo commit; không port UI/tính năng CrossInk không liên quan.
 2. Thêm chế độ chạy không tương tác: mở fixture, chọn viewport/font/settings, render trang chỉ định và xuất framebuffer ra PNG/PBM cùng manifest JSON.
 3. Tạo corpus ban đầu gồm các nhóm sau:
    - Latin và tiếng Việt có dấu, NFC/NFD và combining marks.
@@ -104,6 +104,8 @@ Fixture end-to-end chuẩn là `test/epubs/crosspoint-render-reference-v1.0.epub
 Simulator chỉ xác nhận layout/framebuffer. Ghosting, độ đậm nét và waveform vẫn phải A/B trên panel thật.
 
 Điều kiện hoàn thành: một lệnh tạo lại toàn bộ output; output ổn định qua 2 lần chạy; CI giữ artifact khi diff thất bại.
+
+Trạng thái ngày 28/08/2026: phần mềm của Giai đoạn 1 đã được triển khai trên nhánh `codex/render-lab-phase-1`. Render lab dùng simulator commit `8323320dc0ee88207f753a0dd4d195da31520a50`, native PNG/JPEG decoder và pipeline EPUB thật. Bộ golden hiện có 30 case trên `x4-default`, `x3-default` và `x4-no-text-aa`, gồm cold cache cho 9 checkpoint và cold/warm cho checkpoint stress. Smoke suite đã cho output PBM/PGM cùng manifest cấu trúc giống nhau qua 2 lần chạy độc lập. Đối chiếu X3/X4/Sticky trên panel thật vẫn là gate phần cứng chưa thực hiện.
 
 ### Giai đoạn 2 — Nhận các cải tiến upstream và khóa regression
 

@@ -28,6 +28,39 @@ Fixture không nhằm kiểm tra audio, video, JavaScript hoặc fixed-layout v�
 
 Checkpoint và cấu hình đo nằm trong `expected-manifest.json`. Checkpoint dùng `spine href + anchor`; không khóa số trang tuyệt đối vì pagination phụ thuộc font và thiết lập reader.
 
+## Render lab và golden
+
+Cài dependency host một lần:
+
+```sh
+# macOS
+brew install sdl2
+
+# Debian/Ubuntu
+sudo apt install libsdl2-dev libssl-dev
+```
+
+Kiểm tra nhanh manifest và simulator pin mà không build:
+
+```sh
+.venv/bin/python scripts/render_lab.py validate
+```
+
+Build simulator và chạy smoke suite. Mỗi case chạy trong SD root riêng; 2 lần chạy độc lập phải tạo cùng PBM, PGM và manifest cấu trúc:
+
+```sh
+.venv/bin/python scripts/render_lab.py verify --suite smoke
+```
+
+Suite đầy đủ chạy 30 case trên X4, X3 và X4 không AA. Golden chỉ được thay đổi sau khi review ảnh diff và truyền `--accept` rõ ràng:
+
+```sh
+.venv/bin/python scripts/render_lab.py verify --suite full
+.venv/bin/python scripts/render_lab.py verify --suite full --accept
+```
+
+`framebuffer.pbm` khóa base framebuffer 1-bit. `framebuffer.pgm` khóa kết quả ghép base với 2 grayscale plane theo 4 mức simulator. Các trường timing và heap host được ghi để chẩn đoán nhưng không tham gia golden vì không tất định và không đại diện cho ESP32.
+
 ## Kiểm chứng phần cứng
 
 Simulator/framebuffer chỉ xác nhận layout và pixel đầu ra. Chất lượng nét chữ, dither, ghosting và waveform phải được đánh giá riêng trên X3/X4/Sticky. Mỗi kết quả phải ghi firmware SHA, EPUB SHA-256, font, cỡ chữ, AA, orientation và trạng thái cache.

@@ -174,6 +174,56 @@ jobs:
       - name: Run tests
         run: ctest --test-dir build/test --output-on-failure -j
 
+  render-lab:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Install native simulator dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsdl2-dev libssl-dev
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+          enable-cache: false
+
+      - name: Install PlatformIO and render diff dependencies
+        run: |
+          uv pip install --system -U https://github.com/pioarduino/platformio-core/archive/refs/tags/v6.1.19.zip
+          uv pip install --system -U pillow
+
+      - name: Cache PlatformIO packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: simulator-${{ runner.os }}-${{ hashFiles('platformio.ini', 'test/epubs/render-reference/expected-manifest.json') }}
+          restore-keys: simulator-${{ runner.os }}-
+
+      - name: Validate render fixture and manifest
+        run: |
+          python scripts/generate_render_reference_epub.py --check
+          python scripts/render_lab.py validate
+
+      - name: Run deterministic render smoke suite
+        run: python scripts/render_lab.py verify --suite smoke
+
+      - name: Upload render diffs and simulator logs
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: render-lab-failure
+          path: build/render-lab/actual
+          if-no-files-found: warn
+
   # This job is used as the PR required actions check, allows for changes to other steps in the future without breaking
   # PR requirements.
   test-status:
@@ -182,6 +232,7 @@ jobs:
       - build
       - clang-format
       - cppcheck
+      - render-lab
       - unit-tests
     if: always()
     runs-on: ubuntu-latest
