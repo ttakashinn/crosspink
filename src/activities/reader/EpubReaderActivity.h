@@ -104,8 +104,10 @@ class EpubReaderActivity final : public ReaderActivity {
 
   static constexpr int BUILD_PAGES_PER_CHUNK = 8;
   static constexpr int BACKGROUND_BUILD_PAGES_PER_TICK = 2;
-  static constexpr size_t BACKGROUND_BUILD_MIN_FREE_HEAP = 32 * 1024;
-  static constexpr size_t BACKGROUND_BUILD_MIN_MAX_ALLOC = 16 * 1024;
+  // Match the parser's text-layout floor so background work pauses before it
+  // enters a build that the parser must immediately abandon as unsafe.
+  static constexpr size_t BACKGROUND_BUILD_MIN_FREE_HEAP = 44 * 1024;
+  static constexpr size_t BACKGROUND_BUILD_MIN_MAX_ALLOC = 32 * 1024;
   bool buildTickHeapGate();
   ReaderRenderSpec activeReaderRenderSpec(uint16_t viewportWidth, uint16_t viewportHeight) const;
   bool retrySectionInSafeMode();

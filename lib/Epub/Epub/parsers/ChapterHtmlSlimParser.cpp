@@ -1,5 +1,6 @@
 #include "ChapterHtmlSlimParser.h"
 
+#include <FontCacheManager.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
@@ -29,6 +30,11 @@
 // Minimum file size (in bytes) to show indexing popup - smaller chapters don't benefit from it
 constexpr size_t MIN_SIZE_FOR_POPUP = 10 * 1024;  // 10KB
 constexpr size_t PARSE_BUFFER_SIZE = 1024;
+// Stop before entering throwing STL growth or shared_ptr control-block
+// allocations. CrossInk uses the same floor for EPUB text layout; these next
+// allocations are small, so total free heap is the relevant signal.
+constexpr size_t EPUB_TEXT_LAYOUT_MIN_FREE_HEAP = 44 * 1024;
+constexpr size_t EPUB_TEXT_LAYOUT_MIN_MAX_ALLOC = 32 * 1024;
 
 // This number comes from PR #73
 // If we have > 750 words buffered up, perform the layout and consume out all but the last line
@@ -284,6 +290,35 @@ CssParser::DescendantMask ChapterHtmlSlimParser::activeCssAncestorMask() const {
   return cssAncestorMasks[index];
 }
 
+void ChapterHtmlSlimParser::markLowMemoryFailure(const char* stage) {
+  if (!lowMemoryFailure_) {
+    LOG_ERR("EHP", "Low memory during %s (%u free, %u max alloc); aborting section build", stage,
+            static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+  }
+  lowMemoryFailure_ = true;
+  if (xmlParser_) XML_StopParser(xmlParser_, XML_FALSE);
+}
+
+bool ChapterHtmlSlimParser::shouldAbortForLowMemory(const char* stage) {
+  if (lowMemoryFailure_) return true;
+  if (ESP.getFreeHeap() >= EPUB_TEXT_LAYOUT_MIN_FREE_HEAP && ESP.getMaxAllocHeap() >= EPUB_TEXT_LAYOUT_MIN_MAX_ALLOC) {
+    return false;
+  }
+  if (!attemptedLowMemoryFontCacheRelease_) {
+    attemptedLowMemoryFontCacheRelease_ = true;
+    if (auto* fontCache = renderer.getFontCacheManager()) {
+      fontCache->releaseSdFontCaches();
+      if (ESP.getFreeHeap() >= EPUB_TEXT_LAYOUT_MIN_FREE_HEAP &&
+          ESP.getMaxAllocHeap() >= EPUB_TEXT_LAYOUT_MIN_MAX_ALLOC) {
+        LOG_DBG("EHP", "Released SD font caches before %s", stage);
+        return false;
+      }
+    }
+  }
+  markLowMemoryFailure(stage);
+  return true;
+}
+
 void ChapterHtmlSlimParser::trackCssAncestor(const std::string_view tagName, const std::string_view classAttr) {
   if (!cssParser || depth < 0 || static_cast<size_t>(depth) >= MAX_CSS_ANCESTOR_DEPTH) return;
   cssAncestorMasks[static_cast<size_t>(depth)] =
@@ -325,6 +360,7 @@ bool ChapterHtmlSlimParser::consumePageBreakAfter(const int elementDepth) {
 
 void ChapterHtmlSlimParser::flushPendingAnchor() {
   if (pendingAnchorId.empty()) return;
+  if (shouldAbortForLowMemory("anchor flush")) return;
 
   // If the pending anchor is a TOC chapter boundary, force a page break after the previous
   // block is flushed so the chapter starts on a fresh page.
@@ -332,7 +368,11 @@ void ChapterHtmlSlimParser::flushPendingAnchor() {
     if (currentPage && !currentPage->elements.empty()) {
       completePageFn(std::move(currentPage), xpathParagraphIndex, xpathListItemIndex, currentPageVisibleOffset);
       completedPageCount++;
-      currentPage.reset(new Page());
+      currentPage = makeUniqueNoThrow<Page>();
+      if (!currentPage) {
+        markLowMemoryFailure("TOC page break");
+        return;
+      }
       currentPageNextY = 0;
       currentPageVisibleOffsetSet = false;
     }
@@ -358,7 +398,6 @@ void ChapterHtmlSlimParser::flushPartWordBuffer() {
     nextWordContinues = false;
     return;
   }
-
   // Determine font style from depth-based tracking and CSS effective style
   const bool isBold = boldUntilDepth < depth || effectiveBold;
   const bool isItalic = italicUntilDepth < depth || effectiveItalic;
@@ -399,6 +438,7 @@ void ChapterHtmlSlimParser::flushPartWordBuffer() {
 
 // start a new text block if needed
 void ChapterHtmlSlimParser::startNewTextBlock(const BlockStyle& blockStyle) {
+  if (shouldAbortForLowMemory("text block creation")) return;
   nextWordContinues = false;  // New block = new paragraph, no continuation
   if (currentTextBlock) {
     // already have a text block running and it is empty - just reuse it
@@ -436,16 +476,24 @@ void ChapterHtmlSlimParser::startNewTextBlock(const BlockStyle& blockStyle) {
     }
 
     makePages();
+    if (lowMemoryFailure_) return;
   }
   // If the pending anchor is a TOC chapter boundary, force a page break after the previous
   // block is flushed so the chapter starts on a fresh page.
   flushPendingAnchor();
-  currentTextBlock.reset(new ParsedText(extraParagraphSpacing, hyphenationEnabled, focusReadingEnabled, blockStyle));
+  if (lowMemoryFailure_) return;
+  currentTextBlock =
+      makeUniqueNoThrow<ParsedText>(extraParagraphSpacing, hyphenationEnabled, focusReadingEnabled, blockStyle);
+  if (!currentTextBlock) {
+    markLowMemoryFailure("text block allocation");
+    return;
+  }
   wordsExtractedInBlock = 0;
   listItemBulletOnly = false;
 }
 
 void ChapterHtmlSlimParser::emitHorizontalRule(const BlockStyle& blockStyle) {
+  if (shouldAbortForLowMemory("horizontal rule")) return;
   if (partWordBufferIndex > 0) {
     flushPartWordBuffer();
   }
@@ -453,12 +501,13 @@ void ChapterHtmlSlimParser::emitHorizontalRule(const BlockStyle& blockStyle) {
   if (currentTextBlock) {
     const BlockStyle parentBlockStyle = currentTextBlock->getBlockStyle();
     startNewTextBlock(parentBlockStyle);
+    if (lowMemoryFailure_) return;
   }
 
   if (!currentPage) {
     currentPage.reset(new (std::nothrow) Page());
     if (!currentPage) {
-      LOG_ERR("EHP", "Failed to create page for horizontal rule");
+      markLowMemoryFailure("horizontal-rule page");
       return;
     }
     currentPageNextY = 0;
@@ -485,7 +534,7 @@ void ChapterHtmlSlimParser::emitHorizontalRule(const BlockStyle& blockStyle) {
     completedPageCount++;
     currentPage.reset(new (std::nothrow) Page());
     if (!currentPage) {
-      LOG_ERR("EHP", "Failed to create page after horizontal-rule page break");
+      markLowMemoryFailure("horizontal-rule page break");
       return;
     }
     currentPageNextY = 0;
@@ -497,7 +546,7 @@ void ChapterHtmlSlimParser::emitHorizontalRule(const BlockStyle& blockStyle) {
   auto pageRule = std::shared_ptr<PageHorizontalRule>(
       new (std::nothrow) PageHorizontalRule(width, ruleThickness, xPos, currentPageNextY));
   if (!pageRule) {
-    LOG_ERR("EHP", "Failed to create PageHorizontalRule");
+    markLowMemoryFailure("horizontal-rule element");
     return;
   }
   currentPage->elements.push_back(pageRule);
@@ -558,6 +607,7 @@ void ChapterHtmlSlimParser::closeTableCell() {
 }
 
 void ChapterHtmlSlimParser::addTableRowSeparator() {
+  if (shouldAbortForLowMemory("table row separator")) return;
   if (!currentPage || currentPage->elements.empty() || viewportWidth == 0 ||
       currentPageNextY + TABLE_ROW_SEPARATOR_GAP > viewportHeight) {
     return;
@@ -566,7 +616,7 @@ void ChapterHtmlSlimParser::addTableRowSeparator() {
   auto separator = std::shared_ptr<PageHorizontalRule>(
       new (std::nothrow) PageHorizontalRule(viewportWidth, TABLE_ROW_SEPARATOR_THICKNESS, 0, currentPageNextY + 1));
   if (!separator) {
-    LOG_ERR("EHP", "OOM: table row separator");
+    markLowMemoryFailure("table row separator allocation");
     return;
   }
   if (currentPage->elements.capacity() == currentPage->elements.size()) {
@@ -577,6 +627,7 @@ void ChapterHtmlSlimParser::addTableRowSeparator() {
 }
 
 void ChapterHtmlSlimParser::finishTableRow() {
+  if (shouldAbortForLowMemory("table row layout")) return;
   closeTableCell();
 
   if (tableRowCells.empty()) {
@@ -668,7 +719,7 @@ void ChapterHtmlSlimParser::finishTableRow() {
       }
       currentPage = makeUniqueNoThrow<Page>();
       if (!currentPage) {
-        LOG_ERR("EHP", "OOM: page for table row");
+        markLowMemoryFailure("table row page");
         clearLayoutLines();
         return;
       }
@@ -714,6 +765,7 @@ void ChapterHtmlSlimParser::finishTableRow() {
 
 void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char* name, const XML_Char** atts) {
   auto* self = static_cast<ChapterHtmlSlimParser*>(userData);
+  if (self->shouldAbortForLowMemory("element start")) return;
   if (strcasecmp(name, "body") == 0) {
     // Case-insensitive to match ParagraphStreamer's tag matching (ProgressMapper). A case
     // mismatch here would leave visibleTextOffset at 0 for the whole section, so every page
@@ -920,9 +972,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     self->currentTextBlock = makeUniqueNoThrow<ParsedText>(self->extraParagraphSpacing, self->hyphenationEnabled,
                                                            self->focusReadingEnabled, tableCellBlockStyle);
     if (!self->currentTextBlock) {
-      LOG_ERR("EHP", "OOM: table cell");
-      self->skipUntilDepth = self->depth;
-      self->depth += 1;
+      self->markLowMemoryFailure("table cell allocation");
       return;
     }
     self->insideTableCell = true;
@@ -1157,6 +1207,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
                 if (self->currentTextBlock && !self->currentTextBlock->isEmpty()) {
                   const BlockStyle parentBlockStyle = self->currentTextBlock->getBlockStyle();
                   self->startNewTextBlock(parentBlockStyle);
+                  if (self->lowMemoryFailure_) return;
                 }
 
                 // Apply vertical margins from the container to the image.
@@ -1180,17 +1231,17 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
                   self->completePageFn(std::move(self->currentPage), self->xpathParagraphIndex,
                                        self->xpathListItemIndex, self->currentPageVisibleOffset);
                   self->completedPageCount++;
-                  self->currentPage.reset(new Page());
+                  self->currentPage = makeUniqueNoThrow<Page>();
                   if (!self->currentPage) {
-                    LOG_ERR("EHP", "Failed to create new page");
+                    self->markLowMemoryFailure("image page break");
                     return;
                   }
                   self->currentPageNextY = 0;
                   self->currentPageVisibleOffsetSet = false;
                 } else if (!self->currentPage) {
-                  self->currentPage.reset(new Page());
+                  self->currentPage = makeUniqueNoThrow<Page>();
                   if (!self->currentPage) {
-                    LOG_ERR("EHP", "Failed to create initial page");
+                    self->markLowMemoryFailure("initial image page");
                     return;
                   }
                   self->currentPageNextY = 0;
@@ -1218,14 +1269,14 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
                 auto imageBlock = std::shared_ptr<ImageBlock>(
                     new (std::nothrow) ImageBlock(cachedImagePath, resolvedPath, displayWidth, displayHeight));
                 if (!imageBlock) {
-                  LOG_ERR("EHP", "Failed to create ImageBlock");
+                  self->markLowMemoryFailure("image block allocation");
                   return;
                 }
                 int xPos = (self->viewportWidth - displayWidth) / 2;
                 auto pageImage =
                     std::shared_ptr<PageImage>(new (std::nothrow) PageImage(imageBlock, xPos, self->currentPageNextY));
                 if (!pageImage) {
-                  LOG_ERR("EHP", "Failed to create PageImage");
+                  self->markLowMemoryFailure("page image allocation");
                   return;
                 }
                 self->currentPage->elements.push_back(pageImage);
@@ -1568,6 +1619,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
 
 void XMLCALL ChapterHtmlSlimParser::characterData(void* userData, const XML_Char* s, const int len) {
   auto* self = static_cast<ChapterHtmlSlimParser*>(userData);
+  if (self->shouldAbortForLowMemory("character data")) return;
   const bool countVisibleOffsets = self->insideBody && self->nonVisibleTextDepth == 0 && !self->syntheticCharacterData;
   const uint32_t callbackVisibleOffset = self->visibleTextOffset;
   if (countVisibleOffsets) {
@@ -1615,7 +1667,7 @@ void XMLCALL ChapterHtmlSlimParser::characterData(void* userData, const XML_Char
     self->currentTextBlock = makeUniqueNoThrow<ParsedText>(self->extraParagraphSpacing, self->hyphenationEnabled,
                                                            self->focusReadingEnabled, flowStyle);
     if (!self->currentTextBlock) {
-      LOG_ERR("EHP", "OOM: text block for character data");
+      self->markLowMemoryFailure("character-data text block");
       return;
     }
     self->wordsExtractedInBlock = 0;
@@ -1818,6 +1870,7 @@ void XMLCALL ChapterHtmlSlimParser::defaultHandlerExpand(void* userData, const X
 
 void XMLCALL ChapterHtmlSlimParser::endElement(void* userData, const XML_Char* name) {
   auto* self = static_cast<ChapterHtmlSlimParser*>(userData);
+  if (self->lowMemoryFailure_) return;
   if (self->nonVisibleTextDepth > 0) {
     self->nonVisibleTextDepth--;
   }
@@ -1970,7 +2023,7 @@ void XMLCALL ChapterHtmlSlimParser::endElement(void* userData, const XML_Char* n
     self->currentTextBlock = makeUniqueNoThrow<ParsedText>(self->extraParagraphSpacing, self->hyphenationEnabled,
                                                            self->focusReadingEnabled, flowStyle);
     if (!self->currentTextBlock) {
-      LOG_ERR("EHP", "OOM: text block after table");
+      self->markLowMemoryFailure("post-table text block");
     }
     self->wordsExtractedInBlock = 0;
   }
@@ -2034,7 +2087,9 @@ ChapterHtmlSlimParser::~ChapterHtmlSlimParser() { abortParse(); }
 
 bool ChapterHtmlSlimParser::beginParse() {
   lowMemoryFailure_ = false;
+  attemptedLowMemoryFontCacheRelease_ = false;
   htmlEnded_ = false;
+  if (shouldAbortForLowMemory("parser initialization")) return false;
   cssAncestorMasks.fill(0);
   pageBreakAfterCount = 0;
   // Initialize block style stack with a root entry representing "no ancestor block elements".
@@ -2064,11 +2119,11 @@ bool ChapterHtmlSlimParser::beginParse() {
   const auto align = rootBlockStyle.alignment;
   paragraphAlignmentBlockStyle.alignment = align;
   startNewTextBlock(paragraphAlignmentBlockStyle);
+  if (lowMemoryFailure_) return false;
 
   xmlParser_ = XML_ParserCreate(nullptr);
   if (!xmlParser_) {
-    lowMemoryFailure_ = true;
-    LOG_ERR("EHP", "Couldn't allocate memory for parser");
+    markLowMemoryFailure("XML parser allocation");
     return false;
   }
 
@@ -2096,10 +2151,10 @@ bool ChapterHtmlSlimParser::beginParse() {
 }
 
 ChapterHtmlSlimParser::ParseStatus ChapterHtmlSlimParser::parseStep() {
+  if (shouldAbortForLowMemory("XML parse chunk")) return ParseStatus::Error;
   void* const buf = XML_GetBuffer(xmlParser_, PARSE_BUFFER_SIZE);
   if (!buf) {
-    lowMemoryFailure_ = true;
-    LOG_ERR("EHP", "Couldn't allocate memory for buffer");
+    markLowMemoryFailure("XML parse buffer");
     return ParseStatus::Error;
   }
 
@@ -2113,8 +2168,10 @@ ChapterHtmlSlimParser::ParseStatus ChapterHtmlSlimParser::parseStep() {
   const int done = parseFile_.available() == 0;
 
   if (XML_ParseBuffer(xmlParser_, static_cast<int>(len), done) == XML_STATUS_ERROR) {
+    if (lowMemoryFailure_) return ParseStatus::Error;
     if (XML_GetErrorCode(xmlParser_) == XML_ERROR_NO_MEMORY) {
-      lowMemoryFailure_ = true;
+      markLowMemoryFailure("XML parser");
+      return ParseStatus::Error;
     }
     if (htmlEnded_) {
       LOG_DBG("EHP", "Ignoring trailing data after </html>: %s", XML_ErrorString(XML_GetErrorCode(xmlParser_)));
@@ -2140,6 +2197,10 @@ void ChapterHtmlSlimParser::abortParse() {
 }
 
 bool ChapterHtmlSlimParser::finishParse() {
+  if (lowMemoryFailure_) {
+    abortParse();
+    return false;
+  }
   if (xmlParser_) {
     LOG_DBG("EHP", "Time to parse and build pages: %lu ms", millis() - parseStartTime_);
     destroyXmlParser(xmlParser_);
@@ -2150,6 +2211,7 @@ bool ChapterHtmlSlimParser::finishParse() {
   // Process last page if there is still text
   if (currentTextBlock) {
     makePages();
+    if (lowMemoryFailure_) return false;
     if (!pendingAnchorId.empty()) {
       anchorData.push_back({std::move(pendingAnchorId), static_cast<uint16_t>(completedPageCount)});
       pendingAnchorId.clear();
@@ -2182,11 +2244,16 @@ bool ChapterHtmlSlimParser::parseAndBuildPages() {
 }
 
 void ChapterHtmlSlimParser::addLineToPage(std::shared_ptr<TextBlock> line, const uint32_t visibleOffset) {
+  if (shouldAbortForLowMemory("page line layout")) return;
   const int lineHeight =
       renderer.getLineHeight(fontId, lineCompression) + line->getRubyShift(renderer.getFontAscenderSize(fontId));
 
   if (!currentPage) {
-    currentPage.reset(new Page());
+    currentPage = makeUniqueNoThrow<Page>();
+    if (!currentPage) {
+      markLowMemoryFailure("page allocation");
+      return;
+    }
     currentPageNextY = 0;
     currentPageVisibleOffsetSet = false;
   }
@@ -2195,7 +2262,11 @@ void ChapterHtmlSlimParser::addLineToPage(std::shared_ptr<TextBlock> line, const
     setCurrentPageVisibleOffset(visibleOffset);
     completePageFn(std::move(currentPage), xpathParagraphIndex, xpathListItemIndex, currentPageVisibleOffset);
     completedPageCount++;
-    currentPage.reset(new Page());
+    currentPage = makeUniqueNoThrow<Page>();
+    if (!currentPage) {
+      markLowMemoryFailure("page-break allocation");
+      return;
+    }
     currentPageNextY = 0;
     currentPageVisibleOffsetSet = false;
   }
@@ -2212,18 +2283,28 @@ void ChapterHtmlSlimParser::addLineToPage(std::shared_ptr<TextBlock> line, const
 
   // Apply horizontal left inset (margin + padding) as x position offset
   const int16_t xOffset = line->getBlockStyle().leftInset();
-  currentPage->elements.push_back(std::make_shared<PageLine>(line, xOffset, currentPageNextY));
+  auto pageLine = std::shared_ptr<PageLine>(new (std::nothrow) PageLine(std::move(line), xOffset, currentPageNextY));
+  if (!pageLine) {
+    markLowMemoryFailure("page-line allocation");
+    return;
+  }
+  currentPage->elements.push_back(std::move(pageLine));
   currentPageNextY += lineHeight;
 }
 
 void ChapterHtmlSlimParser::makePages() {
+  if (shouldAbortForLowMemory("page layout")) return;
   if (!currentTextBlock) {
     LOG_ERR("EHP", "!! No text block to make pages for !!");
     return;
   }
 
   if (!currentPage) {
-    currentPage.reset(new Page());
+    currentPage = makeUniqueNoThrow<Page>();
+    if (!currentPage) {
+      markLowMemoryFailure("page layout allocation");
+      return;
+    }
     currentPageNextY = 0;
     currentPageVisibleOffsetSet = false;
   }
@@ -2247,6 +2328,7 @@ void ChapterHtmlSlimParser::makePages() {
   currentTextBlock->layoutAndExtractLines(
       renderer, fontId, effectiveWidth,
       [this](const std::shared_ptr<TextBlock>& textBlock, const uint32_t offset) { addLineToPage(textBlock, offset); });
+  if (lowMemoryFailure_) return;
 
   // Fallback: transfer any remaining pending footnotes to current page.
   // Normally addLineToPage handles this via word-index tracking, but this catches

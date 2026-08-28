@@ -11,6 +11,7 @@
 #include <new>
 
 #include "Epub/converters/DirectPixelWriter.h"
+#include "Epub/converters/ImageClip.h"
 #include "Epub/converters/ImageDecoderFactory.h"
 #include "Epub/converters/PixelCacheFormat.h"
 
@@ -175,18 +176,20 @@ bool loadPxcSlot(uint64_t cacheHash, HalFile& cacheFile, uint16_t cachedWidth, u
   return true;
 }
 
-void renderRowsFromPxcSlot(GfxRenderer& renderer, int x, int y) {
+void renderRowsFromPxcSlot(GfxRenderer& renderer, const int x, const int y, const ImageClipBounds& clip) {
   const int bytesPerRow = (pxcSlotWidth + 3) / 4;
   uint8_t tempRow[PXC_MAX_BYTES_PER_ROW];
 
   DirectPixelWriter pw;
   pw.init(renderer);
 
-  for (int row = 0; row < pxcSlotHeight; row++) {
+  for (int row = clip.rowStart; row < clip.rowEnd; row++) {
     const uint8_t* rowBuffer = pxcRowPtr((size_t)row * bytesPerRow, bytesPerRow, tempRow);
     pw.beginRow(y + row);
     int colStart, colEnd;
     pw.bandColRange(x, pxcSlotWidth, colStart, colEnd);
+    colStart = std::max(colStart, clip.colStart);
+    colEnd = std::min(colEnd, clip.colEnd);
     for (int col = colStart; col < colEnd; col++) {
       const int byteIdx = col >> 2;            // col / 4
       const int bitShift = 6 - (col & 3) * 2;  // MSB first within byte
@@ -202,7 +205,9 @@ bool renderFromCache(GfxRenderer& renderer, const std::string& cachePath, int x,
   // the file entirely.
   const uint64_t cacheHash = imagePathHash(cachePath);
   if (pxcSlotHash == cacheHash && pxcSlotWidth != 0) {
-    renderRowsFromPxcSlot(renderer, x, y);
+    const ImageClipBounds clip =
+        calculateImageClip(x, y, pxcSlotWidth, pxcSlotHeight, renderer.getScreenWidth(), renderer.getScreenHeight());
+    if (!clip.empty()) renderRowsFromPxcSlot(renderer, x, y, clip);
     return true;
   }
 
@@ -223,6 +228,10 @@ bool renderFromCache(GfxRenderer& renderer, const std::string& cachePath, int x,
   expectedWidth = cachedWidth;
   expectedHeight = cachedHeight;
 
+  const ImageClipBounds clip =
+      calculateImageClip(x, y, cachedWidth, cachedHeight, renderer.getScreenWidth(), renderer.getScreenHeight());
+  if (clip.empty()) return true;
+
   LOG_DBG("IMG", "Loading from cache: %s (%dx%d)", cachePath.c_str(), cachedWidth, cachedHeight);
 
   const int bytesPerRow = (cachedWidth + 3) / 4;  // 2 bits per pixel, 4 pixels per byte
@@ -235,14 +244,17 @@ bool renderFromCache(GfxRenderer& renderer, const std::string& cachePath, int x,
   // (all the SD traffic of streaming plus the slot alloc churn); instead later
   // images take the streaming path below, unchanged from pre-cache behavior.
   if (pxcSlotHash == 0 && loadPxcSlot(cacheHash, cacheFile, cachedWidth, cachedHeight, bytesPerRow)) {
-    renderRowsFromPxcSlot(renderer, x, y);
+    renderRowsFromPxcSlot(renderer, x, y, clip);
     LOG_DBG("IMG", "Cache render complete (payload now in RAM)");
     return true;
   }
 
   // Streaming fallback (slot didn't fit). A failed slot load may have consumed
   // part of the payload; rewind to just past the header.
-  cacheFile.seek(pixel_cache_format::HEADER_SIZE);
+  if (!cacheFile.seek(pixel_cache_format::HEADER_SIZE + static_cast<size_t>(clip.rowStart) * bytesPerRow)) {
+    LOG_ERR("IMG", "Cache seek error at row %d", clip.rowStart);
+    return false;
+  }
 
   // Read several rows per SD access. A one-row-per-read loop here means
   // cachedHeight (~728) tiny reads through the storage mutex + SdFat; batching
@@ -250,7 +262,8 @@ bool renderFromCache(GfxRenderer& renderer, const std::string& cachePath, int x,
   // whole image.
   int rowsPerRead = 4096 / bytesPerRow;
   if (rowsPerRead < 1) rowsPerRead = 1;
-  if (rowsPerRead > cachedHeight) rowsPerRead = cachedHeight;
+  const int rowsToRender = clip.rowEnd - clip.rowStart;
+  if (rowsPerRead > rowsToRender) rowsPerRead = rowsToRender;
   uint8_t* readBuffer = (uint8_t*)malloc((size_t)rowsPerRead * bytesPerRow);
   if (!readBuffer) {
     // Fall back to a single-row buffer under memory pressure.
@@ -267,9 +280,9 @@ bool renderFromCache(GfxRenderer& renderer, const std::string& cachePath, int x,
 
   int rowsInBuffer = 0;
   int bufferRow = 0;
-  for (int row = 0; row < cachedHeight; row++) {
+  for (int row = clip.rowStart; row < clip.rowEnd; row++) {
     if (bufferRow >= rowsInBuffer) {
-      const int toRead = (cachedHeight - row < rowsPerRead) ? (cachedHeight - row) : rowsPerRead;
+      const int toRead = (clip.rowEnd - row < rowsPerRead) ? (clip.rowEnd - row) : rowsPerRead;
       const size_t bytes = (size_t)toRead * bytesPerRow;
       if (cacheFile.read(readBuffer, bytes) != static_cast<int>(bytes)) {
         LOG_ERR("IMG", "Cache read error at row %d", row);
@@ -289,6 +302,8 @@ bool renderFromCache(GfxRenderer& renderer, const std::string& cachePath, int x,
     // the active band; skip the rest instead of unpacking+clipping every pixel.
     int colStart, colEnd;
     pw.bandColRange(x, cachedWidth, colStart, colEnd);
+    colStart = std::max(colStart, clip.colStart);
+    colEnd = std::min(colEnd, clip.colEnd);
     for (int col = colStart; col < colEnd; col++) {
       const int byteIdx = col >> 2;            // col / 4
       const int bitShift = 6 - (col & 3) * 2;  // MSB first within byte
@@ -348,12 +363,18 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
   const int screenWidth = renderer.getScreenWidth();
   const int screenHeight = renderer.getScreenHeight();
 
-  // Bounds check render position using logical screen dimensions
-  if (x < 0 || y < 0 || x + width > screenWidth || y + height > screenHeight) {
+  if (width <= 0 || height <= 0) {
+    LOG_ERR("IMG", "Invalid image size: %dx%d", width, height);
+    return;
+  }
+
+  const ImageClipBounds clip = calculateImageClip(x, y, width, height, screenWidth, screenHeight);
+  if (clip.empty()) {
     LOG_ERR("IMG", "Invalid render position: (%d,%d) size (%dx%d) screen (%dx%d)", x, y, width, height, screenWidth,
             screenHeight);
     return;
   }
+  const bool fullyOnScreen = clip.colStart == 0 && clip.rowStart == 0 && clip.colEnd == width && clip.rowEnd == height;
 
   // Tiled grayscale (#2190): skip the whole image when it doesn't touch the
   // active band. The per-pixel writer already clips off-band pixels, but without
@@ -416,7 +437,10 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
   config.useDithering = true;
   config.performanceMode = false;
   config.useExactDimensions = true;  // Use pre-calculated dimensions to avoid rounding mismatches
-  config.cachePath = cachePath;      // Enable caching during decode
+  // Decoder callbacks clamp to the screen. Caching a partially visible decode
+  // would persist zero-filled off-screen rows/columns and corrupt later full
+  // renders of the same image.
+  if (fullyOnScreen) config.cachePath = cachePath;
 
   ImageToFramebufferDecoder* decoder = ImageDecoderFactory::getDecoder(imagePath);
   if (!decoder) {

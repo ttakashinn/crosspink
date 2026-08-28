@@ -145,6 +145,7 @@ class ChapterHtmlSlimParser {
   HalFile parseFile_;
   uint32_t parseStartTime_ = 0;
   bool lowMemoryFailure_ = false;
+  bool attemptedLowMemoryFontCacheRelease_ = false;
 
   void updateEffectiveInlineStyle();
   [[nodiscard]] CssParser::DescendantMask activeCssAncestorMask() const;
@@ -152,6 +153,8 @@ class ChapterHtmlSlimParser {
   void startNewTextBlock(const BlockStyle& blockStyle);
   void flushPendingAnchor();
   void forcePageBreak();
+  void markLowMemoryFailure(const char* stage);
+  bool shouldAbortForLowMemory(const char* stage);
   void registerPageBreakAfter(int elementDepth);
   bool consumePageBreakAfter(int elementDepth);
   void flushPartWordBuffer();
