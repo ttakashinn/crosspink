@@ -38,14 +38,13 @@ bool buildQuery(char* output, const size_t outputSize) {
 
   const bool minimal = SETTINGS.vanNhanSoLayout == CrossPointSettings::VANNHANSO_LAYOUT_MINIMAL;
   const int written =
-      minimal
-          ? snprintf(output, outputSize, "layout=minimal&font=%s&finance=0&grayscale=1",
-                     safeParam(FONT_SIZES, std::size(FONT_SIZES), SETTINGS.vanNhanSoFontSize))
-          : snprintf(output, outputSize, "font=%s&vocab=%s&weather=%s&finance=%u&grayscale=1",
-                     safeParam(FONT_SIZES, std::size(FONT_SIZES), SETTINGS.vanNhanSoFontSize),
-                     safeParam(VOCABULARY_LEVELS, std::size(VOCABULARY_LEVELS), SETTINGS.vanNhanSoVocabularyLevel),
-                     safeParam(WEATHER_LOCATIONS, std::size(WEATHER_LOCATIONS), SETTINGS.vanNhanSoWeatherLocation),
-                     SETTINGS.vanNhanSoFinance ? 1U : 0U);
+      minimal ? snprintf(output, outputSize, "layout=minimal&font=%s&finance=0&grayscale=1",
+                         safeParam(FONT_SIZES, std::size(FONT_SIZES), SETTINGS.vanNhanSoFontSize))
+              : snprintf(output, outputSize, "font=%s&vocab=%s&weather=%s&finance=%u&grayscale=1",
+                         safeParam(FONT_SIZES, std::size(FONT_SIZES), SETTINGS.vanNhanSoFontSize),
+                         safeParam(VOCABULARY_LEVELS, std::size(VOCABULARY_LEVELS), SETTINGS.vanNhanSoVocabularyLevel),
+                         safeParam(WEATHER_LOCATIONS, std::size(WEATHER_LOCATIONS), SETTINGS.vanNhanSoWeatherLocation),
+                         SETTINGS.vanNhanSoFinance ? 1U : 0U);
   return written > 0 && static_cast<size_t>(written) < outputSize;
 }
 

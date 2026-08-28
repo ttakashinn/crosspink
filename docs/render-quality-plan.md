@@ -42,13 +42,13 @@ Vị trí nguồn: `src/activities/reader/EpubReaderActivity.cpp`, `lib/GfxRende
 
 | Kiểm tra | Kết quả |
 | --- | --- |
-| Host tests | 141/141 test qua |
-| `default` ESP32-C3 | Build qua; RAM 51.308 B/327.680 B; flash 5.804.201 B/6.553.600 B |
-| `sticky` ESP32-S3 | Build qua; RAM 60.972 B/327.680 B; flash 5.601.003 B/6.553.600 B |
-| Format toàn repo | Chưa sạch: `lib/MiniBidi/minibidi.c` lệch clang-format |
-| Static analysis | Chưa sạch: 1 cảnh báo `low` tại `src/features/vannhanso/VanNhanSoCache.cpp:23` |
+| Host tests | 180/180 test qua sau tích hợp |
+| `default` ESP32-C3 | Build qua; RAM 57.180 B/327.680 B; flash 5.641.645 B/6.553.600 B |
+| `sticky` ESP32-S3 | Build qua; RAM 66.828 B/327.680 B; flash 5.430.275 B/6.553.600 B |
+| Format toàn repo | Sạch; mã vendor `lib/MiniBidi/minibidi.c` được loại khỏi phạm vi format |
+| Static analysis | Sạch ở các mức `low`, `medium`, `high` |
 
-Hai lỗi nền cuối bảng phải được xử lý thành commit riêng; không trộn chúng vào thay đổi render.
+Số đo trước merge và delta chi tiết được khóa tại `docs/contributing/upstream-integration-baseline.md`. Kiểm chứng phần cứng vẫn còn thiếu; không được diễn giải các kết quả trên thành xác nhận trên X3/X4/Sticky thật.
 
 ## So sánh chiến lược
 
@@ -80,6 +80,8 @@ Các thay đổi upstream cần xác nhận đặc biệt:
 - `c484dc72`: định dạng font thưa/nén tốt hơn; commit upstream tuyên bố giảm 323 KB flash, nhưng phải build lại trên `vns-next` để xác nhận con số thực.
 
 Điều kiện hoàn thành: CI-equivalent pass; tính năng Văn Nhân Số không regress; cả `default` và `sticky` tạo được firmware.
+
+Trạng thái ngày 28/08/2026: baseline phần mềm và CI-equivalent đã đạt trên nhánh tích hợp. Smoke test phần cứng cho Văn Nhân Số, OTA và reader còn phải thực hiện trước khi đóng hoàn toàn Giai đoạn 0; công việc dựng render lab của Giai đoạn 1 có thể bắt đầu song song.
 
 ### Giai đoạn 1 — Dựng render lab và golden corpus
 

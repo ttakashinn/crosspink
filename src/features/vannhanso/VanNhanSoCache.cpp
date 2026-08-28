@@ -4,6 +4,7 @@
 #include <HalStorage.h>
 #include <Logging.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -20,10 +21,9 @@ constexpr size_t MAX_PROFILE_CACHES = 8;
 
 bool safeCacheToken(const std::string& token) {
   if (token.empty() || token.size() > 32) return false;
-  for (const char ch : token) {
-    if (!((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || ch == 'x' || ch == '-')) return false;
-  }
-  return true;
+  return std::all_of(token.begin(), token.end(), [](const char ch) {
+    return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || ch == 'x' || ch == '-';
+  });
 }
 
 void removeProfileFiles(const std::string& token) {
@@ -36,8 +36,9 @@ void removeProfileFiles(const std::string& token) {
 
 void touchProfileIndex(const int screenWidth, const int screenHeight) {
   char token[40];
-  const int tokenLength = snprintf(token, sizeof(token), "%dx%d-%08lx", screenWidth, screenHeight,
-                                   static_cast<unsigned long>(vannhanso_profile::identityHash(screenWidth, screenHeight)));
+  const int tokenLength =
+      snprintf(token, sizeof(token), "%dx%d-%08lx", screenWidth, screenHeight,
+               static_cast<unsigned long>(vannhanso_profile::identityHash(screenWidth, screenHeight)));
   if (tokenLength <= 0 || static_cast<size_t>(tokenLength) >= sizeof(token)) return;
 
   std::vector<std::string> entries;

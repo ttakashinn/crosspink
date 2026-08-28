@@ -75,3 +75,19 @@ Các gate không-build giữ nguyên đúng nợ nền đã ghi trước merge:
 - Dependency `WebSockets` vẫn phát cảnh báo deprecation về `NetworkClient::flush()`; không có cảnh báo mới từ mã tích hợp.
 
 Hai nợ nền format/cppcheck sẽ được sửa bằng commit riêng sau merge. Chưa có kết quả kiểm chứng trên X3, X4 hoặc Sticky thật, vì vậy trạng thái hiện tại mới xác nhận compile, host behavior và kích thước binary.
+
+## Baseline phần mềm sau cleanup
+
+Sau merge, 2 nợ nền được xử lý riêng: mã MiniBidi nhập ngoài được loại khỏi phạm vi clang-format thay vì tạo diff vendor lớn; `safeCacheToken()` dùng `std::all_of` để làm sạch cảnh báo cppcheck. Các file Văn Nhân Số do dự án sở hữu cũng được format theo cấu hình hiện hành.
+
+| Hạng mục | Kết quả cuối | RAM tĩnh theo PlatformIO | Chênh lệch so với trước merge | Flash theo PlatformIO | Chênh lệch so với trước merge | Kích thước `firmware.bin` | SHA-256 `firmware.bin` |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| Host tests | 180/180 đạt | — | +39 test | — | — | — | — |
+| Format toàn repo | Đạt | — | — | — | — | — | — |
+| Cppcheck `low`/`medium`/`high` | Không có defect | — | -1 cảnh báo `low` | — | — | — | — |
+| `default` (ESP32-C3, X3/X4) | Đạt | 57.180/327.680 B | +5.872 B | 5.641.645/6.553.600 B | -162.556 B | 5.655.360 B | `81e1cbf48c2c3a7e181ed90e660aff1b41dec63e2fb055f293219b5519642523` |
+| `sticky` (ESP32-S3) | Đạt | 66.828/327.680 B | +5.856 B | 5.430.275/6.553.600 B | -170.728 B | 5.430.784 B | `2960b4cd7870ad452dbb634211774567cef19489ed8b759639f2c37096629343` |
+
+Fixture `test/epubs/crosspoint-render-reference-v1.0.epub` vẫn tái lập ở 140.799 B với SHA-256 `9a6eb22c70dd6238abf5089d7a486170d41185f04074051cbe12b6cdd7dc1f92`.
+
+Baseline phần mềm của Giai đoạn 0 đã sạch. Giai đoạn này chưa được đóng ở mức phần cứng cho đến khi smoke test các luồng đọc, ngủ, cập nhật Văn Nhân Số và OTA trên thiết bị đại diện.

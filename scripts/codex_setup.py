@@ -26,6 +26,7 @@ FORMAT_SUFFIXES = {".c", ".cpp", ".h", ".hpp"}
 FORMAT_EXCLUDES = (
     "lib/EpdFont/builtinFonts/",
     "lib/Epub/Epub/hyphenation/generated/",
+    "lib/MiniBidi/minibidi.c",
     "lib/uzlib/",
     "lib/miniz/third_party/",
 )

@@ -1,5 +1,6 @@
 #include "VanNhanSoUpdateActivity.h"
 
+#include <ArduinoJson.h>
 #include <CrossPointSettings.h>
 #include <CrossPointState.h>
 #include <GfxRenderer.h>
@@ -9,7 +10,6 @@
 #include <Logging.h>
 #include <Memory.h>
 #include <WiFi.h>
-#include <ArduinoJson.h>
 #include <mbedtls/sha256.h>
 
 #include <algorithm>
@@ -112,11 +112,9 @@ bool isTrustedAssetUrl(const char* value) {
   if (!value) return false;
   static constexpr const char* ORIGIN_PREFIX = "https://vannhanso.com/";
   static constexpr const char* R2_PREFIX = "https://eink-assets.vannhanso.com/";
-  static constexpr const char* WORKER_PREFIX =
-      "https://vannhanso-eink-assets.kamikaze129.workers.dev/";
+  static constexpr const char* WORKER_PREFIX = "https://vannhanso-eink-assets.kamikaze129.workers.dev/";
   return strncmp(value, ORIGIN_PREFIX, strlen(ORIGIN_PREFIX)) == 0 ||
-         strncmp(value, R2_PREFIX, strlen(R2_PREFIX)) == 0 ||
-         strncmp(value, WORKER_PREFIX, strlen(WORKER_PREFIX)) == 0;
+         strncmp(value, R2_PREFIX, strlen(R2_PREFIX)) == 0 || strncmp(value, WORKER_PREFIX, strlen(WORKER_PREFIX)) == 0;
 }
 
 bool parseHttpDate(const std::string& value, Rtc::DateTime& dateTime) {
@@ -513,9 +511,9 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
   };
 
   HttpDownloader::ResponseInfo manifestResponse;
-  const auto manifestResult = HttpDownloader::downloadToFile(
-      url, MANIFEST_TEMP_PATH, pollCancellation, &cancelDownload, "", "", &manifestResponse, timeoutMs,
-      HttpDownloader::TransportSecurity::VERIFIED_TLS);
+  const auto manifestResult =
+      HttpDownloader::downloadToFile(url, MANIFEST_TEMP_PATH, pollCancellation, &cancelDownload, "", "",
+                                     &manifestResponse, timeoutMs, HttpDownloader::TransportSecurity::VERIFIED_TLS);
   if (manifestResult == HttpDownloader::ABORTED) {
     Storage.remove(MANIFEST_TEMP_PATH);
     recordCancelled();
@@ -542,10 +540,11 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
   const int expectedBpp = manifest["bits_per_pixel"] | 0;
   const size_t expectedLength = manifest["content_length"] | static_cast<size_t>(0);
   const char* expectedDevice = isX3 ? "xteink-x3" : "xteink-x4";
-  if (manifestLength == 0 || jsonError || (manifest["version"] | 0) != 2 || strcmp(manifestDevice, expectedDevice) != 0 ||
-      expectedWidth != renderer.getScreenWidth() || expectedHeight != renderer.getScreenHeight() || expectedBpp != 2 ||
-      expectedLength == 0 || expectedLength > 1024U * 1024U || !isSha256Hex(checksum) ||
-      !isTrustedAssetUrl(assetUrl) || strlen(assetUrl) >= REQUEST_URL_MAX_LENGTH) {
+  if (manifestLength == 0 || jsonError || (manifest["version"] | 0) != 2 ||
+      strcmp(manifestDevice, expectedDevice) != 0 || expectedWidth != renderer.getScreenWidth() ||
+      expectedHeight != renderer.getScreenHeight() || expectedBpp != 2 || expectedLength == 0 ||
+      expectedLength > 1024U * 1024U || !isSha256Hex(checksum) || !isTrustedAssetUrl(assetUrl) ||
+      strlen(assetUrl) >= REQUEST_URL_MAX_LENGTH) {
     LOG_ERR("VNS", "Invalid v2 manifest: %s", jsonError ? jsonError.c_str() : "schema mismatch");
     fail(CrossPointState::VanNhanSoUpdateError::METADATA);
     return;
