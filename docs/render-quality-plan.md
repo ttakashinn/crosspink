@@ -2,7 +2,7 @@
 
 Ngày lập: 28/08/2026
 
-Baseline mã nguồn: `vns-next` tại `fdd8c7a2`
+Baseline mã nguồn: `vns-next` tại `00ab726a`
 
 Nguồn CrossInk đối chiếu: `uxjulia/CrossInk` tại `cab4f249`
 
@@ -15,7 +15,7 @@ Không nên port trực tiếp toàn bộ renderer của CrossInk. Hướng khuy
 3. Xác nhận các cải tiến upstream trên X3/X4/Sticky.
 4. Chỉ backport từng cơ chế CrossInk còn thiếu và chứng minh bằng ảnh, số đo, test.
 
-Lý do chính: tại thời điểm lập kế hoạch, `vns-next` có 14 commit riêng nhưng thiếu 81 commit từ `upstream/develop`. Phần thiếu đã chứa nhiều thay đổi render mới hơn CrossInk hoặc đã hợp nhất ý tưởng tương tự. Port CrossInk trước sẽ tạo xung đột lớn trong `Epub`, `GfxRenderer`, font cache và binary cache, đồng thời làm khó việc xác định cải thiện đến từ đâu.
+Lý do chính: sau khi fetch ngày 28/08/2026, `vns-next` có 16 commit riêng và thiếu 87 commit từ `upstream/develop` tại `4638119b`. Phần thiếu đã chứa nhiều thay đổi render mới hơn CrossInk hoặc đã hợp nhất ý tưởng tương tự. Port CrossInk trước sẽ tạo xung đột lớn trong `Epub`, `GfxRenderer`, font cache và binary cache, đồng thời làm khó việc xác định cải thiện đến từ đâu.
 
 ## Hiện trạng có căn cứ
 
@@ -36,14 +36,14 @@ Vị trí nguồn: `src/activities/reader/EpubReaderActivity.cpp`, `lib/GfxRende
 - CSS parser trên `vns-next` chỉ hỗ trợ selector element, class, `element.class` và grouped selector; chưa hỗ trợ descendant selector.
 - Nhánh hiện tại chưa có table layout. Không nên lấy bản table cũ của CrossInk vì `upstream/develop` đã có triển khai mới hơn tại commit `da3d50c2`.
 - CrossInk có render mode theo sách và fallback khi thiếu RAM; `vns-next` chưa có cơ chế tương đương.
-- Flash của env `default` đang dùng 5.804.113 B/6.553.600 B theo build cục bộ ngày 28/08/2026. Vì vậy, thêm nhiều built-in font CrossInk trước khi lấy tối ưu font upstream là rủi ro rõ ràng.
+- Flash của env `default` đang dùng 5.804.201 B/6.553.600 B trên nhánh tích hợp trước merge, theo build cục bộ ngày 28/08/2026. Vì vậy, thêm nhiều built-in font CrossInk trước khi lấy tối ưu font upstream là rủi ro rõ ràng.
 
 ### Baseline cục bộ đã đo
 
 | Kiểm tra | Kết quả |
 | --- | --- |
 | Host tests | 141/141 test qua |
-| `default` ESP32-C3 | Build qua; RAM 51.308 B/327.680 B; flash 5.804.113 B/6.553.600 B |
+| `default` ESP32-C3 | Build qua; RAM 51.308 B/327.680 B; flash 5.804.201 B/6.553.600 B |
 | `sticky` ESP32-S3 | Build qua; RAM 60.972 B/327.680 B; flash 5.601.003 B/6.553.600 B |
 | Format toàn repo | Chưa sạch: `lib/MiniBidi/minibidi.c` lệch clang-format |
 | Static analysis | Chưa sạch: 1 cảnh báo `low` tại `src/features/vannhanso/VanNhanSoCache.cpp:23` |
