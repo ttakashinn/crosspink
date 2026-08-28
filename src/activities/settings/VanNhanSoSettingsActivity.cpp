@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <iterator>
+#include <utility>
 
 #include "MappedInputManager.h"
 #include "VanNhanSoUpdateActivity.h"
@@ -15,6 +16,8 @@
 #include "features/vannhanso/VanNhanSoCache.h"
 #include "features/vannhanso/VanNhanSoProfile.h"
 #include "features/vannhanso/VanNhanSoUpdatePolicy.h"
+
+namespace fui = freeink::ui;
 
 namespace {
 constexpr int BASE_ITEM_COUNT = 4;
@@ -27,27 +30,35 @@ const StrId fontNames[] = {StrId::STR_VANNHANSO_FONT_STANDARD, StrId::STR_VANNHA
 const StrId vocabularyNames[] = {StrId::STR_VANNHANSO_VOCAB_B1, StrId::STR_VANNHANSO_VOCAB_B2,
                                  StrId::STR_VANNHANSO_VOCAB_C1, StrId::STR_VANNHANSO_VOCAB_C2,
                                  StrId::STR_VANNHANSO_VOCAB_MIXED};
-const StrId weatherNames[] = {StrId::STR_VANNHANSO_WEATHER_HANOI,   StrId::STR_VANNHANSO_WEATHER_HOCHIMINH,
-                              StrId::STR_VANNHANSO_WEATHER_DANANG,  StrId::STR_VANNHANSO_WEATHER_HAIPHONG,
-                              StrId::STR_VANNHANSO_WEATHER_CANTHO,  StrId::STR_VANNHANSO_WEATHER_HUE,
+const StrId weatherNames[] = {StrId::STR_VANNHANSO_WEATHER_HANOI,  StrId::STR_VANNHANSO_WEATHER_HOCHIMINH,
+                              StrId::STR_VANNHANSO_WEATHER_DANANG, StrId::STR_VANNHANSO_WEATHER_HAIPHONG,
+                              StrId::STR_VANNHANSO_WEATHER_CANTHO, StrId::STR_VANNHANSO_WEATHER_HUE,
                               StrId::STR_VANNHANSO_WEATHER_DONGNAI};
 }  // namespace
 
+VanNhanSoSettingsActivity::VanNhanSoSettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
+    : UiListActivity("VanNhanSoSettings", renderer, mappedInput) {}
+
 void VanNhanSoSettingsActivity::onEnter() {
-  Activity::onEnter();
-  selectedIndex = 0;
+  UiListActivity::onEnter();
   syncPendingProfile();
-  requestUpdate();
+
+  for (int i = 0; i < MAX_ITEM_COUNT; ++i) {
+    rowItems_[i].label = I18N.get(itemName(i));
+    rowItems_[i].actionValue = static_cast<int16_t>(i);
+  }
 }
 
-int VanNhanSoSettingsActivity::itemCount() const {
+int VanNhanSoSettingsActivity::listCount() const {
   return SETTINGS.vanNhanSoLayout == CrossPointSettings::VANNHANSO_LAYOUT_FULL ? FULL_ITEM_COUNT : BASE_ITEM_COUNT;
 }
 
+const char* VanNhanSoSettingsActivity::headerTitle() const { return tr(STR_VANNHANSO); }
+
 StrId VanNhanSoSettingsActivity::itemName(const int index) const {
   static constexpr StrId names[FULL_ITEM_COUNT] = {
-      StrId::STR_VANNHANSO_REFRESH,          StrId::STR_VANNHANSO_UPDATE_MODE,      StrId::STR_VANNHANSO_LAYOUT,
-      StrId::STR_VANNHANSO_FONT_SIZE,        StrId::STR_VANNHANSO_VOCABULARY_LEVEL, StrId::STR_VANNHANSO_WEATHER_LOCATION,
+      StrId::STR_VANNHANSO_REFRESH,   StrId::STR_VANNHANSO_UPDATE_MODE,      StrId::STR_VANNHANSO_LAYOUT,
+      StrId::STR_VANNHANSO_FONT_SIZE, StrId::STR_VANNHANSO_VOCABULARY_LEVEL, StrId::STR_VANNHANSO_WEATHER_LOCATION,
       StrId::STR_VANNHANSO_FINANCE};
   return names[index >= 0 && index < FULL_ITEM_COUNT ? index : 0];
 }
@@ -75,11 +86,10 @@ std::string VanNhanSoSettingsActivity::itemValue(const int index) const {
     case 3:
       return I18N.get(fontNames[std::min<uint8_t>(SETTINGS.vanNhanSoFontSize, std::size(fontNames) - 1)]);
     case 4:
-      return I18N.get(vocabularyNames[
-          std::min<uint8_t>(SETTINGS.vanNhanSoVocabularyLevel, std::size(vocabularyNames) - 1)]);
+      return I18N.get(
+          vocabularyNames[std::min<uint8_t>(SETTINGS.vanNhanSoVocabularyLevel, std::size(vocabularyNames) - 1)]);
     case 5:
-      return I18N.get(weatherNames[
-          std::min<uint8_t>(SETTINGS.vanNhanSoWeatherLocation, std::size(weatherNames) - 1)]);
+      return I18N.get(weatherNames[std::min<uint8_t>(SETTINGS.vanNhanSoWeatherLocation, std::size(weatherNames) - 1)]);
     case 6:
       return SETTINGS.vanNhanSoFinance ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
     default:
@@ -87,8 +97,8 @@ std::string VanNhanSoSettingsActivity::itemValue(const int index) const {
   }
 }
 
-void VanNhanSoSettingsActivity::handleSelection() {
-  switch (selectedIndex) {
+void VanNhanSoSettingsActivity::handleSelection(const int index) {
+  switch (index) {
     case 0: {
       auto activity = makeUniqueNoThrow<VanNhanSoUpdateActivity>(renderer, mappedInput);
       if (activity) startActivityForResult(std::move(activity), [this](const ActivityResult&) { requestUpdate(); });
@@ -107,7 +117,7 @@ void VanNhanSoSettingsActivity::handleSelection() {
                          SETTINGS.vanNhanSoLayout = index;
                          SETTINGS.saveToFile();
                          syncPendingProfile();
-                         selectedIndex = std::min(selectedIndex, itemCount() - 1);
+                         moveSelectionTo(std::min(nav.selected, listCount() - 1));
                        });
       return;
     case 3:
@@ -156,57 +166,43 @@ void VanNhanSoSettingsActivity::syncPendingProfile() {
   APP_STATE.saveToFile();
 }
 
-void VanNhanSoSettingsActivity::loop() {
-  if (optionPopup.handleInput(mappedInput, [this] { requestUpdate(); })) return;
-
-  const auto& metrics = UITheme::getInstance().getMetrics();
-  const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
-  const int contentHeight =
-      renderer.getScreenHeight() - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing * 2;
-  const int count = itemCount();
-  switch (handleListTouch(selectedIndex, count, contentTop, contentHeight, false)) {
-    case ListTouchResult::Activated:
-      handleSelection();
-      requestUpdate();
-      return;
-    case ListTouchResult::Consumed:
-      return;
-    case ListTouchResult::None:
-      break;
-  }
-
-  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
-    finish();
-    return;
-  }
-  if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
-    handleSelection();
-    requestUpdate();
-    return;
-  }
-  buttonNavigator.onNext([this] {
-    selectedIndex = ButtonNavigator::nextIndex(selectedIndex, itemCount());
-    requestUpdate();
-  });
-  buttonNavigator.onPrevious([this] {
-    selectedIndex = ButtonNavigator::previousIndex(selectedIndex, itemCount());
-    requestUpdate();
-  });
+bool VanNhanSoSettingsActivity::handleCustomInput() {
+  return optionPopup.handleInput(mappedInput, [this] { requestUpdate(); });
 }
 
-void VanNhanSoSettingsActivity::render(RenderLock&&) {
-  if (optionPopup.processRender(renderer, mappedInput)) return;
-  renderer.clearScreen();
+void VanNhanSoSettingsActivity::activateIndex(const int index) {
+  if (optionPopup.isActive()) return;
+  nav.selected = index;
+  app.clearTapFlash();
+  handleSelection(index);
+  requestUpdate();
+}
+
+void VanNhanSoSettingsActivity::buildScreen(UiScreen& screen) {
   const auto& metrics = UITheme::getInstance().getMetrics();
-  const int width = renderer.getScreenWidth();
-  const int height = renderer.getScreenHeight();
-  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, width, metrics.headerHeight}, tr(STR_VANNHANSO));
-  const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
-  const int contentHeight = height - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing * 2;
-  GUI.drawList(renderer, Rect{0, contentTop, width, contentHeight}, itemCount(), selectedIndex,
-               [this](const int index) { return std::string(I18N.get(itemName(index))); }, nullptr, nullptr,
-               [this](const int index) { return itemValue(index); }, true);
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-  renderer.displayBuffer();
+  screen.setContentMargin(fui::Insets{static_cast<int16_t>(metrics.topPadding + metrics.headerHeight), 0,
+                                      static_cast<int16_t>(metrics.buttonHintsHeight), 0});
+  screen.spacer(static_cast<int16_t>(metrics.verticalSpacing));
+
+  const int count = listCount();
+  for (int i = 0; i < count; ++i) {
+    rowValues_[i] = itemValue(i);
+    rowItems_[i].value = rowValues_[i].empty() ? nullptr : rowValues_[i].c_str();
+  }
+
+  fui::ListProps props;
+  props.items = rowItems_;
+  props.count = static_cast<uint16_t>(count);
+  props.action = ACTION_ROW;
+  props.inputMask = fui::InputTouch;
+  props.valueInset = 8;
+  props.labelText = screen.theme().smallText;
+  props.labelText.maxLines = 2;
+  syncListViewport(screen, props);
+  screen.list(props);
+}
+
+void VanNhanSoSettingsActivity::render(RenderLock&& lock) {
+  if (optionPopup.processRender(renderer, mappedInput)) return;
+  UiListActivity::render(std::move(lock));
 }

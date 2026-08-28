@@ -546,6 +546,27 @@ TEST(ReleaseJsonParser, ChecksumAssetRequiresExactName) {
   EXPECT_STREQ(p.getChecksumUrl(), "https://example/good");
 }
 
+TEST(ReleaseJsonParser, CustomFirmwareSelectsMatchingChecksum) {
+  const char* json = R"({
+      "tag_name": "1.6.0-vns.1",
+      "assets": [
+        {"name":"firmware.bin","browser_download_url":"https://example/default","size":111},
+        {"name":"firmware.bin.sha256","browser_download_url":"https://example/default-sum","size":65},
+        {"name":"firmware-sticky.bin","browser_download_url":"https://example/sticky","size":222},
+        {"name":"firmware-sticky.bin.sha256","browser_download_url":"https://example/sticky-sum","size":65}
+      ]
+    })";
+  ReleaseJsonParser p;
+  p.setFirmwareAssetName("firmware-sticky.bin");
+  feedChunked(p, json, 5);
+
+  EXPECT_TRUE(p.foundFirmware());
+  EXPECT_TRUE(p.foundChecksum());
+  EXPECT_STREQ(p.getFirmwareUrl(), "https://example/sticky");
+  EXPECT_STREQ(p.getChecksumUrl(), "https://example/sticky-sum");
+  EXPECT_EQ(p.getFirmwareSize(), 222u);
+}
+
 TEST(FirmwareReleaseValidation, VersionSyntaxIsStrict) {
   firmware_release::Version version;
   EXPECT_TRUE(firmware_release::parseVersion("1.5.0", version));

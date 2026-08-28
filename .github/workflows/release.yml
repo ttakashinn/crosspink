@@ -1,4 +1,10 @@
 name: Compile Release
+
+# Builds every board's release firmware on tag push, with the .bin named
+# exactly as OtaUpdater requests it from the GitHub release: plain
+# firmware.bin for the C3 X4/X3 binary, firmware-<board>.bin for every other
+# board. Attach the artifacts' .bin files to the release as-is.
+
 on:
   push:
     tags:
@@ -10,6 +16,18 @@ permissions:
 jobs:
   build-release:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - pio_env: gh_release
+            asset: firmware.bin
+          - pio_env: sticky-gh_release
+            asset: firmware-sticky.bin
+          - pio_env: x4pro-gh_release
+            asset: firmware-x4pro.bin
+          - pio_env: papermono-gh_release
+            asset: firmware-papermono.bin
     steps:
       - uses: actions/checkout@v6
         with:
@@ -17,7 +35,7 @@ jobs:
 
       - uses: actions/setup-python@v6
         with:
-          python-version: '3.14'
+          python-version: '3.13'
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -26,7 +44,15 @@ jobs:
           enable-cache: false
 
       - name: Install PlatformIO Core
-        run: uv pip install --system -U https://github.com/pioarduino/platformio-core/archive/refs/tags/v6.1.19.zip
+        run: |
+          uv pip install --system -U https://github.com/pioarduino/platformio-core/archive/refs/tags/v6.1.19.zip
+          # platform-espressif32's builder/main.py imports these unconditionally; its own
+          # penv bootstrap (builder/penv_setup.py) is supposed to install them automatically
+          # but isn't picking them up reliably in this runner image, so pin them explicitly.
+          uv pip install --system -U "littlefs-python>=0.16.0" "fatfs-ng>=0.1.14" "pyyaml>=6.0.2" \
+            "rich-click>=1.8.6" "zopfli>=0.2.2" "intelhex>=2.3.0" "rich>=14.0.0" "urllib3<2" \
+            "cryptography>=45.0.3" "certifi>=2025.8.3" "ecdsa>=0.19.1" "bitstring>=4.3.1" \
+            "reedsolo>=1.5.3,<1.8" "esp-idf-size>=2.0.0" "esp-coredump>=1.14.0"
 
       - name: Validate release tag
         run: |
@@ -53,13 +79,22 @@ jobs:
           restore-keys: pio-${{ runner.os }}-
 
       - name: Build CrossPoint
-        run: pio run -e gh_release
+        run: pio run -e ${{ matrix.pio_env }} -j1
+
+      - name: Name release asset
+        run: |
+          if [ "${{ matrix.asset }}" != "firmware.bin" ]; then
+            cp ".pio/build/${{ matrix.pio_env }}/firmware.bin" \
+              ".pio/build/${{ matrix.pio_env }}/${{ matrix.asset }}"
+          fi
+          cd ".pio/build/${{ matrix.pio_env }}"
+          sha256sum "${{ matrix.asset }}" | awk '{print $1}' > "${{ matrix.asset }}.sha256"
 
       - name: Validate firmware image metadata
         run: |
           set -euo pipefail
           info="$(python "$HOME/.platformio/packages/tool-esptoolpy/esptool.py" image-info \
-            .pio/build/gh_release/firmware.bin)"
+            ".pio/build/${{ matrix.pio_env }}/${{ matrix.asset }}")"
           grep -Fqx "App version: $CROSSPOINT_RELEASE_VERSION" <<< "$info"
           grep -E '^Checksum: .*\(valid\)$' <<< "$info"
           grep -E '^Validation hash: .*\(valid\)$' <<< "$info"
@@ -67,26 +102,49 @@ jobs:
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: CrossPoint-${{ github.ref_name }}
+          name: ${{ matrix.asset }}
           path: |
-            .pio/build/gh_release/bootloader.bin
-            .pio/build/gh_release/firmware.bin
-            .pio/build/gh_release/firmware.elf
-            .pio/build/gh_release/firmware.map
-            .pio/build/gh_release/partitions.bin
+            .pio/build/${{ matrix.pio_env }}/bootloader.bin
+            .pio/build/${{ matrix.pio_env }}/${{ matrix.asset }}
+            .pio/build/${{ matrix.pio_env }}/${{ matrix.asset }}.sha256
+            .pio/build/${{ matrix.pio_env }}/firmware.elf
+            .pio/build/${{ matrix.pio_env }}/firmware.map
+            .pio/build/${{ matrix.pio_env }}/partitions.bin
+
+  publish-release:
+    needs: build-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download board artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: firmware*.bin
+          path: release-assets
+
+      - name: Collect and verify release assets
+        run: |
+          set -euo pipefail
+          mkdir publish
+          find release-assets -type f \( -name 'firmware*.bin' -o -name 'firmware*.bin.sha256' \) \
+            -exec cp {} publish/ \;
+          test "$(find publish -maxdepth 1 -name 'firmware*.bin' | wc -l | tr -d ' ')" = 4
+          test "$(find publish -maxdepth 1 -name 'firmware*.bin.sha256' | wc -l | tr -d ' ')" = 4
+          for checksum in publish/*.sha256; do
+            asset="${checksum%.sha256}"
+            test "$(cat "$checksum")" = "$(sha256sum "$asset" | awk '{print $1}')"
+          done
 
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cd .pio/build/gh_release
-          sha256sum firmware.bin > firmware.bin.sha256
+          set -euo pipefail
           upstream_version="${GITHUB_REF_NAME%%-vns.*}"
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" firmware.bin firmware.bin.sha256 --clobber
+            gh release upload "$GITHUB_REF_NAME" publish/* --clobber
           else
-            gh release create "$GITHUB_REF_NAME" firmware.bin firmware.bin.sha256 \
+            gh release create "$GITHUB_REF_NAME" publish/* \
               --verify-tag \
               --title "CrossPoint Văn Nhân Số $GITHUB_REF_NAME" \
-              --notes "Custom firmware for Xteink X3/X4, based on CrossPoint Reader stable $upstream_version."
+              --notes "Custom firmware based on CrossPoint Reader stable $upstream_version."
           fi

@@ -15,9 +15,11 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <limits>
 #include <string>
 
+#include "FirmwareBoardTag.h"
 #include "FirmwareFlasher.h"
 
 namespace {
@@ -80,6 +82,15 @@ OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
   // OOM there aborts. fetchUrl handles the verified-https GET, redirects, and
   // User-Agent (see HttpDownloader).
   ReleaseJsonParser releaseParser;
+  // Each board updates from its own release asset: plain firmware.bin for the
+  // combined C3 X4/X3 binary, firmware-<board>.bin otherwise.
+  const bool isX4 = board_tag::boardNameLen() == 2 && memcmp(board_tag::boardName(), "x4", 2) == 0;
+  char assetName[48] = "firmware.bin";
+  if (!isX4) {
+    snprintf(assetName, sizeof(assetName), "firmware-%.*s.bin", static_cast<int>(board_tag::boardNameLen()),
+             board_tag::boardName());
+  }
+  releaseParser.setFirmwareAssetName(assetName);
   const bool ok = HttpDownloader::fetchUrl(
       latestReleaseUrl,
       [&releaseParser](const uint8_t* data, size_t len) {
@@ -105,11 +116,11 @@ OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
   }
 
   if (!releaseParser.foundFirmware()) {
-    LOG_ERR("OTA", "No firmware.bin asset found");
+    LOG_INF("OTA", "No %s asset in latest release", assetName);
     return NO_UPDATE;
   }
   if (!releaseParser.foundChecksum()) {
-    LOG_ERR("OTA", "No firmware.bin.sha256 asset found");
+    LOG_ERR("OTA", "No checksum asset found for %s", assetName);
     return CHECKSUM_ERROR;
   }
 
@@ -195,7 +206,7 @@ OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback onProgres
   }
   std::string expectedChecksum;
   if (!firmware_release::parseSha256Sidecar(checksumSidecar, expectedChecksum)) {
-    LOG_ERR("OTA", "Invalid firmware.bin.sha256 contents");
+    LOG_ERR("OTA", "Invalid firmware checksum contents");
     return CHECKSUM_ERROR;
   }
 
@@ -253,7 +264,9 @@ OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback onProgres
     LOG_ERR("OTA", "Firmware image validation failed: %s", firmware_flash::resultName(validation));
     Storage.remove(OTA_TEMP_PATH);
     installPhase = InstallPhase::IDLE;
-    return validation == firmware_flash::Result::BAD_CHIP ? WRONG_DEVICE_ERROR : INVALID_IMAGE_ERROR;
+    return validation == firmware_flash::Result::BAD_CHIP || validation == firmware_flash::Result::WRONG_BOARD
+               ? WRONG_DEVICE_ERROR
+               : INVALID_IMAGE_ERROR;
   }
 
   struct FlashProgressContext {
@@ -281,7 +294,9 @@ OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback onProgres
   installPhase = InstallPhase::IDLE;
   if (flashResult != firmware_flash::Result::OK) {
     LOG_ERR("OTA", "Firmware flash failed: %s", firmware_flash::resultName(flashResult));
-    return flashResult == firmware_flash::Result::BAD_CHIP ? WRONG_DEVICE_ERROR : INTERNAL_UPDATE_ERROR;
+    return flashResult == firmware_flash::Result::BAD_CHIP || flashResult == firmware_flash::Result::WRONG_BOARD
+               ? WRONG_DEVICE_ERROR
+               : INTERNAL_UPDATE_ERROR;
   }
 
   LOG_INF("OTA", "Update completed");

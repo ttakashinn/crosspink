@@ -55,3 +55,23 @@ Build `default` có 1 cảnh báo deprecation từ dependency `WebSockets` gọi
 - Chưa xác nhận ghosting, waveform, dither và độ đậm nét trên panel thật.
 
 Sau merge phải chạy lại đúng các lệnh và env trên, rồi ghi số chênh lệch tuyệt đối so với bảng này. Cache build chỉ được dùng để tăng tốc; số liệu RAM/flash phải lấy từ linker của commit sau merge.
+
+## Kết quả sau merge
+
+Kết quả dưới đây được đo trên cây merge giữa baseline `00ab726a` và `upstream/develop` tại `4638119b`, sau khi giải quyết toàn bộ conflict. Build `default` và `sticky` đều dùng cùng source tree; `sticky` đã dựng lại thư viện ESP-IDF trước khi build firmware ứng dụng.
+
+| Hạng mục | Kết quả | RAM tĩnh theo PlatformIO | Chênh lệch RAM | Flash theo PlatformIO | Chênh lệch flash | Kích thước `firmware.bin` | SHA-256 `firmware.bin` |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| Host tests | 180/180 đạt | — | +39 test | — | — | — | — |
+| `default` (ESP32-C3, X3/X4) | Đạt | 57.180/327.680 B | +5.872 B | 5.641.493/6.553.600 B | -162.708 B | 5.655.200 B | `1265cf64f6dd9982ccb6b4284d7cf3edde20b6dd9f969f7fe83c587f9888d707` |
+| `sticky` (ESP32-S3) | Đạt | 66.828/327.680 B | +5.856 B | 5.430.115/6.553.600 B | -170.888 B | 5.430.624 B | `29e8c1d42a11481fc0997b92a85ba3c260e340e60ea1af5db650981d446c8346` |
+
+Flash giảm trên cả 2 env, phù hợp với việc nhận định dạng font nén mới của upstream. Static RAM tăng khoảng 5,8 KiB trên mỗi env; đây là số linker, chưa cho biết peak heap khi render và phải được theo dõi tiếp trên thiết bị ở Giai đoạn 1–2.
+
+Các gate không-build giữ nguyên đúng nợ nền đã ghi trước merge:
+
+- Format toàn repo vẫn chỉ thất bại tại `lib/MiniBidi/minibidi.c`.
+- Cppcheck vẫn chỉ báo 1 cảnh báo mức `low` (`useStlAlgorithm`) tại `src/features/vannhanso/VanNhanSoCache.cpp:23`.
+- Dependency `WebSockets` vẫn phát cảnh báo deprecation về `NetworkClient::flush()`; không có cảnh báo mới từ mã tích hợp.
+
+Hai nợ nền format/cppcheck sẽ được sửa bằng commit riêng sau merge. Chưa có kết quả kiểm chứng trên X3, X4 hoặc Sticky thật, vì vậy trạng thái hiện tại mới xác nhận compile, host behavior và kích thước binary.

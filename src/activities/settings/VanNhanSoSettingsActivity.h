@@ -1,26 +1,32 @@
 #pragma once
 
-#include "activities/Activity.h"
-#include "components/OptionPopup.h"
-#include "util/ButtonNavigator.h"
+#include <string>
 
-class VanNhanSoSettingsActivity final : public Activity {
+#include "activities/UiListActivity.h"
+#include "components/OptionPopup.h"
+
+class VanNhanSoSettingsActivity final : public UiListActivity {
  public:
-  explicit VanNhanSoSettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-      : Activity("VanNhanSoSettings", renderer, mappedInput) {}
+  explicit VanNhanSoSettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput);
 
   void onEnter() override;
-  void loop() override;
   void render(RenderLock&&) override;
 
  private:
-  ButtonNavigator buttonNavigator;
-  OptionPopup optionPopup;
-  int selectedIndex = 0;
+  static constexpr int MAX_ITEM_COUNT = 7;
 
-  int itemCount() const;
+  OptionPopup optionPopup;
+  std::string rowValues_[MAX_ITEM_COUNT];
+  freeink::ui::ListItem rowItems_[MAX_ITEM_COUNT]{};
+
+  int listCount() const override;
+  void buildScreen(UiScreen& screen) override;
+  void activateIndex(int index) override;
+  bool handleCustomInput() override;
+  const char* headerTitle() const override;
+
   StrId itemName(int index) const;
   std::string itemValue(int index) const;
-  void handleSelection();
+  void handleSelection(int index);
   void syncPendingProfile();
 };

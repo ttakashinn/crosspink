@@ -55,7 +55,7 @@ Hai lỗi nền cuối bảng phải được xử lý thành commit riêng; kh�
 | Phương án | Cơ chế | Lợi ích | Rủi ro/đánh đổi | Kết luận |
 | --- | --- | --- | --- | --- |
 | Port CrossInk diện rộng | Chép parser, renderer, font và setting từ fork | Nhìn thấy nhiều tính năng nhanh | Diff rất lớn, đè cải tiến mới của upstream, tăng flash, khó bisect lỗi | Không chọn |
-| Upstream trước, CrossInk chọn lọc | Hợp nhất 81 commit upstream rồi backport từng cơ chế còn thiếu | Ít mã trùng, giữ được sửa lỗi mới, dễ đo từng bước | Cần giải quyết conflict tích hợp trước | Khuyến nghị |
+| Upstream trước, CrossInk chọn lọc | Hợp nhất 87 commit upstream rồi backport từng cơ chế còn thiếu | Ít mã trùng, giữ được sửa lỗi mới, dễ đo từng bước | Cần giải quyết conflict tích hợp trước | Khuyến nghị |
 | Viết lại renderer | Tạo engine layout/render mới | Kiến trúc có thể sạch hơn | Thời gian dài, rủi ro pagination/cache/heap cao, thiếu oracle chất lượng | Chỉ cân nhắc dài hạn |
 
 ## Kế hoạch triển khai

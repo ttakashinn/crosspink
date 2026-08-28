@@ -20,7 +20,7 @@ Bảo mật vẫn phải đúng với phạm vi thay đổi, nhưng không thêm
 - Không tuyên bố đã xác nhận trên thiết bị khi mới chỉ build hoặc chạy host test. Ghi rõ phần nào còn cần kiểm tra phần cứng.
 - Giữ nguyên thay đổi không liên quan của người dùng. Không commit, push, rebase hoặc đổi lịch sử Git nếu chưa được yêu cầu.
 - Với công việc firmware, parser, font, EPUB, ảnh hoặc pipeline render, dùng skill `.agents/skills/crosspoint-firmware/SKILL.md`.
-- `.skills/SKILL.md` là tài liệu agent cũ và quá rộng; chỉ tra cứu từng phần khi cần, không dùng làm checklist mặc định.
+- `.skills/` là thư viện hướng dẫn upstream theo từng chủ đề; chỉ tra cứu skill liên quan khi cần, không dùng toàn bộ thư viện làm checklist mặc định.
 
 ## Ràng buộc kỹ thuật chính
 
