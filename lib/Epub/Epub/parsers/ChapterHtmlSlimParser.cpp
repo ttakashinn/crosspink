@@ -1230,6 +1230,14 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
                 }
                 self->currentPage->elements.push_back(pageImage);
                 self->setCurrentPageVisibleOffset(self->visibleTextOffset);
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+                render_lab::recordImageLayout(
+                    ext == ".jpg" || ext == ".jpeg", static_cast<uint16_t>(dims.width),
+                    static_cast<uint16_t>(dims.height), static_cast<uint16_t>(displayWidth),
+                    static_cast<uint16_t>(displayHeight), static_cast<int16_t>(xPos),
+                    static_cast<int16_t>(self->currentPageNextY), static_cast<uint16_t>(self->viewportWidth),
+                    static_cast<uint16_t>(self->viewportHeight), static_cast<uint16_t>(self->completedPageCount));
+#endif
                 self->currentPageNextY += displayHeight + imageMarginBottom;
 
                 // The image consumed the empty block's accumulated vertical spacing.

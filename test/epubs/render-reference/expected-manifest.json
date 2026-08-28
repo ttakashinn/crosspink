@@ -126,6 +126,52 @@
     {
       "id": "images",
       "href": "text/06-hinh-anh.xhtml#image-matrix",
+      "full_build": true,
+      "image_metrics": true,
+      "structural_expectations": {
+        "x4-default": {
+          "image_layout": {
+            "images": 6,
+            "png_images": 5,
+            "jpeg_images": 1,
+            "scaled_down": 6,
+            "out_of_bounds": 0,
+            "image_pages": 5,
+            "max_source_width": 1600,
+            "max_source_height": 1600,
+            "max_display_width": 464,
+            "max_display_height": 764
+          }
+        },
+        "x3-default": {
+          "image_layout": {
+            "images": 6,
+            "png_images": 5,
+            "jpeg_images": 1,
+            "scaled_down": 6,
+            "out_of_bounds": 0,
+            "image_pages": 5,
+            "max_source_width": 1600,
+            "max_source_height": 1600,
+            "max_display_width": 512,
+            "max_display_height": 756
+          }
+        },
+        "x4-no-text-aa": {
+          "image_layout": {
+            "images": 6,
+            "png_images": 5,
+            "jpeg_images": 1,
+            "scaled_down": 6,
+            "out_of_bounds": 0,
+            "image_pages": 5,
+            "max_source_width": 1600,
+            "max_source_height": 1600,
+            "max_display_width": 464,
+            "max_display_height": 764
+          }
+        }
+      },
       "covers": [
         "JPEG",
         "indexed PNG",
@@ -134,6 +180,62 @@
         "wide and tall scaling",
         "clipping",
         "grayscale quantization"
+      ]
+    },
+    {
+      "id": "image-transparent-png",
+      "href": "text/06-hinh-anh.xhtml#image-matrix",
+      "page_offset": 1,
+      "full_build": true,
+      "covers": [
+        "RGBA transparency",
+        "white page compositing",
+        "image bounds"
+      ]
+    },
+    {
+      "id": "image-line-art",
+      "href": "text/06-hinh-anh.xhtml#image-matrix",
+      "page_offset": 2,
+      "full_build": true,
+      "covers": [
+        "thin line preservation",
+        "scale down",
+        "clipping"
+      ]
+    },
+    {
+      "id": "image-jpeg-wide",
+      "href": "text/06-hinh-anh.xhtml#image-matrix",
+      "page_offset": 3,
+      "full_build": true,
+      "covers": [
+        "baseline JPEG",
+        "photo-like gradient",
+        "wide image edge preservation",
+        "four-level quantization"
+      ]
+    },
+    {
+      "id": "image-tall",
+      "href": "text/06-hinh-anh.xhtml#image-matrix",
+      "page_offset": 5,
+      "full_build": true,
+      "covers": [
+        "tall image scaling",
+        "top and bottom edge preservation",
+        "viewport clipping"
+      ]
+    },
+    {
+      "id": "image-to-text",
+      "href": "text/06-hinh-anh.xhtml#image-matrix",
+      "page_offset": 6,
+      "full_build": true,
+      "covers": [
+        "image to text transition",
+        "caption continuation",
+        "block alignment reset"
       ]
     },
     {

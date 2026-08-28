@@ -50,6 +50,17 @@ struct State {
   uint16_t currentTableRowCells = 0;
   uint16_t currentTableRowStartPage = 0;
   bool currentTableRowActive = false;
+  uint16_t imageCount = 0;
+  uint16_t pngImageCount = 0;
+  uint16_t jpegImageCount = 0;
+  uint16_t scaledDownImageCount = 0;
+  uint16_t outOfBoundsImageCount = 0;
+  uint16_t imagePageCount = 0;
+  uint16_t lastImagePage = UINT16_MAX;
+  uint16_t maxImageSourceWidth = 0;
+  uint16_t maxImageSourceHeight = 0;
+  uint16_t maxImageDisplayWidth = 0;
+  uint16_t maxImageDisplayHeight = 0;
 };
 
 State state;
@@ -66,6 +77,8 @@ bool envBool(const char* name, const bool fallback) {
 }
 
 bool tableMetricsEnabled() { return envBool("CROSSPOINT_RENDER_LAB_TABLE_METRICS", false); }
+
+bool imageMetricsEnabled() { return envBool("CROSSPOINT_RENDER_LAB_IMAGE_METRICS", false); }
 
 int envInt(const char* name, const int fallback) {
   const char* value = std::getenv(name);
@@ -268,6 +281,27 @@ void recordTableRowFinished(const bool gridLayout, const uint16_t wrappedCells, 
   state.currentTableRowActive = false;
 }
 
+void recordImageLayout(const bool jpeg, const uint16_t sourceWidth, const uint16_t sourceHeight,
+                       const uint16_t displayWidth, const uint16_t displayHeight, const int16_t x, const int16_t y,
+                       const uint16_t viewportWidth, const uint16_t viewportHeight, const uint16_t pageIndex) {
+  if (!enabled() || !imageMetricsEnabled()) return;
+  state.imageCount++;
+  jpeg ? state.jpegImageCount++ : state.pngImageCount++;
+  if (displayWidth < sourceWidth || displayHeight < sourceHeight) state.scaledDownImageCount++;
+  if (x < 0 || y < 0 || static_cast<uint32_t>(x) + displayWidth > viewportWidth ||
+      static_cast<uint32_t>(y) + displayHeight > viewportHeight) {
+    state.outOfBoundsImageCount++;
+  }
+  if (state.lastImagePage != pageIndex) {
+    state.lastImagePage = pageIndex;
+    state.imagePageCount++;
+  }
+  state.maxImageSourceWidth = std::max(state.maxImageSourceWidth, sourceWidth);
+  state.maxImageSourceHeight = std::max(state.maxImageSourceHeight, sourceHeight);
+  state.maxImageDisplayWidth = std::max(state.maxImageDisplayWidth, displayWidth);
+  state.maxImageDisplayHeight = std::max(state.maxImageDisplayHeight, displayHeight);
+}
+
 void beginFrame(const GfxRenderer& renderer) {
   if (!enabled()) return;
   const uint8_t* framebuffer = renderer.getFrameBuffer();
@@ -353,6 +387,19 @@ void recordTimings(const unsigned long prewarmMs, const unsigned long bwRenderMs
     tableLayout["max_cell_lines"] = state.tableMaxCellLines;
     tableLayout["page_split_rows"] = state.tablePageSplitRows;
     tableLayout["page_splits"] = state.tablePageSplitCount;
+  }
+  if (state.imageCount > 0) {
+    JsonObject imageLayout = result["image_layout"].to<JsonObject>();
+    imageLayout["images"] = state.imageCount;
+    imageLayout["png_images"] = state.pngImageCount;
+    imageLayout["jpeg_images"] = state.jpegImageCount;
+    imageLayout["scaled_down"] = state.scaledDownImageCount;
+    imageLayout["out_of_bounds"] = state.outOfBoundsImageCount;
+    imageLayout["image_pages"] = state.imagePageCount;
+    imageLayout["max_source_width"] = state.maxImageSourceWidth;
+    imageLayout["max_source_height"] = state.maxImageSourceHeight;
+    imageLayout["max_display_width"] = state.maxImageDisplayWidth;
+    imageLayout["max_display_height"] = state.maxImageDisplayHeight;
   }
 
   if (!writeJsonResult(result)) failWithResult("failed to write result manifest");

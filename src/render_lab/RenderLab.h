@@ -21,6 +21,9 @@ void recordTableStarted();
 void recordTableRowStarted(uint16_t pageIndex);
 void recordTableCellStarted();
 void recordTableRowFinished(bool gridLayout, uint16_t wrappedCells, uint16_t maxCellLines, uint16_t pageIndexAfterRow);
+void recordImageLayout(bool jpeg, uint16_t sourceWidth, uint16_t sourceHeight, uint16_t displayWidth,
+                       uint16_t displayHeight, int16_t x, int16_t y, uint16_t viewportWidth, uint16_t viewportHeight,
+                       uint16_t pageIndex);
 void beginFrame(const GfxRenderer& renderer);
 void captureGrayscalePlaneStrip(bool lsbPlane, const uint8_t* rows, uint16_t yStart, uint16_t numRows,
                                 uint16_t rowBytes);

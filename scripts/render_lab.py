@@ -96,6 +96,10 @@ def load_and_validate_manifest() -> dict[str, Any]:
             raise RenderLabError(f"Checkpoint {checkpoint['id']} có page_offset không hợp lệ")
         if "full_build" in checkpoint and not isinstance(checkpoint["full_build"], bool):
             raise RenderLabError(f"Checkpoint {checkpoint['id']} có full_build không hợp lệ")
+        if "image_metrics" in checkpoint and not isinstance(checkpoint["image_metrics"], bool):
+            raise RenderLabError(f"Checkpoint {checkpoint['id']} có image_metrics không hợp lệ")
+        if checkpoint.get("image_metrics") and not checkpoint.get("full_build", False):
+            raise RenderLabError(f"Checkpoint {checkpoint['id']} bật image_metrics phải bật full_build")
         if page_offset > 0 and not checkpoint.get("full_build", False):
             raise RenderLabError(f"Checkpoint {checkpoint['id']} có page_offset phải bật full_build")
         if checkpoint.get("structural_expectations") and not checkpoint.get("full_build", False):
@@ -142,6 +146,18 @@ def load_and_validate_manifest() -> dict[str, Any]:
         "page_split_rows",
         "page_splits",
     }
+    required_image_metrics = {
+        "images",
+        "png_images",
+        "jpeg_images",
+        "scaled_down",
+        "out_of_bounds",
+        "image_pages",
+        "max_source_width",
+        "max_source_height",
+        "max_display_width",
+        "max_display_height",
+    }
     for checkpoint in manifest["checkpoints"]:
         by_profile = checkpoint.get("structural_expectations", {})
         if not isinstance(by_profile, dict):
@@ -166,6 +182,19 @@ def load_and_validate_manifest() -> dict[str, Any]:
                 ):
                     raise RenderLabError(
                         f"Structural table_layout {checkpoint['id']}/{profile_id} chỉ nhận số nguyên >= 0"
+                    )
+            if "image_layout" in sections:
+                image_metrics = sections["image_layout"]
+                if not isinstance(image_metrics, dict) or set(image_metrics) != required_image_metrics:
+                    raise RenderLabError(
+                        f"Structural image_layout {checkpoint['id']}/{profile_id} phải có đủ metric chuẩn"
+                    )
+                if any(
+                    not isinstance(value, int) or isinstance(value, bool) or value < 0
+                    for value in image_metrics.values()
+                ):
+                    raise RenderLabError(
+                        f"Structural image_layout {checkpoint['id']}/{profile_id} chỉ nhận số nguyên >= 0"
                     )
 
     for suite_name, suite in manifest["suites"].items():
@@ -261,6 +290,7 @@ def render_process(case: RenderCase, sd_root: Path, output_dir: Path, cache_stat
             "CROSSPOINT_RENDER_LAB_PAGE_OFFSET": str(checkpoint.get("page_offset", 0)),
             "CROSSPOINT_RENDER_LAB_FULL_BUILD": "1" if checkpoint.get("full_build", False) else "0",
             "CROSSPOINT_RENDER_LAB_TABLE_METRICS": "1" if checkpoint.get("structural_expectations") else "0",
+            "CROSSPOINT_RENDER_LAB_IMAGE_METRICS": "1" if checkpoint.get("image_metrics", False) else "0",
             "CROSSPOINT_RENDER_LAB_CACHE_STATE": cache_state,
             "CROSSPOINT_RENDER_LAB_EPUB_SHA256": sha256_file(EPUB_PATH),
             "CROSSPOINT_RENDER_LAB_TEXT_AA": "1" if profile["text_antialiasing"] else "0",

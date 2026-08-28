@@ -18,7 +18,7 @@ Mỗi lần chạy là một process riêng để settings, global state và cac
 - `x3-default`: portrait `528 × 792`, cùng render settings để khóa khác biệt pagination do viewport.
 - `x4-no-text-aa`: portrait `480 × 800`, text AA tắt; ảnh vẫn đi qua grayscale plane.
 - `smoke`: 3 checkpoint tiếng Việt, bảng/danh sách và ảnh trên X4.
-- `full`: 10 checkpoint trên 3 profile; checkpoint stress chạy cả cold và warm, tổng cộng 33 case. `table-continuation` khóa trang ngay sau anchor bảng.
+- `full`: 15 checkpoint trên 3 profile; checkpoint stress chạy cả cold và warm, tổng cộng 48 case. `table-continuation` khóa trang ngay sau anchor bảng; 5 checkpoint ảnh bổ sung khóa từng đường PNG alpha, line art, JPEG/ảnh rộng, ảnh cao và chuyển ảnh → text.
 
 ## Review regression
 
