@@ -1,0 +1,145 @@
+{
+  "fixture_id": "crosspoint-render-reference",
+  "version": "1.0.0",
+  "title": "CrossPoint — Bộ tham chiếu render tiếng Việt",
+  "primary_language": "vi",
+  "format": "EPUB 3.0 reflowable with EPUB 2 NCX fallback",
+  "target_viewport": {
+    "width": 480,
+    "height": 800,
+    "orientation": "portrait"
+  },
+  "checkpoints": [
+    {
+      "id": "vi-nfc-nfd",
+      "href": "text/01-tieng-viet.xhtml#nfc-nfd",
+      "covers": [
+        "Vietnamese precomposed characters",
+        "Vietnamese decomposed combining sequences",
+        "canonical equivalence"
+      ]
+    },
+    {
+      "id": "vi-tone-matrix",
+      "href": "text/01-tieng-viet.xhtml#tone-matrix",
+      "covers": [
+        "all Vietnamese vowels and tone marks",
+        "uppercase and lowercase Đ/đ"
+      ]
+    },
+    {
+      "id": "typography",
+      "href": "text/02-kieu-chu.xhtml#style-matrix",
+      "covers": [
+        "bold",
+        "italic",
+        "bold italic",
+        "kerning",
+        "ligatures",
+        "superscript",
+        "subscript"
+      ]
+    },
+    {
+      "id": "css-cascade",
+      "href": "text/03-css.xhtml#selector-matrix",
+      "covers": [
+        "grouped selectors",
+        "descendant selectors",
+        "specificity",
+        "attribute selectors",
+        "display none"
+      ]
+    },
+    {
+      "id": "pagination",
+      "href": "text/04-phan-trang.xhtml#page-breaks",
+      "covers": [
+        "page break before and after",
+        "heading orphan avoidance",
+        "long words",
+        "internal footnotes",
+        "visible text offsets"
+      ]
+    },
+    {
+      "id": "tables-lists",
+      "href": "text/05-bang-danh-sach.xhtml#wide-table",
+      "covers": [
+        "table column layout",
+        "cell wrapping",
+        "nested lists",
+        "narrow viewport overflow"
+      ]
+    },
+    {
+      "id": "images",
+      "href": "text/06-hinh-anh.xhtml#image-matrix",
+      "covers": [
+        "JPEG",
+        "indexed PNG",
+        "RGBA transparency",
+        "line art",
+        "wide and tall scaling",
+        "clipping",
+        "grayscale quantization"
+      ]
+    },
+    {
+      "id": "bidi-fallback",
+      "href": "text/07-bidi-fallback.xhtml#mixed-direction",
+      "covers": [
+        "mixed LTR and RTL",
+        "Arabic",
+        "Hebrew",
+        "CJK fallback"
+      ]
+    },
+    {
+      "id": "stress-cold-warm",
+      "href": "text/08-stress.xhtml#stress-start",
+      "covers": [
+        "long Vietnamese chapter",
+        "cold and warm cache",
+        "prewarm timing",
+        "pagination stability",
+        "heap fragmentation"
+      ]
+    }
+  ],
+  "render_profiles": [
+    {
+      "id": "x3-default",
+      "environment": "default",
+      "orientation": "portrait",
+      "text_antialiasing": true,
+      "embedded_styles": true
+    },
+    {
+      "id": "x3-no-text-aa",
+      "environment": "default",
+      "orientation": "portrait",
+      "text_antialiasing": false,
+      "embedded_styles": true
+    },
+    {
+      "id": "sticky-default",
+      "environment": "sticky",
+      "orientation": "portrait",
+      "text_antialiasing": true,
+      "embedded_styles": true
+    }
+  ],
+  "measurement_requirements": [
+    "firmware SHA",
+    "EPUB SHA-256",
+    "cache state",
+    "font family and point size",
+    "page count per spine item",
+    "visible text offset at each checkpoint",
+    "prewarm and bw_render timing",
+    "minimum free heap",
+    "minimum largest free block",
+    "framebuffer or device screenshot"
+  ]
+}

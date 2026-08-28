@@ -62,11 +62,11 @@ Hai lỗi nền cuối bảng phải được xử lý thành commit riêng; kh�
 
 ### Giai đoạn 0 — Làm sạch baseline tích hợp
 
-Mục tiêu: đưa `vns-next` lên nền upstream hiện hành mà không làm mất tính năng Vạn Nhân Số.
+Mục tiêu: đưa `vns-next` lên nền upstream hiện hành mà không làm mất tính năng Văn Nhân Số.
 
 1. Tạo nhánh tích hợp từ `vns-next`; merge `upstream/develop`, không rebase lịch sử đã publish.
-2. Chia conflict theo vùng: agent setup, settings/state, `main`, reader, cache, network và Vạn Nhân Số.
-3. Giữ test Vạn Nhân Số hiện có; thêm test tại điểm conflict nếu hành vi chưa được khóa.
+2. Chia conflict theo vùng: agent setup, settings/state, `main`, reader, cache, network và Văn Nhân Số.
+3. Giữ test Văn Nhân Số hiện có; thêm test tại điểm conflict nếu hành vi chưa được khóa.
 4. Xử lý riêng 2 lỗi baseline format/static analysis đã nêu.
 5. Chạy host tests, `default`, `sticky`, format và cppcheck.
 6. Ghi lại RAM, flash và timing sau merge; không dùng số liệu trước merge làm kết quả cuối.
@@ -79,11 +79,13 @@ Các thay đổi upstream cần xác nhận đặc biệt:
 - `8141d7b9`: style-aware font prewarm và benchmark fixture.
 - `c484dc72`: định dạng font thưa/nén tốt hơn; commit upstream tuyên bố giảm 323 KB flash, nhưng phải build lại trên `vns-next` để xác nhận con số thực.
 
-Điều kiện hoàn thành: CI-equivalent pass; tính năng Vạn Nhân Số không regress; cả `default` và `sticky` tạo được firmware.
+Điều kiện hoàn thành: CI-equivalent pass; tính năng Văn Nhân Số không regress; cả `default` và `sticky` tạo được firmware.
 
 ### Giai đoạn 1 — Dựng render lab và golden corpus
 
 Mục tiêu: mọi tuyên bố “render đẹp hơn” phải có output so sánh được.
+
+Fixture end-to-end chuẩn là `test/epubs/crosspoint-render-reference-v1.0.epub`. Source sinh file và checkpoint nằm tại `scripts/generate_render_reference_epub.py` và `test/epubs/render-reference/`; sách thực tế chỉ dùng làm corpus bổ sung, không thay fixture chuẩn nếu không đại diện cho nội dung tiếng Việt và đường chạy của CrossPoint.
 
 1. Port tối thiểu env simulator/HAL từ CrossInk hoặc `crossink-simulator`; không port UI/tính năng CrossInk không liên quan.
 2. Thêm chế độ chạy không tương tác: mở fixture, chọn viewport/font/settings, render trang chỉ định và xuất framebuffer ra PNG/PBM cùng manifest JSON.
