@@ -39,7 +39,9 @@ class VanNhanSoUpdateActivity final : public Activity {
   const bool sleepAfterUpdate;
   bool shouldTearDownWifiOnExit = false;
   bool cancelDownload = false;
+  bool pendingProfileRequired = false;
   unsigned long connectionStartTime = 0;
+  uint32_t currentProfileHash = 0;
   uint32_t currentDateKey = 0;
   uint16_t currentMinute = UINT16_MAX;
   std::atomic<size_t> downloadedBytes{0};
@@ -54,6 +56,8 @@ class VanNhanSoUpdateActivity final : public Activity {
   void startAutomaticUpdate();
   void checkAutomaticConnection();
   bool resolveCurrentDate(bool allowNetworkSync);
+  void syncPendingProfile();
+  void clearPendingProfile();
   bool isCurrentCache() const;
   bool isBackoffActive() const;
   bool readDateMarker(uint32_t& dateKey) const;

@@ -126,6 +126,12 @@ bool validateImage(const char* path, const int screenWidth, const int screenHeig
   return true;
 }
 
+bool hasCurrentProfileImage(const int screenWidth, const int screenHeight) {
+  char path[vannhanso_profile::PATH_MAX_LENGTH];
+  return vannhanso_profile::buildImagePath(screenWidth, screenHeight, path, sizeof(path)) &&
+         validateImage(path, screenWidth, screenHeight);
+}
+
 void recoverInterruptedInstall(const int screenWidth, const int screenHeight) {
   char cachePath[vannhanso_profile::PATH_MAX_LENGTH];
   char backupPath[vannhanso_profile::PATH_MAX_LENGTH];

@@ -25,6 +25,7 @@
 #include "components/UITheme.h"
 #include "features/vannhanso/VanNhanSoCache.h"
 #include "features/vannhanso/VanNhanSoProfile.h"
+#include "features/vannhanso/VanNhanSoUpdatePolicy.h"
 #include "fontIds.h"
 #include "network/HttpDownloader.h"
 
@@ -199,6 +200,7 @@ std::string formatDateTime(const uint32_t dateKey, const uint16_t minuteOfDay) {
 void VanNhanSoUpdateActivity::onEnter() {
   Activity::onEnter();
   vannhanso_cache::recoverInterruptedInstall(renderer.getScreenWidth(), renderer.getScreenHeight());
+  syncPendingProfile();
 
   if (automatic) {
     startAutomaticUpdate();
@@ -253,6 +255,7 @@ void VanNhanSoUpdateActivity::startAutomaticUpdate() {
 
   if (resolveCurrentDate(false) && isCurrentCache()) {
     LOG_INF("VNS", "Sleep screen already current for %lu", static_cast<unsigned long>(currentDateKey));
+    clearPendingProfile();
     state = SKIPPED;
     finish();
     return;
@@ -286,6 +289,7 @@ void VanNhanSoUpdateActivity::startAutomaticUpdate() {
   shouldTearDownWifiOnExit = true;
   connectionStartTime = millis();
   state = AUTO_CONNECTING;
+  if (pendingProfileRequired) requestUpdate();
 }
 
 void VanNhanSoUpdateActivity::checkAutomaticConnection() {
@@ -293,6 +297,7 @@ void VanNhanSoUpdateActivity::checkAutomaticConnection() {
   if (status == WL_CONNECTED) {
     if (resolveCurrentDate(false) && isCurrentCache()) {
       LOG_INF("VNS", "Sleep screen already current for %lu", static_cast<unsigned long>(currentDateKey));
+      clearPendingProfile();
       state = SKIPPED;
       finish();
       return;
@@ -330,8 +335,11 @@ void VanNhanSoUpdateActivity::loop() {
   if (state == AUTO_CONNECTING) {
     int x = 0;
     int y = 0;
-    if (mappedInput.wasAnyPressed() || mappedInput.wasScreenTapped(x, y)) {
+    const bool shouldCancel = pendingProfileRequired ? mappedInput.wasPressed(MappedInputManager::Button::Back)
+                                                     : mappedInput.wasAnyPressed() || mappedInput.wasScreenTapped(x, y);
+    if (shouldCancel) {
       LOG_INF("VNS", "Automatic update cancelled by user input");
+      if (pendingProfileRequired) recordCancelled();
       finish();
       return;
     }
@@ -396,6 +404,27 @@ bool VanNhanSoUpdateActivity::resolveCurrentDate(const bool allowNetworkSync) {
   return haveDate && vietnamDateTime(dateTime, currentDateKey, currentMinute);
 }
 
+void VanNhanSoUpdateActivity::syncPendingProfile() {
+  const int width = renderer.getScreenWidth();
+  const int height = renderer.getScreenHeight();
+  currentProfileHash = vannhanso_profile::identityHash(width, height);
+  const uint32_t pendingHash = vannhanso_update_policy::pendingProfileHash(
+      vannhanso_cache::hasCurrentProfileImage(width, height), currentProfileHash);
+  pendingProfileRequired = pendingHash != 0;
+  if (APP_STATE.vanNhanSoPendingProfileHash == pendingHash) return;
+
+  APP_STATE.vanNhanSoPendingProfileHash = pendingHash;
+  APP_STATE.saveToFile();
+}
+
+void VanNhanSoUpdateActivity::clearPendingProfile() {
+  pendingProfileRequired = false;
+  if (APP_STATE.vanNhanSoPendingProfileHash != currentProfileHash) return;
+
+  APP_STATE.vanNhanSoPendingProfileHash = 0;
+  APP_STATE.saveToFile();
+}
+
 bool VanNhanSoUpdateActivity::isCurrentCache() const {
   if (currentDateKey == 0) return false;
 
@@ -421,25 +450,11 @@ bool VanNhanSoUpdateActivity::isCurrentCache() const {
 }
 
 bool VanNhanSoUpdateActivity::isBackoffActive() const {
-  if (APP_STATE.vanNhanSoUpdateResult != CrossPointState::VanNhanSoUpdateResult::FAILED ||
-      APP_STATE.vanNhanSoConsecutiveFailures == 0) {
-    return false;
-  }
-  // Without a trustworthy clock there is no safe way to measure elapsed
-  // backoff across deep-sleep resets. Suppress repeated automatic association
-  // attempts; a manual update still bypasses this gate and records server date.
-  if (currentDateKey == 0) return true;
-  if (APP_STATE.vanNhanSoLastAttemptDate != currentDateKey) return false;
-  if (APP_STATE.vanNhanSoConsecutiveFailures >= 3) return true;
-  if (currentMinute >= 24U * 60U || APP_STATE.vanNhanSoLastAttemptMinute >= 24U * 60U ||
-      currentMinute < APP_STATE.vanNhanSoLastAttemptMinute) {
-    return false;
-  }
-
-  static constexpr uint16_t RETRY_DELAYS_MINUTES[] = {5, 30, 180};
-  const uint8_t delayIndex =
-      std::min<uint8_t>(APP_STATE.vanNhanSoConsecutiveFailures - 1, std::size(RETRY_DELAYS_MINUTES) - 1);
-  return currentMinute - APP_STATE.vanNhanSoLastAttemptMinute < RETRY_DELAYS_MINUTES[delayIndex];
+  return vannhanso_update_policy::isBackoffActive(
+      currentProfileHash, APP_STATE.vanNhanSoFailureProfileHash,
+      APP_STATE.vanNhanSoUpdateResult == CrossPointState::VanNhanSoUpdateResult::FAILED, pendingProfileRequired,
+      APP_STATE.vanNhanSoConsecutiveFailures, currentDateKey, currentMinute, APP_STATE.vanNhanSoLastAttemptDate,
+      APP_STATE.vanNhanSoLastAttemptMinute);
 }
 
 bool VanNhanSoUpdateActivity::readDateMarker(uint32_t& dateKey) const {
@@ -488,7 +503,10 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
     int x = 0;
     int y = 0;
     if (automatic) {
-      if (mappedInput.wasAnyPressed() || mappedInput.wasScreenTapped(x, y)) cancelDownload = true;
+      if (pendingProfileRequired ? mappedInput.wasPressed(MappedInputManager::Button::Back)
+                                 : mappedInput.wasAnyPressed() || mappedInput.wasScreenTapped(x, y)) {
+        cancelDownload = true;
+      }
     } else if (mappedInput.wasPressed(MappedInputManager::Button::Back) || mappedInput.wasScreenTapped(x, y)) {
       cancelDownload = true;
     }
@@ -556,7 +574,7 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
         downloadedBytes = downloaded;
         totalBytes = total;
         const int newPercentage = total > 0 ? static_cast<int>(downloaded * 100 / total) : -1;
-        if (!automatic && newPercentage != oldPercentage) requestUpdate(true);
+        if ((!automatic || pendingProfileRequired) && newPercentage != oldPercentage) requestUpdate(true);
 
         // Automatic refresh must yield to the user. A transfer that is already
         // receiving data can be cancelled immediately; a stalled socket is
@@ -565,7 +583,10 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
         int x = 0;
         int y = 0;
         if (automatic) {
-          if (mappedInput.wasAnyPressed() || mappedInput.wasScreenTapped(x, y)) cancelDownload = true;
+          if (pendingProfileRequired ? mappedInput.wasPressed(MappedInputManager::Button::Back)
+                                     : mappedInput.wasAnyPressed() || mappedInput.wasScreenTapped(x, y)) {
+            cancelDownload = true;
+          }
         } else if (mappedInput.wasPressed(MappedInputManager::Button::Back) || mappedInput.wasScreenTapped(x, y)) {
           cancelDownload = true;
         }
@@ -593,7 +614,7 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
   downloadedFile.close();
 
   state = VERIFYING;
-  if (!automatic) requestUpdateAndWait();
+  if (!automatic || pendingProfileRequired) requestUpdateAndWait();
   if (!validateChecksum(expectedChecksum)) {
     Storage.remove(TEMP_PATH);
     fail(CrossPointState::VanNhanSoUpdateError::CHECKSUM_MISMATCH);
@@ -630,7 +651,7 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
   }
 
   state = INSTALLING;
-  if (!automatic) requestUpdateAndWait();
+  if (!automatic || pendingProfileRequired) requestUpdateAndWait();
   if (!vannhanso_cache::installDownloadedImage(renderer.getScreenWidth(), renderer.getScreenHeight())) {
     Storage.remove(TEMP_PATH);
     fail(CrossPointState::VanNhanSoUpdateError::INSTALL);
@@ -673,6 +694,11 @@ void VanNhanSoUpdateActivity::recordSuccess() {
   APP_STATE.vanNhanSoLastSuccessMinute = currentMinute;
   APP_STATE.vanNhanSoConsecutiveFailures = 0;
   APP_STATE.vanNhanSoLastHttpStatus = 0;
+  APP_STATE.vanNhanSoFailureProfileHash = 0;
+  if (APP_STATE.vanNhanSoPendingProfileHash == currentProfileHash) {
+    APP_STATE.vanNhanSoPendingProfileHash = 0;
+  }
+  pendingProfileRequired = false;
   APP_STATE.saveToFile();
 }
 
@@ -692,11 +718,15 @@ void VanNhanSoUpdateActivity::recordCancelled() {
 void VanNhanSoUpdateActivity::fail(const CrossPointState::VanNhanSoUpdateError error) {
   {
     RenderLock lock(*this);
+    if (APP_STATE.vanNhanSoFailureProfileHash != currentProfileHash) {
+      APP_STATE.vanNhanSoConsecutiveFailures = 0;
+    }
     APP_STATE.vanNhanSoUpdateResult = CrossPointState::VanNhanSoUpdateResult::FAILED;
     APP_STATE.vanNhanSoUpdateError = error;
     APP_STATE.vanNhanSoLastAttemptDate = currentDateKey;
     APP_STATE.vanNhanSoLastAttemptMinute = currentMinute;
     APP_STATE.vanNhanSoConsecutiveFailures = std::min<uint8_t>(APP_STATE.vanNhanSoConsecutiveFailures + 1, 4);
+    APP_STATE.vanNhanSoFailureProfileHash = currentProfileHash;
     APP_STATE.saveToFile();
     state = FAILED;
   }
@@ -802,9 +832,10 @@ const char* VanNhanSoUpdateActivity::errorText(const CrossPointState::VanNhanSoU
 }
 
 void VanNhanSoUpdateActivity::render(RenderLock&&) {
-  // Automatic updates intentionally leave the already-rendered reader/home
-  // frame untouched. Any user input cancels the short automatic attempt.
-  if (automatic) return;
+  // Routine automatic updates intentionally leave the reader/home frame
+  // untouched. A missing profile is the exception: show bounded progress so
+  // the wake button cannot silently cancel the only usable download.
+  if (automatic && !pendingProfileRequired) return;
 
   const auto& metrics = UITheme::getInstance().getMetrics();
   const auto pageWidth = renderer.getScreenWidth();
@@ -819,7 +850,11 @@ void VanNhanSoUpdateActivity::render(RenderLock&&) {
   }
   const std::string cachedDate = formatDateKey(cachedDateKey);
   char currentText[80];
-  snprintf(currentText, sizeof(currentText), tr(STR_VANNHANSO_CURRENT_DATA), cachedDate.c_str());
+  if (pendingProfileRequired) {
+    snprintf(currentText, sizeof(currentText), "%s", tr(STR_VANNHANSO_PROFILE_PENDING));
+  } else {
+    snprintf(currentText, sizeof(currentText), tr(STR_VANNHANSO_CURRENT_DATA), cachedDate.c_str());
+  }
 
   const std::string lastAttempt =
       formatDateTime(APP_STATE.vanNhanSoLastAttemptDate, APP_STATE.vanNhanSoLastAttemptMinute);

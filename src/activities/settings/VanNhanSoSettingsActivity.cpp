@@ -1,6 +1,7 @@
 #include "VanNhanSoSettingsActivity.h"
 
 #include <CrossPointSettings.h>
+#include <CrossPointState.h>
 #include <GfxRenderer.h>
 #include <I18n.h>
 #include <Memory.h>
@@ -12,6 +13,8 @@
 #include "VanNhanSoUpdateActivity.h"
 #include "components/UITheme.h"
 #include "features/vannhanso/VanNhanSoCache.h"
+#include "features/vannhanso/VanNhanSoProfile.h"
+#include "features/vannhanso/VanNhanSoUpdatePolicy.h"
 
 namespace {
 constexpr int BASE_ITEM_COUNT = 4;
@@ -33,6 +36,7 @@ const StrId weatherNames[] = {StrId::STR_VANNHANSO_WEATHER_HANOI,   StrId::STR_V
 void VanNhanSoSettingsActivity::onEnter() {
   Activity::onEnter();
   selectedIndex = 0;
+  syncPendingProfile();
   requestUpdate();
 }
 
@@ -52,13 +56,17 @@ std::string VanNhanSoSettingsActivity::itemValue(const int index) const {
   switch (index) {
     case 0: {
       uint32_t dateKey;
-      if (vannhanso_cache::readCurrentDate(renderer.getScreenWidth(), renderer.getScreenHeight(), dateKey)) {
+      if (vannhanso_cache::hasCurrentProfileImage(renderer.getScreenWidth(), renderer.getScreenHeight()) &&
+          vannhanso_cache::readCurrentDate(renderer.getScreenWidth(), renderer.getScreenHeight(), dateKey)) {
         char date[11];
         snprintf(date, sizeof(date), "%02lu/%02lu/%04lu", static_cast<unsigned long>(dateKey % 100),
                  static_cast<unsigned long>((dateKey / 100) % 100), static_cast<unsigned long>(dateKey / 10000));
         return date;
       }
-      return tr(STR_NOT_SET);
+      return APP_STATE.vanNhanSoPendingProfileHash ==
+                     vannhanso_profile::identityHash(renderer.getScreenWidth(), renderer.getScreenHeight())
+                 ? tr(STR_VANNHANSO_PROFILE_PENDING)
+                 : tr(STR_NOT_SET);
     }
     case 1:
       return I18N.get(updateModeNames[std::min<uint8_t>(SETTINGS.vanNhanSoUpdateMode, std::size(updateModeNames) - 1)]);
@@ -98,37 +106,54 @@ void VanNhanSoSettingsActivity::handleSelection() {
                        [this](const int index) {
                          SETTINGS.vanNhanSoLayout = index;
                          SETTINGS.saveToFile();
+                         syncPendingProfile();
                          selectedIndex = std::min(selectedIndex, itemCount() - 1);
                        });
       return;
     case 3:
       optionPopup.show(StrId::STR_VANNHANSO_FONT_SIZE, fontNames, std::size(fontNames), SETTINGS.vanNhanSoFontSize,
-                       [](const int index) {
+                       [this](const int index) {
                          SETTINGS.vanNhanSoFontSize = index;
                          SETTINGS.saveToFile();
+                         syncPendingProfile();
                        });
       return;
     case 4:
       optionPopup.show(StrId::STR_VANNHANSO_VOCABULARY_LEVEL, vocabularyNames, std::size(vocabularyNames),
-                       SETTINGS.vanNhanSoVocabularyLevel, [](const int index) {
+                       SETTINGS.vanNhanSoVocabularyLevel, [this](const int index) {
                          SETTINGS.vanNhanSoVocabularyLevel = index;
                          SETTINGS.saveToFile();
+                         syncPendingProfile();
                        });
       return;
     case 5:
       optionPopup.show(StrId::STR_VANNHANSO_WEATHER_LOCATION, weatherNames, std::size(weatherNames),
-                       SETTINGS.vanNhanSoWeatherLocation, [](const int index) {
+                       SETTINGS.vanNhanSoWeatherLocation, [this](const int index) {
                          SETTINGS.vanNhanSoWeatherLocation = index;
                          SETTINGS.saveToFile();
+                         syncPendingProfile();
                        });
       return;
     case 6:
       SETTINGS.vanNhanSoFinance = !SETTINGS.vanNhanSoFinance;
       SETTINGS.saveToFile();
+      syncPendingProfile();
       return;
     default:
       return;
   }
+}
+
+void VanNhanSoSettingsActivity::syncPendingProfile() {
+  const int width = renderer.getScreenWidth();
+  const int height = renderer.getScreenHeight();
+  const uint32_t profileHash = vannhanso_profile::identityHash(width, height);
+  const uint32_t pendingHash =
+      vannhanso_update_policy::pendingProfileHash(vannhanso_cache::hasCurrentProfileImage(width, height), profileHash);
+  if (APP_STATE.vanNhanSoPendingProfileHash == pendingHash) return;
+
+  APP_STATE.vanNhanSoPendingProfileHash = pendingHash;
+  APP_STATE.saveToFile();
 }
 
 void VanNhanSoSettingsActivity::loop() {

@@ -22,4 +22,5 @@ class VanNhanSoSettingsActivity final : public Activity {
   StrId itemName(int index) const;
   std::string itemValue(int index) const;
   void handleSelection();
+  void syncPendingProfile();
 };
