@@ -96,6 +96,7 @@ class EpubReaderActivity final : public ReaderActivity {
   uint16_t buildViewportWidth = 0;
   uint16_t buildViewportHeight = 0;
   bool partialRebuildStartFailed = false;
+  EpubRenderMode activeRenderMode = EpubRenderMode::Standard;
 
   int lastSavedSpineIndex = -1;
   int lastSavedPage = -1;
@@ -106,6 +107,8 @@ class EpubReaderActivity final : public ReaderActivity {
   static constexpr size_t BACKGROUND_BUILD_MIN_FREE_HEAP = 32 * 1024;
   static constexpr size_t BACKGROUND_BUILD_MIN_MAX_ALLOC = 16 * 1024;
   bool buildTickHeapGate();
+  ReaderRenderSpec activeReaderRenderSpec(uint16_t viewportWidth, uint16_t viewportHeight) const;
+  bool retrySectionInSafeMode();
   bool buildHeapPaused = false;
   static constexpr size_t RENDER_MIN_FREE_HEAP = 24 * 1024;
   static constexpr int BUILD_WINDOW_AHEAD = 5;

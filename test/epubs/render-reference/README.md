@@ -67,6 +67,12 @@ Suite font chạy thêm 4 case với fixture `.cpfont` v4 `CrossPointTest`, gồ
 
 Checkpoint stress bật full build để `page_count` trong golden là tổng chính xác; giá trị ước lượng khi mới dựng trang đầu không được dùng làm oracle.
 
+Suite Safe dùng fault-injection để buộc Standard báo thiếu bộ nhớ, sau đó xác nhận reader tự retry với CSS nhúng tắt và ảnh ở chế độ alt-text. Cold/warm phải cùng output; warm phải nạp cache Safe riêng:
+
+```sh
+.venv/bin/python scripts/render_lab.py verify --suite safe
+```
+
 `framebuffer.pbm` khóa base framebuffer 1-bit. `framebuffer.pgm` khóa kết quả ghép base với 2 grayscale plane theo 4 mức simulator. Các trường timing và heap host được ghi để chẩn đoán nhưng không tham gia golden vì không tất định và không đại diện cho ESP32.
 
 ## Kiểm chứng phần cứng

@@ -144,6 +144,7 @@ class ChapterHtmlSlimParser {
   XML_Parser xmlParser_ = nullptr;
   HalFile parseFile_;
   uint32_t parseStartTime_ = 0;
+  bool lowMemoryFailure_ = false;
 
   void updateEffectiveInlineStyle();
   [[nodiscard]] CssParser::DescendantMask activeCssAncestorMask() const;
@@ -218,6 +219,7 @@ class ChapterHtmlSlimParser {
   ParseStatus parseStep();
   bool finishParse();  // flush the trailing page and tear down; returns true
   void abortParse();   // tear down without flushing (error / abandon)
+  bool failedForLowMemory() const { return lowMemoryFailure_; }
 
   void addLineToPage(std::shared_ptr<TextBlock> line, uint32_t visibleOffset);
   const std::vector<std::pair<std::string, uint16_t>>& getAnchors() const { return anchorData; }

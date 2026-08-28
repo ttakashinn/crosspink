@@ -152,6 +152,8 @@ Cơ chế tham khảo: CrossInk dùng typeface có stroke chắc hơn; commit `c
 - Rủi ro: chữ đậm quá, pagination thay đổi, thiếu glyph/fallback hoặc tăng flash.
 - Cách bác bỏ: đánh giá mù A/B trên bộ trang cố định và kiểm tra page count/visible-text offsets.
 
+Trạng thái ngày 28/08/2026: Bitter trong pipeline SD font hiện đã dùng weight 500 cho regular/italic và 700 cho bold/bold-italic; fixture SD font tiếng Việt đã khóa NFC/NFD cùng 4 style. Không đổi font firmware mặc định vì chưa có A/B mù trên X3/X4 để loại trừ chữ bết, mất counter và pagination xấu hơn.
+
 #### 3.3. Render mode và OOM fallback — ưu tiên 3
 
 Cơ chế tham khảo: CrossInk `CrossInk Default → Balanced → Light → Safe Mode`, cùng các commit `e00b6f4` và `6e2f6dd`.
@@ -164,6 +166,8 @@ Cơ chế tham khảo: CrossInk `CrossInk Default → Balanced → Light → Saf
 - Lợi ích dự kiến: sách khó vẫn đọc được thay vì crash.
 - Rủi ro: fallback che lỗi memory leak hoặc làm output thay đổi âm thầm.
 - Cách bác bỏ: fault-injection với budget heap thấp; UI/log phải cho biết mode đang dùng.
+
+Trạng thái ngày 28/08/2026: đã triển khai fallback có chủ đích `Standard → Safe` thay vì mang nguyên 4 mode CrossInk. Chỉ lỗi được phân loại là thiếu bộ nhớ mới kích hoạt retry; Safe tắt CSS nhúng và chuyển ảnh sang alt-text, giữ content offset để tái phân trang về đúng vị trí. Section cache tăng lên v43 và tách `.safe.bin`, tránh Standard xóa cache Safe. Suite fault-injection gồm 2 case cold/warm chạy 2 lần; warm log xác nhận nạp cache 115 trang thay vì dựng lại. Mode hiện chỉ giữ trong phiên đọc và được ghi rõ trong log/result; không tự hạ chất lượng vĩnh viễn cho sách.
 
 #### 3.4. CSS visual extras — ưu tiên 4, chỉ làm theo corpus
 

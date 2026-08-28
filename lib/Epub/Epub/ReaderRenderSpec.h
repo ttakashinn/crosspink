@@ -1,6 +1,8 @@
 #pragma once
 #include <cstdint>
 
+#include "EpubRenderMode.h"
+
 // The resolved text-rendering configuration a reader hands to the layout
 // engine. Section-cache validation keys on every field: a section file built
 // with a different spec is discarded and rebuilt.
@@ -21,4 +23,14 @@ struct ReaderRenderSpec {
   bool embeddedStyle = true;
   uint8_t imageRendering = 0;
   bool focusReadingEnabled = false;
+  EpubRenderMode renderMode = EpubRenderMode::Standard;
 };
+
+inline ReaderRenderSpec applyEpubRenderMode(ReaderRenderSpec spec, const EpubRenderMode mode) {
+  spec.renderMode = mode;
+  if (mode == EpubRenderMode::Safe) {
+    spec.embeddedStyle = false;
+    spec.imageRendering = 1;  // Alt-text placeholder: skip extraction/decode during the recovery build.
+  }
+  return spec;
+}

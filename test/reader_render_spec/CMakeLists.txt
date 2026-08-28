@@ -1,0 +1,4 @@
+add_executable(ReaderRenderSpecTest ReaderRenderSpecTest.cpp)
+target_link_libraries(ReaderRenderSpecTest PRIVATE GTest::gtest_main crosspoint_test_common)
+target_include_directories(ReaderRenderSpecTest PRIVATE ${REPO_ROOT}/lib/Epub)
+gtest_discover_tests(ReaderRenderSpecTest)

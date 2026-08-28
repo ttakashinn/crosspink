@@ -18,9 +18,11 @@ Mỗi lần chạy là một process riêng để settings, global state và cac
 - `x3-default`: portrait `528 × 792`, cùng render settings để khóa khác biệt pagination do viewport.
 - `x4-no-text-aa`: portrait `480 × 800`, text AA tắt; ảnh vẫn đi qua grayscale plane.
 - `x4-sd-font`: portrait `480 × 800`, dùng fixture `.cpfont` v4 `CrossPointTest` có đủ 4 style và Latin mở rộng/combining marks cho tiếng Việt.
+- `x4-safe-fallback`: portrait `480 × 800`, fault-injection buộc lần dựng Standard báo thiếu bộ nhớ để kiểm tra retry Safe và namespace cache riêng.
 - `smoke`: 3 checkpoint tiếng Việt, bảng/danh sách và ảnh trên X4.
 - `full`: 15 checkpoint trên 3 profile; checkpoint stress chạy cả cold và warm, tổng cộng 48 case. `table-continuation` khóa trang ngay sau anchor bảng; 5 checkpoint ảnh bổ sung khóa từng đường PNG alpha, line art, JPEG/ảnh rộng, ảnh cao và chuyển ảnh → text.
 - `font`: 3 checkpoint trên profile SD font; checkpoint stress chạy cả cold và warm, tổng cộng 4 case. Fixture được chép vào `/.fonts/CrossPointTest/` trong SD root tạm để đi qua đúng loader và cache font của firmware.
+- `safe`: checkpoint stress cold/warm, tổng cộng 2 case. Log phải có lần Standard thất bại có phân loại, lần Safe thành công; warm run phải nạp được cache `.safe.bin` thay vì dựng lại.
 
 ## Review regression
 
@@ -29,6 +31,7 @@ Chạy:
 ```sh
 .venv/bin/python scripts/render_lab.py verify --suite smoke
 .venv/bin/python scripts/render_lab.py verify --suite font
+.venv/bin/python scripts/render_lab.py verify --suite safe
 ```
 
 Khi pixel khác, output thực tế và log nằm dưới `build/render-lab/actual/`. Nếu Pillow có sẵn, harness sinh thêm `expected.png`, `actual.png` và `diff.png`. Không chấp nhận golden chỉ để làm CI xanh; trước tiên phải xác định thay đổi đến từ parser, render spec, font, decoder hay viewport.

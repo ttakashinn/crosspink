@@ -5,6 +5,8 @@
 #include <Memory.h>
 #include <Serialization.h>
 
+#include <cstdlib>
+
 #include "Epub/css/CssParser.h"
 #include "Page.h"
 #include "hyphenation/Hyphenator.h"
@@ -44,7 +46,8 @@ namespace {
 // v41: Simple HTML table rows are laid out as positioned columns instead of
 //      flattened paragraphs with synthetic row/cell labels.
 // v42: Two-part descendant selectors and page-break-before/after change layout.
-constexpr uint8_t SECTION_FILE_VERSION = 42;
+// v43: Cache header records the automatic EPUB render mode.
+constexpr uint8_t SECTION_FILE_VERSION = 43;
 // Written into the version field while a build is in progress; patched to
 // SECTION_FILE_VERSION only when the build is finalized. An abandoned /
 // crash-interrupted .bin therefore carries version 0, which loadSectionFile rejects
@@ -64,8 +67,8 @@ constexpr uint8_t SECTION_FILE_INCOMPLETE_VERSION = 0;
 constexpr uint8_t SECTION_FILE_PARTIAL_VERSION = 0xFE - (SECTION_FILE_VERSION - 28);
 constexpr uint32_t HEADER_SIZE = sizeof(uint8_t) + sizeof(int) + sizeof(float) + sizeof(bool) + sizeof(uint8_t) +
                                  sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(bool) + sizeof(bool) +
-                                 sizeof(uint8_t) + sizeof(bool) + sizeof(uint32_t) + sizeof(uint32_t) +
-                                 sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t);
+                                 sizeof(uint8_t) + sizeof(bool) + sizeof(uint8_t) + sizeof(uint32_t) +
+                                 sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t);
 }  // namespace
 
 // Out-of-line so the unique_ptr<ChapterHtmlSlimParser> in BuildContext can be
@@ -74,7 +77,12 @@ Section::Section(const std::shared_ptr<Epub>& epub, const int spineIndex, GfxRen
     : epub(epub),
       spineIndex(spineIndex),
       renderer(renderer),
-      filePath(epub->getCachePath() + "/sections/" + std::to_string(spineIndex) + ".bin") {}
+      filePathBase(epub->getCachePath() + "/sections/" + std::to_string(spineIndex)),
+      filePath(filePathBase + ".bin") {}
+
+void Section::selectSectionFile(const ReaderRenderSpec& spec) {
+  filePath = filePathBase + (spec.renderMode == EpubRenderMode::Safe ? ".safe.bin" : ".bin");
+}
 
 // Suspend any in-progress build so every section.reset() / navigation / sleep path
 // persists the pages already laid out as a partial .bin instead of discarding them
@@ -112,8 +120,9 @@ void Section::writeSectionFileHeader(const ReaderRenderSpec& spec) {
                                    sizeof(spec.extraParagraphSpacing) + sizeof(spec.paragraphAlignment) +
                                    sizeof(spec.viewportWidth) + sizeof(spec.viewportHeight) + sizeof(pageCount) +
                                    sizeof(spec.hyphenationEnabled) + sizeof(spec.embeddedStyle) +
-                                   sizeof(spec.imageRendering) + sizeof(spec.focusReadingEnabled) + sizeof(uint32_t) +
-                                   sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t),
+                                   sizeof(spec.imageRendering) + sizeof(spec.focusReadingEnabled) + sizeof(uint8_t) +
+                                   sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t) +
+                                   sizeof(uint32_t),
                 "Header size mismatch");
   // Written as the incomplete sentinel; finalizeBuild() patches it to
   // SECTION_FILE_VERSION as the last step, committing the file.
@@ -128,6 +137,7 @@ void Section::writeSectionFileHeader(const ReaderRenderSpec& spec) {
   serialization::writePod(file, spec.embeddedStyle);
   serialization::writePod(file, spec.imageRendering);
   serialization::writePod(file, spec.focusReadingEnabled);
+  serialization::writePod(file, static_cast<uint8_t>(spec.renderMode));
   serialization::writePod(file, pageCount);  // Placeholder for page count (will be initially 0, patched later)
   serialization::writePod(file, static_cast<uint32_t>(0));  // Placeholder for LUT offset (patched later)
   serialization::writePod(file, static_cast<uint32_t>(0));  // Placeholder for anchor map offset (patched later)
@@ -137,6 +147,7 @@ void Section::writeSectionFileHeader(const ReaderRenderSpec& spec) {
 }
 
 bool Section::loadSectionFile(const ReaderRenderSpec& spec) {
+  selectSectionFile(spec);
   if (!Storage.openFileForRead("SCT", filePath, file)) {
     return false;
   }
@@ -164,6 +175,7 @@ bool Section::loadSectionFile(const ReaderRenderSpec& spec) {
     bool fileEmbeddedStyle;
     uint8_t fileImageRendering;
     bool fileFocusReadingEnabled;
+    uint8_t fileRenderMode;
     serialization::readPod(file, fileFontId);
     serialization::readPod(file, fileLineCompression);
     serialization::readPod(file, fileExtraParagraphSpacing);
@@ -174,12 +186,14 @@ bool Section::loadSectionFile(const ReaderRenderSpec& spec) {
     serialization::readPod(file, fileEmbeddedStyle);
     serialization::readPod(file, fileImageRendering);
     serialization::readPod(file, fileFocusReadingEnabled);
+    serialization::readPod(file, fileRenderMode);
 
     if (spec.fontId != fileFontId || spec.lineCompression != fileLineCompression ||
         spec.extraParagraphSpacing != fileExtraParagraphSpacing || spec.paragraphAlignment != fileParagraphAlignment ||
         spec.viewportWidth != fileViewportWidth || spec.viewportHeight != fileViewportHeight ||
         spec.hyphenationEnabled != fileHyphenationEnabled || spec.embeddedStyle != fileEmbeddedStyle ||
-        spec.imageRendering != fileImageRendering || spec.focusReadingEnabled != fileFocusReadingEnabled) {
+        spec.imageRendering != fileImageRendering || spec.focusReadingEnabled != fileFocusReadingEnabled ||
+        static_cast<uint8_t>(spec.renderMode) != fileRenderMode) {
       file.close();
       LOG_ERR("SCT", "Deserialization failed: Parameters do not match");
       clearCache();
@@ -258,10 +272,21 @@ bool Section::startBuild(const ReaderRenderSpec& spec, const std::function<void(
     return false;
   }
   buildComplete_ = false;
+  lastBuildFailedLowMemory_ = false;
   builtPageCount_ = 0;
+  selectSectionFile(spec);
   // Pages from a loaded partial stay readable (from filePath) while this build writes
   // to the tmp .bin, so availability never drops below the partial's watermark.
   pageCount = partial_ ? partialPageCount_ : 0;
+
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+  const char* forceLowMemory = std::getenv("CROSSPOINT_RENDER_LAB_FORCE_BUILD_LOW_MEMORY");
+  if (spec.renderMode == EpubRenderMode::Standard && forceLowMemory && forceLowMemory[0] == '1') {
+    lastBuildFailedLowMemory_ = true;
+    LOG_ERR("SCT", "Render-lab fault injection: standard section build reports low memory");
+    return false;
+  }
+#endif
 
   // Remove a stale tmp .bin from a crash-interrupted build; this build recreates it.
   {
@@ -354,6 +379,7 @@ bool Section::startBuild(const ReaderRenderSpec& spec, const std::function<void(
 
   auto ctx = makeUniqueNoThrow<BuildContext>();
   if (!ctx) {
+    lastBuildFailedLowMemory_ = true;
     LOG_ERR("SCT", "OOM: BuildContext");
     file.close();
     Storage.remove(binTmpPath().c_str());
@@ -377,6 +403,7 @@ bool Section::startBuild(const ReaderRenderSpec& spec, const std::function<void(
     if (ctx->cssParser) {
       const CssParser::CacheLoadResult cacheResult = ctx->cssParser->loadFromCache();
       if (cacheResult == CssParser::CacheLoadResult::LowMemory) {
+        lastBuildFailedLowMemory_ = true;
         LOG_ERR("SCT", "Insufficient heap to hydrate CSS; section build deferred");
         ctx->cssParser->clear();
         file.close();
@@ -420,6 +447,7 @@ bool Section::startBuild(const ReaderRenderSpec& spec, const std::function<void(
       spec.embeddedStyle, ctxPtr->contentBase, ctxPtr->imageBasePath, spec.imageRendering, std::move(tocAnchors),
       popupFn, ctxPtr->cssParser);
   if (!ctx->parser) {
+    lastBuildFailedLowMemory_ = true;
     LOG_ERR("SCT", "OOM: ChapterHtmlSlimParser");
     if (ctx->cssParser) ctx->cssParser->clear();
     file.close();
@@ -432,6 +460,7 @@ bool Section::startBuild(const ReaderRenderSpec& spec, const std::function<void(
   build_ = std::move(ctx);
 
   if (!build_->parser->beginParse()) {
+    lastBuildFailedLowMemory_ = build_->parser->failedForLowMemory();
     LOG_ERR("SCT", "Failed to begin parse");
     abandonBuild();
     return false;
@@ -452,6 +481,7 @@ bool Section::buildSomeMore(const int maxPages) {
   for (;;) {
     const auto status = build_->parser->parseStep();
     if (status == ChapterHtmlSlimParser::ParseStatus::Error) {
+      lastBuildFailedLowMemory_ = build_->parser->failedForLowMemory();
       LOG_ERR("SCT", "Parse error during incremental build");
       abandonBuild();
       return false;

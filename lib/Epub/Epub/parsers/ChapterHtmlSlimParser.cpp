@@ -2033,6 +2033,7 @@ void XMLCALL ChapterHtmlSlimParser::endElement(void* userData, const XML_Char* n
 ChapterHtmlSlimParser::~ChapterHtmlSlimParser() { abortParse(); }
 
 bool ChapterHtmlSlimParser::beginParse() {
+  lowMemoryFailure_ = false;
   htmlEnded_ = false;
   cssAncestorMasks.fill(0);
   pageBreakAfterCount = 0;
@@ -2066,6 +2067,7 @@ bool ChapterHtmlSlimParser::beginParse() {
 
   xmlParser_ = XML_ParserCreate(nullptr);
   if (!xmlParser_) {
+    lowMemoryFailure_ = true;
     LOG_ERR("EHP", "Couldn't allocate memory for parser");
     return false;
   }
@@ -2096,6 +2098,7 @@ bool ChapterHtmlSlimParser::beginParse() {
 ChapterHtmlSlimParser::ParseStatus ChapterHtmlSlimParser::parseStep() {
   void* const buf = XML_GetBuffer(xmlParser_, PARSE_BUFFER_SIZE);
   if (!buf) {
+    lowMemoryFailure_ = true;
     LOG_ERR("EHP", "Couldn't allocate memory for buffer");
     return ParseStatus::Error;
   }
@@ -2110,6 +2113,9 @@ ChapterHtmlSlimParser::ParseStatus ChapterHtmlSlimParser::parseStep() {
   const int done = parseFile_.available() == 0;
 
   if (XML_ParseBuffer(xmlParser_, static_cast<int>(len), done) == XML_STATUS_ERROR) {
+    if (XML_GetErrorCode(xmlParser_) == XML_ERROR_NO_MEMORY) {
+      lowMemoryFailure_ = true;
+    }
     if (htmlEnded_) {
       LOG_DBG("EHP", "Ignoring trailing data after </html>: %s", XML_ErrorString(XML_GetErrorCode(xmlParser_)));
       return ParseStatus::Done;

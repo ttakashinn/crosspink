@@ -297,6 +297,39 @@ bool EpubReaderActivity::buildTickHeapGate() {
   return !buildHeapPaused;
 }
 
+ReaderRenderSpec EpubReaderActivity::activeReaderRenderSpec(const uint16_t viewportWidth,
+                                                            const uint16_t viewportHeight) const {
+  return applyEpubRenderMode(SETTINGS.readerRenderSpec(viewportWidth, viewportHeight), activeRenderMode);
+}
+
+bool EpubReaderActivity::retrySectionInSafeMode() {
+  if (!section || activeRenderMode == EpubRenderMode::Safe || !section->lastBuildFailedLowMemory()) {
+    return false;
+  }
+
+  if (section->currentPage >= 0 && section->currentPage < section->pageCount) {
+    rememberCurrentContentOffset();
+    cachedSpineIndex = currentSpineIndex;
+    cachedChapterTotalPageCount = section->estimatedTotalPages();
+    nextPageNumber = section->currentPage;
+  } else if (currentPageVisibleOffset.has_value()) {
+    // A parser OOM abandons the in-progress section before this retry helper
+    // runs. Keep the last rendered content offset so re-pagination in Safe
+    // mode returns to the same text instead of falling back to page 0.
+    cachedVisibleTextOffset = currentPageVisibleOffset;
+    cachedSpineIndex = currentSpineIndex;
+    cachedChapterTotalPageCount = std::max(lastSavedPageCount, 0);
+    nextPageNumber = std::max(section->currentPage, 0);
+  }
+  section.reset();
+  activeRenderMode = EpubRenderMode::Safe;
+  partialRebuildStartFailed = false;
+  buildHeapPaused = false;
+  LOG_ERR("ERS", "Section build ran out of memory; retrying in safe mode (embedded CSS and images disabled)");
+  requestUpdate();
+  return true;
+}
+
 void EpubReaderActivity::showBuildPopup(GfxRenderer& renderer, int& pagesUntilFullRefresh) {
   if (!buildPopupPending || !renderer.hasFrameBuffer()) return;
   GUI.drawPopup(renderer, tr(STR_INDEXING));
@@ -370,8 +403,9 @@ void EpubReaderActivity::loop() {
       !partialRebuildStartFailed &&
       section->currentPage + PARTIAL_REBUILD_START_MARGIN >= static_cast<int>(section->pageCount)) {
     RenderLock lock;
-    const ReaderRenderSpec buildSpec = SETTINGS.readerRenderSpec(buildViewportWidth, buildViewportHeight);
+    const ReaderRenderSpec buildSpec = activeReaderRenderSpec(buildViewportWidth, buildViewportHeight);
     if (!section->startBuild(buildSpec)) {
+      if (retrySectionInSafeMode()) return;
       partialRebuildStartFailed = true;
       LOG_ERR("ERS", "Failed to start deferred partial extension build");
     } else {
@@ -387,6 +421,7 @@ void EpubReaderActivity::loop() {
     if (section->isBuilding() && buildTickHeapGate()) {
       if (!section->buildSomeMore(BACKGROUND_BUILD_PAGES_PER_TICK)) {
         LOG_ERR("ERS", "Background section build failed");
+        if (retrySectionInSafeMode()) return;
         section.reset();
         requestUpdate();
       } else if (section->isBuildComplete() && applyDeferredReposition()) {
@@ -1129,7 +1164,7 @@ void EpubReaderActivity::renderBook() {
   buildViewportWidth = viewportWidth;
   buildViewportHeight = viewportHeight;
 
-  const ReaderRenderSpec renderSpec = SETTINGS.readerRenderSpec(viewportWidth, viewportHeight);
+  const ReaderRenderSpec renderSpec = activeReaderRenderSpec(viewportWidth, viewportHeight);
 
   if (!section) {
     const auto filepath = epub->getSpineItem(currentSpineIndex).href;
@@ -1143,6 +1178,9 @@ void EpubReaderActivity::renderBook() {
       cachedVisibleTextOffset.reset();
     }
     const bool cacheComplete = cacheLoaded && !section->isPartial();
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+    render_lab::recordSectionCacheHit(cacheComplete);
+#endif
     const bool explicitOffsetJump = pendingOffsetJump.has_value();
     const std::optional<uint32_t> offsetJump =
         explicitOffsetJump ? pendingOffsetJump
@@ -1170,8 +1208,9 @@ void EpubReaderActivity::renderBook() {
         GfxRenderer::FrameBufferLoan loan(renderer);
         if (!section->createSectionFile(renderSpec, popupFn)) {
           LOG_ERR("ERS", "Failed to persist page data to SD");
-          section.reset();
           loan.end();
+          if (retrySectionInSafeMode()) return;
+          section.reset();
           showBuildError();
           return;
         }
@@ -1210,8 +1249,9 @@ void EpubReaderActivity::renderBook() {
           }
           if (!started) {
             LOG_ERR("ERS", "Failed to start section build");
-            section.reset();
             buildPopupPending = false;
+            if (retrySectionInSafeMode()) return;
+            section.reset();
             showBuildError();
             return;
           }
@@ -1224,8 +1264,9 @@ void EpubReaderActivity::renderBook() {
             }
             if (!section->buildSomeMore(BUILD_PAGES_PER_CHUNK)) {
               LOG_ERR("ERS", "Failed during incremental section build");
-              section.reset();
               buildPopupPending = false;
+              if (retrySectionInSafeMode()) return;
+              section.reset();
               showBuildError();
               return;
             }
@@ -1288,6 +1329,7 @@ void EpubReaderActivity::renderBook() {
   while (section->isPartial() && section->currentPage >= static_cast<int>(section->pageCount)) {
     if (!section->isBuilding() && !section->startBuild(renderSpec)) {
       LOG_ERR("ERS", "Failed to start partial extension build");
+      if (retrySectionInSafeMode()) return;
       section.reset();
       showBuildError();
       return;
@@ -1295,6 +1337,7 @@ void EpubReaderActivity::renderBook() {
     while (!section->isBuildComplete() && section->currentPage >= static_cast<int>(section->pageCount)) {
       if (!section->buildSomeMore(BUILD_PAGES_PER_CHUNK)) {
         LOG_ERR("ERS", "Failed during incremental section build");
+        if (retrySectionInSafeMode()) return;
         section.reset();
         showBuildError();
         return;
@@ -1305,6 +1348,7 @@ void EpubReaderActivity::renderBook() {
     while (!section->isBuildComplete() && section->currentPage >= static_cast<int>(section->pageCount)) {
       if (!section->buildSomeMore(BUILD_PAGES_PER_CHUNK)) {
         LOG_ERR("ERS", "Failed during incremental section build");
+        if (retrySectionInSafeMode()) return;
         section.reset();
         showBuildError();
         return;
@@ -1379,7 +1423,7 @@ void EpubReaderActivity::renderBook() {
 #if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
   if (render_lab::enabled()) {
     render_lab::complete(renderer, currentSpineIndex, section->currentPage, section->estimatedTotalPages(),
-                         currentPageVisibleOffset.value_or(0));
+                         currentPageVisibleOffset.value_or(0), activeRenderMode);
   }
 #endif
 

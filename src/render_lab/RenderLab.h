@@ -6,6 +6,7 @@
 
 class CrossPointSettings;
 class GfxRenderer;
+enum class EpubRenderMode : uint8_t;
 
 namespace render_lab {
 
@@ -17,6 +18,7 @@ bool requiresFullBuild();
 
 void configureSettings(CrossPointSettings& settings);
 void recordAnchorResolution(const char* anchor, bool resolved);
+void recordSectionCacheHit(bool hit);
 void recordTableStarted();
 void recordTableRowStarted(uint16_t pageIndex);
 void recordTableCellStarted();
@@ -30,7 +32,7 @@ void captureGrayscalePlaneStrip(bool lsbPlane, const uint8_t* rows, uint16_t ySt
 void recordTimings(unsigned long prewarmMs, unsigned long bwRenderMs, unsigned long totalMs);
 
 [[noreturn]] void complete(const GfxRenderer& renderer, int spineIndex, int pageIndex, int pageCount,
-                           uint32_t visibleTextOffset);
+                           uint32_t visibleTextOffset, EpubRenderMode renderMode);
 
 }  // namespace render_lab
 

@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "CrossPointSettings.h"
+#include "Epub/EpubRenderMode.h"
 
 namespace {
 
@@ -27,6 +28,7 @@ struct State {
   bool configured = false;
   bool anchorResolved = false;
   bool anchorResolutionRecorded = false;
+  bool sectionCacheHit = false;
   bool lsbValid = false;
   bool msbValid = false;
   unsigned long prewarmMs = 0;
@@ -244,6 +246,10 @@ void recordAnchorResolution(const char*, const bool resolved) {
   state.anchorResolved = resolved;
 }
 
+void recordSectionCacheHit(const bool hit) {
+  if (enabled()) state.sectionCacheHit = hit;
+}
+
 void recordTableStarted() {
   if (!enabled() || !tableMetricsEnabled()) return;
   state.tableCount++;
@@ -338,7 +344,7 @@ void recordTimings(const unsigned long prewarmMs, const unsigned long bwRenderMs
 }
 
 [[noreturn]] void complete(const GfxRenderer& renderer, const int spineIndex, const int pageIndex, const int pageCount,
-                           const uint32_t visibleTextOffset) {
+                           const uint32_t visibleTextOffset, const EpubRenderMode renderMode) {
   if (!state.configured) failWithResult("render lab settings were not configured");
   if (!state.anchorResolutionRecorded || !state.anchorResolved) failWithResult("checkpoint anchor was not resolved");
   if (state.bw.empty()) failWithResult("no logical framebuffer was captured");
@@ -369,7 +375,12 @@ void recordTimings(const unsigned long prewarmMs, const unsigned long bwRenderMs
   result["font_family"] = sdFontFamily[0] != '\0' ? sdFontFamily : "notoserif";
   result["font_point_size"] = envInt("CROSSPOINT_RENDER_LAB_FONT_SIZE", 14);
   result["text_antialiasing"] = envBool("CROSSPOINT_RENDER_LAB_TEXT_AA", true);
-  result["embedded_styles"] = envBool("CROSSPOINT_RENDER_LAB_EMBEDDED_STYLES", true);
+  result["embedded_styles"] =
+      renderMode == EpubRenderMode::Safe ? false : envBool("CROSSPOINT_RENDER_LAB_EMBEDDED_STYLES", true);
+  if (renderMode == EpubRenderMode::Safe) result["render_mode"] = epubRenderModeName(renderMode);
+  if (envBool("CROSSPOINT_RENDER_LAB_FORCE_BUILD_LOW_MEMORY", false)) {
+    result["section_cache_hit"] = state.sectionCacheHit;
+  }
   result["grayscale_lsb_captured"] = state.lsbValid;
   result["grayscale_msb_captured"] = state.msbValid;
   result["prewarm_ms"] = state.prewarmMs;

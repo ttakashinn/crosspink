@@ -327,6 +327,23 @@
       "screen_margin": 5,
       "sd_font_family": "CrossPointTest",
       "sd_font_fixture": "test/fonts/CrossPointTest_14.cpfont"
+    },
+    {
+      "id": "x4-safe-fallback",
+      "environment": "simulator_x4",
+      "viewport": {
+        "width": 480,
+        "height": 800
+      },
+      "orientation": "portrait",
+      "text_antialiasing": true,
+      "embedded_styles": true,
+      "font_family": "notoserif",
+      "font_point_size": 14,
+      "line_spacing": "normal",
+      "paragraph_alignment": "justified",
+      "screen_margin": 5,
+      "force_build_low_memory": true
     }
   ],
   "suites": {
@@ -364,6 +381,20 @@
       "checkpoints": [
         "vi-nfc-nfd",
         "typography",
+        "stress-cold-warm"
+      ],
+      "cache_states": [
+        "cold"
+      ],
+      "warm_cache_checkpoints": [
+        "stress-cold-warm"
+      ]
+    },
+    "safe": {
+      "profiles": [
+        "x4-safe-fallback"
+      ],
+      "checkpoints": [
         "stress-cold-warm"
       ],
       "cache_states": [

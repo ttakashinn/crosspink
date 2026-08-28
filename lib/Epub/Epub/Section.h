@@ -17,10 +17,12 @@ class Section {
   std::shared_ptr<Epub> epub;
   const int spineIndex;
   GfxRenderer& renderer;
+  std::string filePathBase;
   std::string filePath;
   HalFile file;
 
   void writeSectionFileHeader(const ReaderRenderSpec& spec);
+  void selectSectionFile(const ReaderRenderSpec& spec);
   uint32_t onPageComplete(std::unique_ptr<Page> page);
 
   // Page-offset table entry, kept in RAM while an incremental build is running so
@@ -55,6 +57,7 @@ class Section {
   };
   std::unique_ptr<BuildContext> build_;
   bool buildComplete_ = false;
+  bool lastBuildFailedLowMemory_ = false;
   // Pages laid out by the active build (== build_->lut.size()). Distinct from pageCount,
   // which is the pages *available to read* and also counts a loaded partial file's pages.
   uint16_t builtPageCount_ = 0;
@@ -100,6 +103,7 @@ class Section {
   bool buildSomeMore(int maxPages);
   bool isBuilding() const { return static_cast<bool>(build_); }
   bool isBuildComplete() const { return buildComplete_; }
+  bool lastBuildFailedLowMemory() const { return lastBuildFailedLowMemory_; }
   // Best-known total page count: the exact pageCount once finalized, or a smoothed byte-based
   // estimate (pages so far scaled by totalBytes/bytesConsumed, damped by an EMA) while a giant spine
   // is still building, so "page X of Y" / progress don't read off the small build watermark.
