@@ -178,10 +178,16 @@ Các ứng viên gồm simple black background/redaction (`e11e792`) và small c
 Mục tiêu: xử lý chất lượng ảnh sau khi layout đã ổn định.
 
 1. Tách pipeline scale, chuyển luminance, quantize/dither và waveform để benchmark độc lập.
-2. So sánh Atkinson hiện tại với ít nhất một baseline không error diffusion trên photo và line art; dither phải chạy sau khi scale về kích thước đích.
+2. So sánh thuật toán dither hiện tại với baseline giữ đúng 4 mức xám gốc trên photo và line art; dither phải chạy sau khi scale về kích thước đích.
 3. Kiểm tra polarity, alpha/background và vùng clipping bằng golden.
 4. Trên thiết bị, chụp chuỗi trang: text → image → text; đo thời gian và đánh giá ghosting sau refresh.
 5. Không nhận thuật toán mới nếu chỉ đẹp ở screenshot nhưng tăng ghosting hoặc làm page turn chậm rõ rệt trên panel.
+
+Trạng thái ngày 28/08/2026: phần mềm Giai đoạn 4 đã hoàn thành. Khảo sát mã đã sửa lại giả định ban đầu: pipeline hiện dùng Bayer 4 × 4 không trạng thái, không phải Atkinson; tọa độ dither là tọa độ đích sau scale. Thuật toán cũ cộng offset quanh ngưỡng nên đầu vào đúng mức panel 85/170 vẫn bị trộn sang mức lân cận và lệch độ sáng trung bình. Thuật toán mới neo chính xác 0/85/170/255, chỉ dùng mật độ Bayer cho phần dư giữa 2 mức kề nhau. 4 host test khóa mức xám gốc, độ sáng trung bình, tính đơn điệu và version cache; `.pxc` tăng lên format v2 để cache ảnh đã tạo trên thiết bị được xóa và giải mã lại.
+
+12 golden ảnh thay đổi có chủ đích trên X3, X4 và X4 không text AA; JPEG, PNG alpha, gradient và ảnh cao đã được review trực quan. Line art, image → text và toàn bộ layout/text không đổi. Full 48 case, font 4 case và Safe 2 case đều qua 2 lần chạy sau khi đổi format cache. Build `default` dùng RAM tĩnh 57.180 B, flash 5.647.509 B; `sticky` dùng RAM tĩnh 66.828 B, flash 5.435.779 B. So với cuối Giai đoạn 3, RAM tĩnh không tăng, flash tăng lần lượt 1.084 B và 840 B.
+
+Không đổi waveform trong giai đoạn phần mềm này. Reader hiện đã tách base refresh cho trang ảnh, tiled grayscale và cleanup; HAL/driver tự chọn chuỗi riêng cho X3, X4 và Paper Mono, trong đó Paper Mono ghép base với gray planes. Simulator không mô hình hóa LUT, ghosting hoặc độ đậm panel nên mọi chỉnh waveform khi chưa có ảnh/đo thiết bị sẽ là suy đoán. Gate text → image → text trên thiết bị vẫn phải được ghi rõ là chưa thực hiện khi phát hành.
 
 ## Chỉ số và gate đề xuất
 

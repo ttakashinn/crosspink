@@ -12,6 +12,8 @@ Render lab tạo baseline pixel và layout tất định cho pipeline EPUB của
 
 Mỗi lần chạy là một process riêng để settings, global state và cache không rò sang case khác. Case warm được prime bằng một lần cold trên cùng SD root, sau đó chạy lại bằng process mới.
 
+Ảnh JPEG/PNG được scale về kích thước đích rồi lượng tử hóa bằng Bayer 4 × 4 giữa 4 mức xám gốc. Golden ảnh khóa cả cold decode và đường `.pxc` v2; đổi quy tắc lượng tử hóa phải tăng version cache để thiết bị không dùng output cũ.
+
 ## Profiles và suite
 
 - `x4-default`: portrait `480 × 800`, Noto Serif 14 pt, text AA bật.

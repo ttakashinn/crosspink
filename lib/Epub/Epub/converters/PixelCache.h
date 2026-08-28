@@ -8,6 +8,8 @@
 #include <cstring>
 #include <string>
 
+#include "PixelCacheFormat.h"
+
 // Streaming cache writer for 2-bit pixels (4 levels). Packs 4 pixels per byte,
 // MSB first.
 //
@@ -104,9 +106,13 @@ struct PixelCache {
     }
     cachePathStr = cachePath;
 
-    uint16_t w16 = (uint16_t)w;
-    uint16_t h16 = (uint16_t)h;
-    if (file.write(&w16, 2) != 2 || file.write(&h16, 2) != 2) {
+    const uint16_t magic = pixel_cache_format::MAGIC;
+    const uint8_t version = pixel_cache_format::VERSION;
+    const uint16_t w16 = (uint16_t)w;
+    const uint16_t h16 = (uint16_t)h;
+    if (file.write(&magic, sizeof(magic)) != sizeof(magic) ||
+        file.write(&version, sizeof(version)) != sizeof(version) || file.write(&w16, sizeof(w16)) != sizeof(w16) ||
+        file.write(&h16, sizeof(h16)) != sizeof(h16)) {
       LOG_ERR("IMG", "Failed to write cache header: %s", cachePath.c_str());
       abort();
       return false;
@@ -157,8 +163,8 @@ struct PixelCache {
       }
     }
     file.close();
-    LOG_DBG("IMG", "Cache written: %s (%dx%d, %d bytes)", cachePathStr.c_str(), width, height,
-            4 + bytesPerRow * height);
+    LOG_DBG("IMG", "Cache written: %s (%dx%d, %u bytes)", cachePathStr.c_str(), width, height,
+            static_cast<unsigned>(pixel_cache_format::HEADER_SIZE + bytesPerRow * height));
     ok = false;  // file handed off; nothing left to clean up
     return true;
   }
