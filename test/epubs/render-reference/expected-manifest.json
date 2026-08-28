@@ -64,11 +64,63 @@
     {
       "id": "tables-lists",
       "href": "text/05-bang-danh-sach.xhtml#wide-table",
+      "full_build": true,
+      "structural_expectations": {
+        "x4-default": {
+          "table_layout": {
+            "tables": 1,
+            "rows": 4,
+            "grid_rows": 0,
+            "stacked_rows": 4,
+            "max_columns": 4,
+            "wrapped_cells": 0,
+            "max_cell_lines": 0,
+            "page_split_rows": 1,
+            "page_splits": 1
+          }
+        },
+        "x3-default": {
+          "table_layout": {
+            "tables": 1,
+            "rows": 4,
+            "grid_rows": 4,
+            "stacked_rows": 0,
+            "max_columns": 4,
+            "wrapped_cells": 7,
+            "max_cell_lines": 13,
+            "page_split_rows": 2,
+            "page_splits": 2
+          }
+        },
+        "x4-no-text-aa": {
+          "table_layout": {
+            "tables": 1,
+            "rows": 4,
+            "grid_rows": 0,
+            "stacked_rows": 4,
+            "max_columns": 4,
+            "wrapped_cells": 0,
+            "max_cell_lines": 0,
+            "page_split_rows": 1,
+            "page_splits": 1
+          }
+        }
+      },
       "covers": [
         "table column layout",
         "cell wrapping",
         "nested lists",
         "narrow viewport overflow"
+      ]
+    },
+    {
+      "id": "table-continuation",
+      "href": "text/05-bang-danh-sach.xhtml#wide-table",
+      "page_offset": 1,
+      "full_build": true,
+      "covers": [
+        "table page split",
+        "table reading order after split"
       ]
     },
     {

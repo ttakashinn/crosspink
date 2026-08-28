@@ -12,9 +12,15 @@ namespace render_lab {
 bool enabled();
 const char* bookPath();
 const char* targetHref();
+int targetPageOffset();
+bool requiresFullBuild();
 
 void configureSettings(CrossPointSettings& settings);
 void recordAnchorResolution(const char* anchor, bool resolved);
+void recordTableStarted();
+void recordTableRowStarted(uint16_t pageIndex);
+void recordTableCellStarted();
+void recordTableRowFinished(bool gridLayout, uint16_t wrappedCells, uint16_t maxCellLines, uint16_t pageIndexAfterRow);
 void beginFrame(const GfxRenderer& renderer);
 void captureGrayscalePlaneStrip(bool lsbPlane, const uint8_t* rows, uint16_t yStart, uint16_t numRows,
                                 uint16_t rowBytes);

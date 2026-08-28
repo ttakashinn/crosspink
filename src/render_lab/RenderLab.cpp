@@ -38,6 +38,18 @@ struct State {
   std::vector<uint8_t> bw;
   std::vector<uint8_t> lsb;
   std::vector<uint8_t> msb;
+  uint16_t tableCount = 0;
+  uint16_t tableRowCount = 0;
+  uint16_t tableGridRowCount = 0;
+  uint16_t tableStackedRowCount = 0;
+  uint16_t tableMaxColumns = 0;
+  uint16_t tableWrappedCellCount = 0;
+  uint16_t tableMaxCellLines = 0;
+  uint16_t tablePageSplitRows = 0;
+  uint16_t tablePageSplitCount = 0;
+  uint16_t currentTableRowCells = 0;
+  uint16_t currentTableRowStartPage = 0;
+  bool currentTableRowActive = false;
 };
 
 State state;
@@ -52,6 +64,8 @@ bool envBool(const char* name, const bool fallback) {
   if (!value || value[0] == '\0') return fallback;
   return std::strcmp(value, "1") == 0 || std::strcmp(value, "true") == 0 || std::strcmp(value, "yes") == 0;
 }
+
+bool tableMetricsEnabled() { return envBool("CROSSPOINT_RENDER_LAB_TABLE_METRICS", false); }
 
 int envInt(const char* name, const int fallback) {
   const char* value = std::getenv(name);
@@ -180,6 +194,10 @@ const char* bookPath() { return envOr("CROSSPOINT_RENDER_LAB_BOOK", "/books/rend
 
 const char* targetHref() { return envOr("CROSSPOINT_RENDER_LAB_HREF"); }
 
+int targetPageOffset() { return std::max(0, envInt("CROSSPOINT_RENDER_LAB_PAGE_OFFSET", 0)); }
+
+bool requiresFullBuild() { return envBool("CROSSPOINT_RENDER_LAB_FULL_BUILD", false); }
+
 void configureSettings(CrossPointSettings& settings) {
   if (!enabled()) return;
 
@@ -209,6 +227,45 @@ void recordAnchorResolution(const char*, const bool resolved) {
   if (!enabled()) return;
   state.anchorResolutionRecorded = true;
   state.anchorResolved = resolved;
+}
+
+void recordTableStarted() {
+  if (!enabled() || !tableMetricsEnabled()) return;
+  state.tableCount++;
+  state.currentTableRowActive = false;
+  state.currentTableRowCells = 0;
+}
+
+void recordTableRowStarted(const uint16_t pageIndex) {
+  if (!enabled() || !tableMetricsEnabled()) return;
+  state.currentTableRowActive = true;
+  state.currentTableRowCells = 0;
+  state.currentTableRowStartPage = pageIndex;
+}
+
+void recordTableCellStarted() {
+  if (!enabled() || !tableMetricsEnabled() || !state.currentTableRowActive) return;
+  state.currentTableRowCells++;
+}
+
+void recordTableRowFinished(const bool gridLayout, const uint16_t wrappedCells, const uint16_t maxCellLines,
+                            const uint16_t pageIndexAfterRow) {
+  if (!enabled() || !tableMetricsEnabled() || !state.currentTableRowActive || state.currentTableRowCells == 0) {
+    state.currentTableRowActive = false;
+    return;
+  }
+
+  state.tableRowCount++;
+  gridLayout ? state.tableGridRowCount++ : state.tableStackedRowCount++;
+  state.tableMaxColumns = std::max(state.tableMaxColumns, state.currentTableRowCells);
+  state.tableWrappedCellCount = static_cast<uint16_t>(state.tableWrappedCellCount + wrappedCells);
+  state.tableMaxCellLines = std::max(state.tableMaxCellLines, maxCellLines);
+  if (pageIndexAfterRow > state.currentTableRowStartPage) {
+    state.tablePageSplitRows++;
+    state.tablePageSplitCount = static_cast<uint16_t>(
+        state.tablePageSplitCount + static_cast<uint16_t>(pageIndexAfterRow - state.currentTableRowStartPage));
+  }
+  state.currentTableRowActive = false;
 }
 
 void beginFrame(const GfxRenderer& renderer) {
@@ -259,6 +316,7 @@ void recordTimings(const unsigned long prewarmMs, const unsigned long bwRenderMs
   result["profile"] = envOr("CROSSPOINT_RENDER_LAB_PROFILE");
   result["checkpoint"] = envOr("CROSSPOINT_RENDER_LAB_CHECKPOINT");
   result["href"] = targetHref();
+  if (targetPageOffset() > 0) result["page_offset"] = targetPageOffset();
   result["cache_state"] = envOr("CROSSPOINT_RENDER_LAB_CACHE_STATE", "cold");
   result["firmware_version"] = CROSSPOINT_VERSION;
   result["epub_sha256"] = envOr("CROSSPOINT_RENDER_LAB_EPUB_SHA256");
@@ -284,6 +342,18 @@ void recordTimings(const unsigned long prewarmMs, const unsigned long bwRenderMs
   result["reported_max_alloc_heap"] = ESP.getMaxAllocHeap();
   result["framebuffer_pbm"] = "framebuffer.pbm";
   result["framebuffer_pgm"] = "framebuffer.pgm";
+  if (state.tableCount > 0) {
+    JsonObject tableLayout = result["table_layout"].to<JsonObject>();
+    tableLayout["tables"] = state.tableCount;
+    tableLayout["rows"] = state.tableRowCount;
+    tableLayout["grid_rows"] = state.tableGridRowCount;
+    tableLayout["stacked_rows"] = state.tableStackedRowCount;
+    tableLayout["max_columns"] = state.tableMaxColumns;
+    tableLayout["wrapped_cells"] = state.tableWrappedCellCount;
+    tableLayout["max_cell_lines"] = state.tableMaxCellLines;
+    tableLayout["page_split_rows"] = state.tablePageSplitRows;
+    tableLayout["page_splits"] = state.tablePageSplitCount;
+  }
 
   if (!writeJsonResult(result)) failWithResult("failed to write result manifest");
   _exit(0);

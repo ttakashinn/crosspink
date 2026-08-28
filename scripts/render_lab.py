@@ -91,6 +91,15 @@ def load_and_validate_manifest() -> dict[str, Any]:
         checkpoint_ids.add(checkpoint["id"])
         if "#" not in checkpoint["href"]:
             raise RenderLabError(f"Checkpoint {checkpoint['id']} phải dùng href + anchor")
+        page_offset = checkpoint.get("page_offset", 0)
+        if not isinstance(page_offset, int) or isinstance(page_offset, bool) or page_offset < 0:
+            raise RenderLabError(f"Checkpoint {checkpoint['id']} có page_offset không hợp lệ")
+        if "full_build" in checkpoint and not isinstance(checkpoint["full_build"], bool):
+            raise RenderLabError(f"Checkpoint {checkpoint['id']} có full_build không hợp lệ")
+        if page_offset > 0 and not checkpoint.get("full_build", False):
+            raise RenderLabError(f"Checkpoint {checkpoint['id']} có page_offset phải bật full_build")
+        if checkpoint.get("structural_expectations") and not checkpoint.get("full_build", False):
+            raise RenderLabError(f"Checkpoint {checkpoint['id']} có structural expectation phải bật full_build")
 
     profile_ids: set[str] = set()
     required_profile_keys = (
@@ -121,6 +130,43 @@ def load_and_validate_manifest() -> dict[str, Any]:
                 f"Viewport {profile['id']} là {actual_viewport[0]}x{actual_viewport[1]}, "
                 f"phải là {expected_viewport[0]}x{expected_viewport[1]}"
             )
+
+    required_table_metrics = {
+        "tables",
+        "rows",
+        "grid_rows",
+        "stacked_rows",
+        "max_columns",
+        "wrapped_cells",
+        "max_cell_lines",
+        "page_split_rows",
+        "page_splits",
+    }
+    for checkpoint in manifest["checkpoints"]:
+        by_profile = checkpoint.get("structural_expectations", {})
+        if not isinstance(by_profile, dict):
+            raise RenderLabError(f"Checkpoint {checkpoint['id']} có structural_expectations không hợp lệ")
+        unknown_profiles = set(by_profile) - profile_ids
+        if unknown_profiles:
+            raise RenderLabError(
+                f"Checkpoint {checkpoint['id']} có structural profile không tồn tại: {sorted(unknown_profiles)}"
+            )
+        for profile_id, sections in by_profile.items():
+            if not isinstance(sections, dict):
+                raise RenderLabError(f"Structural expectation {checkpoint['id']}/{profile_id} phải là object")
+            if "table_layout" in sections:
+                table_metrics = sections["table_layout"]
+                if not isinstance(table_metrics, dict) or set(table_metrics) != required_table_metrics:
+                    raise RenderLabError(
+                        f"Structural table_layout {checkpoint['id']}/{profile_id} phải có đủ metric chuẩn"
+                    )
+                if any(
+                    not isinstance(value, int) or isinstance(value, bool) or value < 0
+                    for value in table_metrics.values()
+                ):
+                    raise RenderLabError(
+                        f"Structural table_layout {checkpoint['id']}/{profile_id} chỉ nhận số nguyên >= 0"
+                    )
 
     for suite_name, suite in manifest["suites"].items():
         require_keys(suite, ("profiles", "checkpoints", "cache_states"), f"suite {suite_name}")
@@ -212,6 +258,9 @@ def render_process(case: RenderCase, sd_root: Path, output_dir: Path, cache_stat
             "CROSSPOINT_RENDER_LAB_PROFILE": profile["id"],
             "CROSSPOINT_RENDER_LAB_CHECKPOINT": checkpoint["id"],
             "CROSSPOINT_RENDER_LAB_HREF": checkpoint["href"],
+            "CROSSPOINT_RENDER_LAB_PAGE_OFFSET": str(checkpoint.get("page_offset", 0)),
+            "CROSSPOINT_RENDER_LAB_FULL_BUILD": "1" if checkpoint.get("full_build", False) else "0",
+            "CROSSPOINT_RENDER_LAB_TABLE_METRICS": "1" if checkpoint.get("structural_expectations") else "0",
             "CROSSPOINT_RENDER_LAB_CACHE_STATE": cache_state,
             "CROSSPOINT_RENDER_LAB_EPUB_SHA256": sha256_file(EPUB_PATH),
             "CROSSPOINT_RENDER_LAB_TEXT_AA": "1" if profile["text_antialiasing"] else "0",
@@ -257,6 +306,23 @@ def render_process(case: RenderCase, sd_root: Path, output_dir: Path, cache_stat
             f"khác manifest {expected_viewport['width']}x{expected_viewport['height']}"
         )
     return result
+
+
+def assert_structural_expectations(case: RenderCase, result: dict[str, Any]) -> None:
+    by_profile = case.checkpoint.get("structural_expectations", {})
+    expected = by_profile.get(case.profile["id"])
+    if expected is None:
+        return
+    for section, expected_values in expected.items():
+        actual_values = result.get(section)
+        if not isinstance(actual_values, dict):
+            raise RenderLabError(f"{case.case_id}: thiếu structural result {section}")
+        for key, expected_value in expected_values.items():
+            actual_value = actual_values.get(key)
+            if actual_value != expected_value:
+                raise RenderLabError(
+                    f"{case.case_id}: {section}.{key}={actual_value!r}, phải là {expected_value!r}"
+                )
 
 
 def run_once(case: RenderCase, run_dir: Path) -> tuple[dict[str, Any], Path]:
@@ -335,6 +401,7 @@ def verify_suite(manifest: dict[str, Any], suite_name: str, accept: bool, runs: 
             for run_index in range(runs):
                 run_dir = case_root / f"run-{run_index + 1}"
                 result, actual_dir = run_once(case, run_dir)
+                assert_structural_expectations(case, result)
                 images = (
                     (actual_dir / "framebuffer.pbm").read_bytes(),
                     (actual_dir / "framebuffer.pgm").read_bytes(),

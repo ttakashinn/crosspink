@@ -2,8 +2,9 @@
   "schema_version": 1,
   "status": "ok",
   "profile": "x4-default",
-  "checkpoint": "tables-lists",
+  "checkpoint": "table-continuation",
   "href": "text/05-bang-danh-sach.xhtml#wide-table",
+  "page_offset": 1,
   "cache_state": "cold",
   "epub_sha256": "9a6eb22c70dd6238abf5089d7a486170d41185f04074051cbe12b6cdd7dc1f92",
   "orientation": "portrait",
@@ -12,9 +13,9 @@
   "physical_width": 800,
   "physical_height": 480,
   "spine_index": 5,
-  "page_index": 0,
+  "page_index": 1,
   "page_count": 3,
-  "visible_text_offset": 0,
+  "visible_text_offset": 192,
   "font_family": "notoserif",
   "font_point_size": 14,
   "text_antialiasing": true,
@@ -22,16 +23,5 @@
   "grayscale_lsb_captured": true,
   "grayscale_msb_captured": true,
   "framebuffer_pbm": "framebuffer.pbm",
-  "framebuffer_pgm": "framebuffer.pgm",
-  "table_layout": {
-    "tables": 1,
-    "rows": 4,
-    "grid_rows": 0,
-    "stacked_rows": 4,
-    "max_columns": 4,
-    "wrapped_cells": 0,
-    "max_cell_lines": 0,
-    "page_split_rows": 1,
-    "page_splits": 1
-  }
+  "framebuffer_pgm": "framebuffer.pgm"
 }

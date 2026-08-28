@@ -15,6 +15,9 @@
 #include <new>
 
 #include "../../../../src/fontIds.h"
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+#include "render_lab/RenderLab.h"
+#endif
 #include "Epub.h"
 #include "Epub/Page.h"
 #include "Epub/VisibleTextUtils.h"
@@ -535,6 +538,9 @@ void ChapterHtmlSlimParser::finishTableRow() {
     if (tableRowStacked) {
       addTableRowSeparator();
     }
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+    render_lab::recordTableRowFinished(false, 0, 0, static_cast<uint16_t>(completedPageCount));
+#endif
     tableRowStacked = false;
     return;
   }
@@ -550,6 +556,9 @@ void ChapterHtmlSlimParser::finishTableRow() {
       cellWidth < lineHeight * TABLE_MIN_CELL_WIDTH_LINE_HEIGHTS) {
     fallbackTableRowToStacked();
     addTableRowSeparator();
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+    render_lab::recordTableRowFinished(false, 0, 0, static_cast<uint16_t>(completedPageCount));
+#endif
     tableRowStacked = false;
     return;
   }
@@ -563,6 +572,7 @@ void ChapterHtmlSlimParser::finishTableRow() {
     tableLineVisibleOffsets.reserve(MAX_GRID_TABLE_CELL_WORDS * 2);
   }
   size_t maxLineCount = 0;
+  size_t wrappedCellCount = 0;
   const bool rowRtl = tableRowRtl;
 
   for (size_t column = 0; column < columnCount; ++column) {
@@ -580,6 +590,7 @@ void ChapterHtmlSlimParser::finishTableRow() {
           }
           tableLineVisibleOffsets[lineIndex] = std::min(tableLineVisibleOffsets[lineIndex], offset);
         });
+    if (lines.size() > 1) wrappedCellCount++;
     maxLineCount = std::max(maxLineCount, lines.size());
   }
   tableRowCells.clear();
@@ -648,6 +659,10 @@ void ChapterHtmlSlimParser::finishTableRow() {
   }
 
   addTableRowSeparator();
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+  render_lab::recordTableRowFinished(true, static_cast<uint16_t>(wrappedCellCount), static_cast<uint16_t>(maxLineCount),
+                                     static_cast<uint16_t>(completedPageCount));
+#endif
   tableRowStacked = false;
   clearLayoutLines();
 }
@@ -785,6 +800,9 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     self->tableCellTextBytes = 0;
     self->tableRowCells.clear();
     self->tableRowCells.reserve(MAX_GRID_TABLE_COLUMNS);
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+    render_lab::recordTableStarted();
+#endif
     self->depth += 1;
     return;
   }
@@ -796,6 +814,9 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       self->makePages();
     }
     self->currentTextBlock.reset();
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+    render_lab::recordTableRowStarted(static_cast<uint16_t>(self->completedPageCount));
+#endif
     self->tableRowStacked = self->tableRowsSpannedRemaining > 0;
     self->tableRowRtl = cssStyle.hasDirection() && cssStyle.direction == CssTextDirection::Rtl;
     if (self->tableRowsSpannedRemaining != UINT16_MAX && self->tableRowsSpannedRemaining > 0) {
@@ -849,6 +870,9 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       return;
     }
     self->insideTableCell = true;
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+    render_lab::recordTableCellStarted();
+#endif
     self->tableCellTextBytes = 0;
     self->wordsExtractedInBlock = 0;
     self->flushPendingAnchor();

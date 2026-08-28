@@ -1156,7 +1156,11 @@ void EpubReaderActivity::renderBook() {
         LOG_DBG("ERS", "Cache not found, building...");
       }
 
-      const bool needsFullBuild = pendingPercentJump;
+      const bool needsFullBuild = pendingPercentJump
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+                                  || (render_lab::enabled() && render_lab::requiresFullBuild())
+#endif
+          ;
       if (needsFullBuild) {
         GUI.drawPopup(renderer, tr(STR_INDEXING));
         pagesUntilFullRefresh = 1;
@@ -1259,6 +1263,11 @@ void EpubReaderActivity::renderBook() {
 #endif
       if (page) {
         section->currentPage = *page;
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+        if (render_lab::enabled()) {
+          section->currentPage += render_lab::targetPageOffset();
+        }
+#endif
         LOG_DBG("ERS", "Resolved anchor '%s' to page %d", pendingAnchor.c_str(), *page);
       }
       pendingAnchor.clear();

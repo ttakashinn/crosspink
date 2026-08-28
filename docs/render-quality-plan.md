@@ -29,14 +29,13 @@ Lý do chính: sau khi fetch ngày 28/08/2026, `vns-next` có 16 commit riêng v
 
 Vị trí nguồn: `src/activities/reader/EpubReaderActivity.cpp`, `lib/GfxRenderer/GfxRenderer.*`, `lib/Epub/Epub/converters/`, `lib/Epub/Epub/ReaderRenderSpec.h`.
 
-### Khoảng trống hiện tại
+### Khoảng trống còn lại
 
-- Repo chưa có env simulator và chưa có kiểm thử end-to-end tạo framebuffer/golden image tự động.
-- Các EPUB trong `test/epubs/` chủ yếu là fixture thủ công; host test chưa xác nhận pagination, CSS cascade, image placement và output pixel của cả trang.
+- Render lab đã khóa framebuffer X3/X4 trên host, nhưng chưa đối chiếu với ảnh panel thật; waveform, ghosting và độ đậm vẫn chưa có oracle phần cứng.
+- Golden hiện xác nhận pagination, CSS cascade, table, image placement và output pixel; benchmark heap/timing trên ESP32 và kiểm tra cache cũ vẫn chưa đầy đủ.
 - CSS parser trên `vns-next` chỉ hỗ trợ selector element, class, `element.class` và grouped selector; chưa hỗ trợ descendant selector.
-- Nhánh hiện tại chưa có table layout. Không nên lấy bản table cũ của CrossInk vì `upstream/develop` đã có triển khai mới hơn tại commit `da3d50c2`.
+- Table layout upstream đã được tích hợp và khóa regression theo viewport; X3 giữ grid 4 cột còn X4 480 px fallback sang stacked khi cell quá hẹp.
 - CrossInk có render mode theo sách và fallback khi thiếu RAM; `vns-next` chưa có cơ chế tương đương.
-- Flash của env `default` đang dùng 5.804.201 B/6.553.600 B trên nhánh tích hợp trước merge, theo build cục bộ ngày 28/08/2026. Vì vậy, thêm nhiều built-in font CrossInk trước khi lấy tối ưu font upstream là rủi ro rõ ràng.
 
 ### Baseline cục bộ đã đo
 
@@ -118,6 +117,8 @@ Mục tiêu: tận dụng phần đã được upstream giải quyết trước 
 5. Kiểm tra pipeline tiled grayscale của `vns-next` còn nguyên sau merge, nhất là trang image → text.
 
 Điều kiện hoàn thành: không có regression golden ngoài thay đổi đã duyệt; không tăng peak heap hoặc thời gian trang một cách không giải thích được.
+
+Trạng thái ngày 28/08/2026: mục 1 đã hoàn thành trên nhánh `codex/render-regression-phase-2`. Manifest khóa 4 hàng/4 cột của fixture, grid/stacked fallback, số cell wrap và page split theo từng profile. Checkpoint `table-continuation` thêm golden cho trang sau split; full suite tăng từ 30 lên 33 case.
 
 ### Giai đoạn 3 — Backport CrossInk chọn lọc
 

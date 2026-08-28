@@ -52,7 +52,7 @@ Build simulator và chạy smoke suite. Mỗi case chạy trong SD root riêng; 
 .venv/bin/python scripts/render_lab.py verify --suite smoke
 ```
 
-Suite đầy đủ chạy 30 case trên X4, X3 và X4 không AA. Golden chỉ được thay đổi sau khi review ảnh diff và truyền `--accept` rõ ràng:
+Suite đầy đủ chạy 33 case trên X4, X3 và X4 không AA. Checkpoint `table-continuation` dùng `page_offset: 1` để khóa trang tiếp nối của bảng. Checkpoint table chính còn kiểm tra cấu trúc hàng/cột, grid/stacked fallback, cell wrap và page split theo từng viewport. Golden chỉ được thay đổi sau khi review ảnh diff và truyền `--accept` rõ ràng:
 
 ```sh
 .venv/bin/python scripts/render_lab.py verify --suite full

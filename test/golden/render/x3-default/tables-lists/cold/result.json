@@ -22,5 +22,16 @@
   "grayscale_lsb_captured": true,
   "grayscale_msb_captured": true,
   "framebuffer_pbm": "framebuffer.pbm",
-  "framebuffer_pgm": "framebuffer.pgm"
+  "framebuffer_pgm": "framebuffer.pgm",
+  "table_layout": {
+    "tables": 1,
+    "rows": 4,
+    "grid_rows": 4,
+    "stacked_rows": 0,
+    "max_columns": 4,
+    "wrapped_cells": 7,
+    "max_cell_lines": 13,
+    "page_split_rows": 2,
+    "page_splits": 2
+  }
 }
