@@ -19,7 +19,9 @@
 #include "home/HomeActivity.h"
 #include "home/RecentBooksActivity.h"
 #include "network/CrossPointWebServerActivity.h"
+#if FREEINK_CAP_USB_MSC
 #include "network/UsbDriveActivity.h"
+#endif
 #include "reader/ReaderActivity.h"
 #include "settings/OpdsServerListActivity.h"
 #include "settings/SettingsActivity.h"

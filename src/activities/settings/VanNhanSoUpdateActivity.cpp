@@ -9,12 +9,14 @@
 #include <I18n.h>
 #include <Logging.h>
 #include <Memory.h>
+#include <Rtc.h>
 #include <WiFi.h>
 #include <mbedtls/sha256.h>
 
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <ctime>
 #include <iterator>
 
 #include "MappedInputManager.h"
@@ -48,6 +50,26 @@ constexpr size_t SHA256_HEX_LENGTH = 64;
 constexpr size_t PROFILE_MAX_LENGTH = 128;
 constexpr size_t REQUEST_URL_MAX_LENGTH = 384;
 constexpr size_t MANIFEST_MAX_LENGTH = 2048;
+
+#if defined(SIMULATOR)
+bool hostSystemDateTime(Rtc::DateTime& out) {
+  const std::time_t now = std::time(nullptr);
+  std::tm utcTime{};
+#if defined(_WIN32)
+  if (gmtime_s(&utcTime, &now) != 0) return false;
+#else
+  if (!gmtime_r(&now, &utcTime)) return false;
+#endif
+  out.year = static_cast<uint16_t>(utcTime.tm_year + 1900);
+  out.month = static_cast<uint8_t>(utcTime.tm_mon + 1);
+  out.day = static_cast<uint8_t>(utcTime.tm_mday);
+  out.hour = static_cast<uint8_t>(utcTime.tm_hour);
+  out.minute = static_cast<uint8_t>(utcTime.tm_min);
+  out.second = static_cast<uint8_t>(utcTime.tm_sec);
+  out.weekday = static_cast<uint8_t>(utcTime.tm_wday);
+  return true;
+}
+#endif
 
 const char* safeParam(const char* const* values, const size_t count, const uint8_t index) {
   return values[index < count ? index : 0];
@@ -378,6 +400,10 @@ bool VanNhanSoUpdateActivity::resolveCurrentDate(const bool allowNetworkSync) {
   Rtc::DateTime dateTime;
   bool haveDate = false;
 
+#if defined(SIMULATOR)
+  (void)allowNetworkSync;
+  haveDate = hostSystemDateTime(dateTime);
+#else
   if (halClock.isAvailable() && SETTINGS.clockHasBeenSynced) {
     haveDate = halClock.getDateTime(dateTime);
   }
@@ -396,6 +422,7 @@ bool VanNhanSoUpdateActivity::resolveCurrentDate(const bool allowNetworkSync) {
       haveDate = halClock.syncSystemTimeFromNTP(dateTime);
     }
   }
+#endif
 
   currentDateKey = 0;
   currentMinute = UINT16_MAX;
@@ -639,6 +666,13 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
   // The manifest is authoritative for the daily asset. It also lets X4
   // persist the data date after a full power loss, without waiting for NTP.
   currentDateKey = responseDateKey;
+#if defined(SIMULATOR)
+  if (haveServerTime) {
+    currentMinute = serverVietnamMinute;
+  } else {
+    LOG_ERR("VNS", "Missing or invalid HTTPS Date response header; daily cache timing may be unavailable");
+  }
+#else
   if (haveServerTime && halClock.setDateTimeUtc(serverDateTime)) {
     currentMinute = serverVietnamMinute;
     if (!SETTINGS.clockHasBeenSynced) {
@@ -648,6 +682,7 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
   } else if (!haveServerTime) {
     LOG_ERR("VNS", "Missing or invalid HTTPS Date response header; daily cache timing may be unavailable");
   }
+#endif
 
   state = INSTALLING;
   if (!automatic || pendingProfileRequired) requestUpdateAndWait();

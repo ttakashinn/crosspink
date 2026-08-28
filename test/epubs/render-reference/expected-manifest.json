@@ -4,10 +4,9 @@
   "title": "CrossPoint — Bộ tham chiếu render tiếng Việt",
   "primary_language": "vi",
   "format": "EPUB 3.0 reflowable with EPUB 2 NCX fallback",
-  "target_viewport": {
-    "width": 480,
-    "height": 800,
-    "orientation": "portrait"
+  "simulator": {
+    "repository": "https://github.com/crosspoint-reader/crosspoint-simulator.git",
+    "commit": "8323320dc0ee88207f753a0dd4d195da31520a50"
   },
   "checkpoints": [
     {
@@ -109,27 +108,83 @@
   ],
   "render_profiles": [
     {
-      "id": "x3-default",
-      "environment": "default",
+      "id": "x4-default",
+      "environment": "simulator_x4",
+      "viewport": {
+        "width": 480,
+        "height": 800
+      },
       "orientation": "portrait",
       "text_antialiasing": true,
-      "embedded_styles": true
+      "embedded_styles": true,
+      "font_family": "notoserif",
+      "font_point_size": 14,
+      "line_spacing": "normal",
+      "paragraph_alignment": "justified",
+      "screen_margin": 5
     },
     {
-      "id": "x3-no-text-aa",
-      "environment": "default",
+      "id": "x3-default",
+      "environment": "simulator_x3",
+      "viewport": {
+        "width": 528,
+        "height": 792
+      },
+      "orientation": "portrait",
+      "text_antialiasing": true,
+      "embedded_styles": true,
+      "font_family": "notoserif",
+      "font_point_size": 14,
+      "line_spacing": "normal",
+      "paragraph_alignment": "justified",
+      "screen_margin": 5
+    },
+    {
+      "id": "x4-no-text-aa",
+      "environment": "simulator_x4",
+      "viewport": {
+        "width": 480,
+        "height": 800
+      },
       "orientation": "portrait",
       "text_antialiasing": false,
-      "embedded_styles": true
-    },
-    {
-      "id": "sticky-default",
-      "environment": "sticky",
-      "orientation": "portrait",
-      "text_antialiasing": true,
-      "embedded_styles": true
+      "embedded_styles": true,
+      "font_family": "notoserif",
+      "font_point_size": 14,
+      "line_spacing": "normal",
+      "paragraph_alignment": "justified",
+      "screen_margin": 5
     }
   ],
+  "suites": {
+    "smoke": {
+      "profiles": [
+        "x4-default"
+      ],
+      "checkpoints": [
+        "vi-nfc-nfd",
+        "tables-lists",
+        "images"
+      ],
+      "cache_states": [
+        "cold"
+      ]
+    },
+    "full": {
+      "profiles": [
+        "x4-default",
+        "x3-default",
+        "x4-no-text-aa"
+      ],
+      "checkpoints": "all",
+      "cache_states": [
+        "cold"
+      ],
+      "warm_cache_checkpoints": [
+        "stress-cold-warm"
+      ]
+    }
+  },
   "measurement_requirements": [
     "firmware SHA",
     "EPUB SHA-256",

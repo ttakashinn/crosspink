@@ -199,6 +199,11 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
   for (int hop = 0; isRedirect(status) && hop < MAX_REDIRECTS; ++hop) {
     if (esp_http_client_set_redirection(client) != ESP_OK) break;
     if (requireHttps) {
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+      // The pinned host shim follows redirects but does not expose
+      // esp_http_client_get_url(). Render-lab traffic is local and this branch
+      // is never part of EPUB rendering; device builds retain the HTTPS check.
+#else
       // Only the scheme is needed. esp_http_client_get_url() truncates safely,
       // and GitHub's signed CDN redirects can exceed 900 bytes.
       char redirectedScheme[9];
@@ -208,6 +213,7 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
         esp_http_client_cleanup(client);
         return HttpDownloader::HTTP_ERROR;
       }
+#endif
     }
     if (sink.responseInfo) {
       sink.responseInfo->sha256.clear();

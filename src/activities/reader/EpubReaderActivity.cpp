@@ -44,6 +44,9 @@
 #include "util/BookmarkUtil.h"
 #include "util/ButtonNavigator.h"
 #include "util/ScreenshotUtil.h"
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+#include "render_lab/RenderLab.h"
+#endif
 
 namespace {
 // The X4 Pro carries the X4's panel but sits outside isXteinkDevice() (that
@@ -168,6 +171,15 @@ EpubReaderActivity::~EpubReaderActivity() {
     epub.reset();
   }
 }
+
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+void EpubReaderActivity::onEnter() {
+  ReaderActivity::onEnter();
+  if (render_lab::enabled() && render_lab::targetHref()[0] != '\0') {
+    navigateToHref(render_lab::targetHref());
+  }
+}
+#endif
 
 bool EpubReaderActivity::loadBook() {
   auto loadedEpub = makeUniqueNoThrow<Epub>(bookPath, "/.crosspoint");
@@ -1242,6 +1254,9 @@ void EpubReaderActivity::renderBook() {
 
     if (!pendingAnchor.empty()) {
       const auto page = section->findAnchor(pendingAnchor);
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+      render_lab::recordAnchorResolution(pendingAnchor.c_str(), page.has_value());
+#endif
       if (page) {
         section->currentPage = *page;
         LOG_DBG("ERS", "Resolved anchor '%s' to page %d", pendingAnchor.c_str(), *page);
@@ -1351,6 +1366,13 @@ void EpubReaderActivity::renderBook() {
     LOG_DBG("ERS", "Rendered page in %dms", millis() - start);
     lastRenderCompleteMs = millis();
   }
+
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+  if (render_lab::enabled()) {
+    render_lab::complete(renderer, currentSpineIndex, section->currentPage, section->estimatedTotalPages(),
+                         currentPageVisibleOffset.value_or(0));
+  }
+#endif
 
   if (currentSpineIndex != lastSavedSpineIndex || section->currentPage != lastSavedPage ||
       section->pageCount != lastSavedPageCount) {
@@ -1506,6 +1528,10 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   renderStatusBar();
   const auto tBwRender = millis();
 
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+  render_lab::beginFrame(renderer);
+#endif
+
   if (pageHasImages) {
     // Image pages use one base refresh before the grayscale pass. FAST leaves
     // the panel receptive to the gray waveform; pending cleanup still honors
@@ -1556,11 +1582,20 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
       const auto tWait = millis();
 
       renderer.writeGrayscalePlaneStrip(true, lsbPlaneBuf.get(), 0, gh);
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+      render_lab::captureGrayscalePlaneStrip(true, lsbPlaneBuf.get(), 0, gh, gwBytes);
+#endif
       if (msbPlaneBuf) {
         renderer.writeGrayscalePlaneStrip(false, msbPlaneBuf.get(), 0, gh);
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+        render_lab::captureGrayscalePlaneStrip(false, msbPlaneBuf.get(), 0, gh, gwBytes);
+#endif
       } else {
         renderPlaneToBuffer(false, lsbPlaneBuf.get());
         renderer.writeGrayscalePlaneStrip(false, lsbPlaneBuf.get(), 0, gh);
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+        render_lab::captureGrayscalePlaneStrip(false, lsbPlaneBuf.get(), 0, gh, gwBytes);
+#endif
       }
       const auto tGrayWrite = millis();
 
@@ -1599,6 +1634,9 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
           renderGrayscalePass();
           renderer.endStripTarget();
           renderer.writeGrayscalePlaneStrip(true, scratch.get(), y, rows);
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+          render_lab::captureGrayscalePlaneStrip(true, scratch.get(), y, rows, gwBytes);
+#endif
         }
         const auto tGrayLsb = millis();
 
@@ -1610,6 +1648,9 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
           renderGrayscalePass();
           renderer.endStripTarget();
           renderer.writeGrayscalePlaneStrip(false, scratch.get(), y, rows);
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+          render_lab::captureGrayscalePlaneStrip(false, scratch.get(), y, rows, gwBytes);
+#endif
         }
         const auto tGrayMsb = millis();
 
@@ -1632,6 +1673,9 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
     if (needsAnyGrayscale) {
       if (!renderer.storeBwBuffer()) {
         LOG_ERR("ERS", "Failed to store BW buffer for grayscale render; skipping grayscale this page");
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+        render_lab::recordTimings(tPrewarm - t0, tBwRender - tPrewarm, millis() - t0);
+#endif
         return;
       }
       const auto tBwStore = millis();
@@ -1666,6 +1710,10 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
               tBwRender - tPrewarm, tDisplay - tBwRender, tEnd - t0);
     }
   }
+
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+  render_lab::recordTimings(tPrewarm - t0, tBwRender - tPrewarm, millis() - t0);
+#endif
 }
 
 void EpubReaderActivity::renderStatusBar() const {

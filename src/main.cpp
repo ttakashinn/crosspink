@@ -41,6 +41,9 @@
 #include "images/LoadingIcon.h"
 #include "network/OtaBootHealth.h"
 #include "platform/UsbSerialJtagHandoff.h"
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+#include "render_lab/RenderLab.h"
+#endif
 #include "util/ButtonNavigator.h"
 #include "util/ScreenshotUtil.h"
 
@@ -382,7 +385,13 @@ void setup() {
   powerManager.begin();
 
   const auto wakeupReason = gpio.getWakeupReason();
-  if (wakeupReason == HalGPIO::WakeupReason::PowerButton && !gpio.verifyPowerButtonWakeup()) {
+  if (wakeupReason == HalGPIO::WakeupReason::PowerButton &&
+#if defined(SIMULATOR)
+      !gpio.verifyPowerButtonWakeup(0, true)
+#else
+      !gpio.verifyPowerButtonWakeup()
+#endif
+  ) {
     powerManager.startDeepSleep(gpio);
   }
 
@@ -427,6 +436,9 @@ void setup() {
     SETTINGS.readerMenuStyle = CrossPointSettings::READER_MENU_TOOLBAR;
   }
   SETTINGS.loadFromFile();
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+  render_lab::configureSettings(SETTINGS);
+#endif
   RECENT_BOOKS.loadFromFile();
   I18N.setLanguage(static_cast<Language>(SETTINGS.language));
   KOREADER_STORE.loadFromFile();
@@ -479,6 +491,14 @@ void setup() {
   bool needsWakeRefresh = false;
 
   setupDisplayAndFonts(resume != BootResume::Splash);
+
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+  if (render_lab::enabled()) {
+    activityManager.goToReader(render_lab::bookPath(), false);
+    allowSleepAt = millis() + 2000;
+    return;
+  }
+#endif
 
   switch (resume) {
     case BootResume::Silent:
@@ -554,7 +574,9 @@ void setup() {
   // proof that the newly installed application is healthy. Leave a pending OTA
   // image unconfirmed in those cases so the bootloader can roll it back.
   if (!recoveryFirmwareMode && !HalSystem::isRebootFromPanic()) {
+#if !defined(SIMULATOR)
     ota_boot_health::confirmPendingImageAfterStartup(activityManager);
+#endif
   }
 
 #if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3

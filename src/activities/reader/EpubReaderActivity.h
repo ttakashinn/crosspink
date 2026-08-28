@@ -180,6 +180,10 @@ class EpubReaderActivity final : public ReaderActivity {
       : ReaderActivity("EpubReader", renderer, mappedInput, std::move(bookPath), allowFastInitialRefresh) {}
   ~EpubReaderActivity() override;
 
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+  void onEnter() override;
+#endif
+
   void loop() override;
 
   bool pageTurn(bool isForward) override;
