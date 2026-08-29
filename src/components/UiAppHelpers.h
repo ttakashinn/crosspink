@@ -52,6 +52,15 @@ inline const freeink::ui::ThemeTokens& refreshSharedUiThemeTokens(const freeink:
   return *next;
 }
 
+// Render-only users do not need to rebuild and copy the ~1.5KB token table on
+// every frame. Activity entry and live theme/scale changes publish a fresh
+// table through applySharedUiTheme(); this is only a cold-start fallback.
+inline const freeink::ui::ThemeTokens& currentOrRefreshSharedUiThemeTokens(
+    const freeink::ui::GfxRendererTarget& target) {
+  const auto* current = sharedUiThemeCell().load(std::memory_order_acquire);
+  return current ? *current : refreshSharedUiThemeTokens(target);
+}
+
 // Refresh the shared tokens from the active UITheme + this target's fonts and
 // point the app at them. Replaces the old per-app `app.setTheme(...)` copies.
 template <typename App>
@@ -60,14 +69,21 @@ inline void applySharedUiTheme(App& app, const freeink::ui::GfxRendererTarget& t
   app.setThemeRef(&sharedUiThemeCell());
 }
 
-// Bind the uiScale fonts before FreeInkApp's constructor derives its theme
-// metrics from the body font's line height.
-inline freeink::ui::GfxRendererTarget makeUiTarget(const GfxRenderer& renderer) {
-  freeink::ui::GfxRendererTarget target(renderer);
+// Bind (or rebind) the selected UI-scale fonts. Rebinding matters on the live
+// Settings screen: the target outlives an individual render, while uiScale can
+// change without leaving the activity.
+inline void bindUiScaleFonts(freeink::ui::GfxRendererTarget& target) {
   const auto spec = uiScaleSpec();
   target.setFont(freeink::ui::GfxRendererTarget::FONT_SMALL, spec.smallFontId);
   target.setFont(freeink::ui::GfxRendererTarget::FONT_BODY, spec.bodyFontId);
   target.setFont(freeink::ui::GfxRendererTarget::FONT_TITLE, spec.titleFontId);
+}
+
+// Bind the uiScale fonts before FreeInkApp's constructor derives its theme
+// metrics from the body font's line height.
+inline freeink::ui::GfxRendererTarget makeUiTarget(const GfxRenderer& renderer) {
+  freeink::ui::GfxRendererTarget target(renderer);
+  bindUiScaleFonts(target);
   return target;
 }
 

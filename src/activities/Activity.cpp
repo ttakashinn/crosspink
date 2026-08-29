@@ -15,6 +15,10 @@ void Activity::onGoHome(HomeMenuItem item) { activityManager.goHome(item); }
 void Activity::onSelectBook(const std::string& path) { activityManager.goToReader(path); }
 
 void Activity::startActivityForResult(std::unique_ptr<Activity>&& activity, ActivityResultHandler resultHandler) {
+  if (!activity) {
+    LOG_ERR("ACT", "Refusing to start a null child activity (allocation likely failed)");
+    return;
+  }
   this->resultHandler = std::move(resultHandler);
   activityManager.pushActivity(std::move(activity));
 }

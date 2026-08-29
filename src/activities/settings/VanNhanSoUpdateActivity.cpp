@@ -50,6 +50,12 @@ constexpr size_t SHA256_HEX_LENGTH = 64;
 constexpr size_t PROFILE_MAX_LENGTH = 128;
 constexpr size_t REQUEST_URL_MAX_LENGTH = 384;
 constexpr size_t MANIFEST_MAX_LENGTH = 2048;
+// X3/X4 release builds already carry the low-memory wolfSSL transport used by
+// normal HTTPS downloads. The ESP-IDF verified client requires a much larger
+// contiguous handshake allocation and is failing before headers on real C3
+// devices. The VNS URLs remain hard-coded HTTPS, asset hosts are allow-listed,
+// and every image is length/schema/SHA-256 checked before an atomic install.
+constexpr auto VNS_TRANSPORT = HttpDownloader::TransportSecurity::STANDARD;
 
 #if defined(SIMULATOR)
 bool hostSystemDateTime(Rtc::DateTime& out) {
@@ -248,7 +254,11 @@ void VanNhanSoUpdateActivity::onExit() {
     delay(30);
     WiFi.mode(WIFI_OFF);
     if (!automatic) {
-      silentRestart();
+      if (returnToVanNhanSoSettings) {
+        silentRestartToVanNhanSoSettings();
+      } else {
+        silentRestart();
+      }
     }
   }
 
@@ -408,11 +418,14 @@ void VanNhanSoUpdateActivity::loop() {
 
   int x = 0;
   int y = 0;
-  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+  // Idle/status screens follow the same release-edge convention as every
+  // UiListActivity. Consuming the press here used to pop this screen, then
+  // let the matching release pop VanNhanSoSettings as well.
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     finish();
     return;
   }
-  if (!automatic && mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+  if (!automatic && mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     beginManualUpdate();
     return;
   }
@@ -562,18 +575,25 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
     int y = 0;
     if (automatic) {
       cancelDownload = automaticCancellationRequested();
-    } else if (mappedInput.wasPressed(MappedInputManager::Button::Back) || mappedInput.wasScreenTapped(x, y)) {
+    } else if (mappedInput.wasReleased(MappedInputManager::Button::Back) || mappedInput.wasScreenTapped(x, y)) {
       cancelDownload = true;
     }
   };
 
   HttpDownloader::ResponseInfo manifestResponse;
-  const auto manifestResult =
-      HttpDownloader::downloadToFile(url, MANIFEST_TEMP_PATH, pollCancellation, &cancelDownload, "", "",
-                                     &manifestResponse, timeoutMs, HttpDownloader::TransportSecurity::VERIFIED_TLS);
+  const auto manifestResult = HttpDownloader::downloadToFile(url, MANIFEST_TEMP_PATH, pollCancellation, &cancelDownload,
+                                                             "", "", &manifestResponse, timeoutMs, VNS_TRANSPORT);
   if (manifestResult == HttpDownloader::ABORTED) {
     Storage.remove(MANIFEST_TEMP_PATH);
-    recordCancelled();
+    recordCancelled(/*returnToStatus=*/!automatic);
+    return;
+  }
+  if (cancelDownload) {
+    // Some transports report a socket error while unwinding an explicitly
+    // aborted request. User cancellation wins over that implementation detail:
+    // it is not an HTTPS failure and the manual flow returns to its status page.
+    Storage.remove(MANIFEST_TEMP_PATH);
+    recordCancelled(/*returnToStatus=*/!automatic);
     return;
   }
   if (manifestResult != HttpDownloader::OK) {
@@ -712,15 +732,20 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
         int y = 0;
         if (automatic) {
           cancelDownload = automaticCancellationRequested();
-        } else if (mappedInput.wasPressed(MappedInputManager::Button::Back) || mappedInput.wasScreenTapped(x, y)) {
+        } else if (mappedInput.wasReleased(MappedInputManager::Button::Back) || mappedInput.wasScreenTapped(x, y)) {
           cancelDownload = true;
         }
       },
-      &cancelDownload, "", "", &responseInfo, timeoutMs, HttpDownloader::TransportSecurity::VERIFIED_TLS);
+      &cancelDownload, "", "", &responseInfo, timeoutMs, VNS_TRANSPORT);
 
   if (result == HttpDownloader::ABORTED) {
     Storage.remove(TEMP_PATH);
-    recordCancelled();
+    recordCancelled(/*returnToStatus=*/!automatic);
+    return;
+  }
+  if (cancelDownload) {
+    Storage.remove(TEMP_PATH);
+    recordCancelled(/*returnToStatus=*/!automatic);
     return;
   }
   if (result != HttpDownloader::OK) {
@@ -803,7 +828,7 @@ void VanNhanSoUpdateActivity::recordSuccess() {
   APP_STATE.saveToFile();
 }
 
-void VanNhanSoUpdateActivity::recordCancelled() {
+void VanNhanSoUpdateActivity::recordCancelled(const bool returnToStatus) {
   {
     RenderLock lock(*this);
     APP_STATE.vanNhanSoUpdateResult = CrossPointState::VanNhanSoUpdateResult::CANCELLED;
@@ -811,7 +836,10 @@ void VanNhanSoUpdateActivity::recordCancelled() {
     APP_STATE.vanNhanSoLastAttemptDate = currentDateKey;
     APP_STATE.vanNhanSoLastAttemptMinute = currentMinute;
     APP_STATE.saveToFile();
-    state = CANCELLED;
+    // A manual cancellation returns to the initial status page in the same
+    // critical section. This prevents a queued render from briefly showing a
+    // terminal cancellation/error screen while the transport unwinds.
+    state = returnToStatus ? STATUS : CANCELLED;
   }
   requestUpdate();
 }
@@ -920,13 +948,13 @@ const char* VanNhanSoUpdateActivity::errorText(const CrossPointState::VanNhanSoU
     case CrossPointState::VanNhanSoUpdateError::METADATA:
       return tr(STR_VANNHANSO_ERROR_METADATA);
     case CrossPointState::VanNhanSoUpdateError::CONNECT:
-      return "Lỗi kết nối HTTPS";
+      return tr(STR_VANNHANSO_ERROR_CONNECT);
     case CrossPointState::VanNhanSoUpdateError::HTTP_RATE_LIMIT:
-      return "Máy chủ đang giới hạn yêu cầu";
+      return tr(STR_VANNHANSO_ERROR_RATE_LIMIT);
     case CrossPointState::VanNhanSoUpdateError::HTTP_SERVER:
-      return "Máy chủ tạm thời gặp lỗi";
+      return tr(STR_VANNHANSO_ERROR_SERVER);
     case CrossPointState::VanNhanSoUpdateError::INCOMPLETE:
-      return "Dữ liệu tải về chưa đủ";
+      return tr(STR_VANNHANSO_ERROR_INCOMPLETE);
     case CrossPointState::VanNhanSoUpdateError::NONE:
     default:
       return "";

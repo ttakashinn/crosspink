@@ -9,6 +9,7 @@ UiAppHost::UiAppHost(const GfxRenderer& renderer)
 
 void UiAppHost::resetUi() {
   uiReady = false;
+  bindUiScaleFonts(uiTarget);
   applySharedUiTheme(app, uiTarget);
 }
 

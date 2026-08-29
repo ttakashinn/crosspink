@@ -295,13 +295,10 @@ void BaseTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* t
   namespace fui = freeink::ui;
   const auto spec = uiScaleSpec();
   fui::GfxRendererFrame<1> ui(renderer, spec.smallFontId, spec.bodyFontId, spec.titleFontId);
-  // Refresh the app-wide shared tokens instead of copying ~1.5KB of
-  // ThemeTokens onto this render-path stack frame; the values derived here
-  // are identical to what every FreeInkApp screen derives. Goes through the
-  // same publish-a-fresh-slot path applySharedUiTheme() uses (see
-  // UiAppHelpers.h) rather than overwriting the previously-published
-  // instance in place, since some other FreeInkApp could be mid-read of it.
-  const fui::ThemeTokens& tokens = refreshSharedUiThemeTokens(ui.target);
+  // Activity entry/theme changes already publish the shared ~1.5KB table.
+  // Reuse it on this render path instead of copying and atomically flipping
+  // the whole table for every header repaint.
+  const fui::ThemeTokens& tokens = currentOrRefreshSharedUiThemeTokens(ui.target);
   // Header status text (battery percent, right label) stays at the fixed
   // small font like the legacy headers; the uiScale small font is for list
   // subtitles.
@@ -652,6 +649,8 @@ void BaseTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
 
 int BaseTheme::getMenuRowHeight(const GfxRenderer&) const { return UITheme::getInstance().getMetrics().menuRowHeight; }
 
+int BaseTheme::getMenuTopInset() const { return BaseMetrics::values.verticalSpacing; }
+
 void BaseTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                                const std::function<std::string(int index)>& buttonLabel,
                                const std::function<UIIcon(int index)>& rowIcon) const {
@@ -697,9 +696,11 @@ Rect BaseTheme::drawPopup(const GfxRenderer& renderer, const char* message) cons
 
   const bool useRoundedPopup = metrics.popupCornerRadius > 0;
   if (useRoundedPopup) {
+    const Color frameColor = metrics.popupTextInverted ? Color::Black : Color::White;
+    const Color surfaceColor = metrics.popupTextInverted ? Color::White : Color::Black;
     renderer.fillRoundedRect(x - frameThickness, y - frameThickness, w + frameThickness * 2, h + frameThickness * 2,
-                             metrics.popupCornerRadius + frameThickness, Color::White);
-    renderer.fillRoundedRect(x, y, w, h, metrics.popupCornerRadius, Color::Black);
+                             metrics.popupCornerRadius + frameThickness, frameColor);
+    renderer.fillRoundedRect(x, y, w, h, metrics.popupCornerRadius, surfaceColor);
   } else {
     renderer.fillRect(x - frameThickness, y - frameThickness, w + frameThickness * 2, h + frameThickness * 2, true);
     renderer.fillRect(x, y, w, h, false);

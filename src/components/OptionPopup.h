@@ -149,7 +149,7 @@ class OptionPopup {
     // tracks the live orientation and uiScale fonts; a target held across
     // show() would stale-bind both after a rotation or scale change.
     fui::GfxRendererTarget target = makeUiTarget(renderer);
-    const fui::ThemeTokens& theme = refreshSharedUiThemeTokens(target);
+    const fui::ThemeTokens& theme = currentOrRefreshSharedUiThemeTokens(target);
     // Frame stores a const DeviceContext&; keep it in a local that outlives
     // the frame (a deviceContext() temporary would dangle).
     const fui::DeviceContext device = target.deviceContext();

@@ -1,6 +1,7 @@
 #pragma once
 #include <functional>
 #include <string>
+#include <vector>
 
 #include "activities/Activity.h"
 #include "components/OptionPopup.h"
@@ -13,11 +14,10 @@ class ConfirmationActivity : public Activity {
   std::string body;
 
   const int margin = 20;
-  const int spacing = 30;
-  const int fontId = UI_10_FONT_ID;
+  int fontId = UI_10_FONT_ID;
 
   std::string safeHeading;
-  std::string safeBody;
+  std::vector<std::string> safeBodyLines;
   OptionPopup confirmPopup;
   int startY = 0;
   int lineHeight = 0;

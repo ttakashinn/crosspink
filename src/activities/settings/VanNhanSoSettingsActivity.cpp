@@ -37,8 +37,9 @@ const StrId weatherNames[] = {StrId::STR_VANNHANSO_WEATHER_HANOI,   StrId::STR_V
 static_assert(std::size(weatherNames) == CrossPointSettings::VANNHANSO_WEATHER_LOCATION_COUNT);
 }  // namespace
 
-VanNhanSoSettingsActivity::VanNhanSoSettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-    : UiListActivity("VanNhanSoSettings", renderer, mappedInput) {}
+VanNhanSoSettingsActivity::VanNhanSoSettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
+                                                     const bool returnToSettingsOnBack)
+    : UiListActivity("VanNhanSoSettings", renderer, mappedInput), returnToSettingsOnBack(returnToSettingsOnBack) {}
 
 void VanNhanSoSettingsActivity::onEnter() {
   UiListActivity::onEnter();
@@ -101,7 +102,9 @@ std::string VanNhanSoSettingsActivity::itemValue(const int index) const {
 void VanNhanSoSettingsActivity::handleSelection(const int index) {
   switch (index) {
     case 0: {
-      auto activity = makeUniqueNoThrow<VanNhanSoUpdateActivity>(renderer, mappedInput);
+      auto activity = makeUniqueNoThrow<VanNhanSoUpdateActivity>(renderer, mappedInput,
+                                                                 vannhanso_update_policy::UpdateTrigger::MANUAL,
+                                                                 /*returnToVanNhanSoSettings=*/true);
       if (activity) startActivityForResult(std::move(activity), [this](const ActivityResult&) { requestUpdate(); });
       return;
     }
@@ -171,6 +174,14 @@ bool VanNhanSoSettingsActivity::handleCustomInput() {
   return optionPopup.handleInput(mappedInput, [this] { requestUpdate(); });
 }
 
+void VanNhanSoSettingsActivity::onBackButton() {
+  if (returnToSettingsOnBack) {
+    activityManager.goToSettings();
+  } else {
+    finish();
+  }
+}
+
 void VanNhanSoSettingsActivity::activateIndex(const int index) {
   if (optionPopup.isActive()) return;
   nav.selected = index;
@@ -197,7 +208,7 @@ void VanNhanSoSettingsActivity::buildScreen(UiScreen& screen) {
   props.action = ACTION_ROW;
   props.inputMask = fui::InputTouch;
   props.valueInset = 8;
-  props.labelText = screen.theme().smallText;
+  props.labelText = screen.theme().bodyText;
   props.labelText.maxLines = 2;
   syncListViewport(screen, props);
   screen.list(props);

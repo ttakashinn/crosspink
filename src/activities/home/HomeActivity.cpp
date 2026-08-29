@@ -7,16 +7,19 @@
 #include <HalDisplay.h>
 #include <HalStorage.h>
 #include <I18n.h>
+#include <Memory.h>
 #include <Utf8.h>
 #include <Xtc.h>
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <vector>
 
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
+#include "HomeMenuViewport.h"
 #include "MappedInputManager.h"
 #include "OpdsServerStore.h"
 #include "RecentBooksStore.h"
@@ -33,19 +36,14 @@
 
 namespace {
 
-enum class DashboardMenuAction { RECENTS, OPDS, READING_STATS, SAVED_ITEMS, FILE_TRANSFER };
+enum class DashboardMenuAction { RECENTS, OPDS, READING_STATS, MY_CLIPPINGS, FILE_TRANSFER };
 
-DashboardMenuAction dashboardActionAt(int index, const bool hasOpds, const bool hasStats, const bool hasSavedItems) {
+DashboardMenuAction dashboardActionAt(int index, const bool hasOpds, const bool hasStats) {
   if (index-- == 0) return DashboardMenuAction::RECENTS;
   if (hasOpds && index-- == 0) return DashboardMenuAction::OPDS;
   if (hasStats && index-- == 0) return DashboardMenuAction::READING_STATS;
-  if (hasSavedItems && index-- == 0) return DashboardMenuAction::SAVED_ITEMS;
+  if (index-- == 0) return DashboardMenuAction::MY_CLIPPINGS;
   return DashboardMenuAction::FILE_TRANSFER;
-}
-
-const char* savedItemsLabel(const bool hasBookmarks, const bool hasClippings) {
-  if (hasBookmarks && hasClippings) return tr(STR_BOOKMARKS_AND_CLIPPINGS);
-  return hasClippings ? tr(STR_CLIPPINGS) : tr(STR_BOOKMARKS);
 }
 
 bool hasAnyBookStats(const BookReadingStats& stats) {
@@ -62,9 +60,8 @@ bool hasAnyGlobalStats(const GlobalReadingStats& stats) {
 }  // namespace
 
 int HomeActivity::getMenuItemCount() const {
-  int count = 4;  // File Browser, Recents, File transfer, Settings
+  int count = 5;  // File Browser, Recents, My Clippings, File transfer, Settings
   if (hasReadingStats) count++;
-  if (hasSavedBookmarks || hasSavedClippings) count++;
   if (!recentBooks.empty()) {
     count += recentBooks.size();
   }
@@ -78,11 +75,9 @@ bool HomeActivity::usesDashboardHome() const {
   return static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme) == CrossPointSettings::UI_THEME::DASHBOARD;
 }
 
-int HomeActivity::getDashboardMenuItemCount() const {
-  return 2 + (hasOpdsServers ? 1 : 0) + (hasReadingStats ? 1 : 0) + (hasSavedBookmarks || hasSavedClippings ? 1 : 0);
-}
+int HomeActivity::getDashboardMenuItemCount() const { return 3 + (hasOpdsServers ? 1 : 0) + (hasReadingStats ? 1 : 0); }
 
-void HomeActivity::loadSavedItems() {
+void HomeActivity::ensureSavedItemsCatalog() {
   std::vector<SavedItemsCatalog::Entry> entries;
   auto status = SavedItemsCatalog::load(entries);
   if (status == SavedItemsCatalog::LoadStatus::MISSING) {
@@ -114,15 +109,9 @@ void HomeActivity::loadSavedItems() {
     }
   }
 
-  hasSavedBookmarks = false;
-  hasSavedClippings = false;
-  if (status == SavedItemsCatalog::LoadStatus::LOADED || status == SavedItemsCatalog::LoadStatus::LOADED_TEMP ||
-      status == SavedItemsCatalog::LoadStatus::LOADED_BACKUP) {
-    for (const auto& entry : entries) {
-      hasSavedBookmarks = hasSavedBookmarks || entry.bookmarkCount > 0;
-      hasSavedClippings = hasSavedClippings || entry.clippingCount > 0;
-    }
-  }
+  // My Clippings is intentionally always visible. An empty catalog renders a
+  // useful empty state instead of hiding the feature until the user discovers
+  // clipping from inside a book first.
 }
 
 void HomeActivity::loadReadingStats() {
@@ -277,13 +266,11 @@ void HomeActivity::onEnter() {
   const auto& metrics = UITheme::getInstance().getMetrics();
   loadRecentBooks(metrics.homeRecentBooksCount);
   loadReadingStats();
-  loadSavedItems();
 
   const auto base = static_cast<int>(recentBooks.size());
   selectorIndex = initialMenuItem == HomeMenuItem::NONE
                       ? 0
-                      : base + menuItemToIndex(initialMenuItem, hasOpdsServers, hasReadingStats,
-                                               hasSavedBookmarks || hasSavedClippings);
+                      : base + menuItemToIndex(initialMenuItem, hasOpdsServers, hasReadingStats);
 
   // Trigger first update
   requestUpdate();
@@ -337,8 +324,7 @@ void HomeActivity::loopDashboardHome() {
   const int menuCount = getDashboardMenuItemCount();
 
   auto activateMenu = [this] {
-    switch (dashboardActionAt(dashboardMenuIndex, hasOpdsServers, hasReadingStats,
-                              hasSavedBookmarks || hasSavedClippings)) {
+    switch (dashboardActionAt(dashboardMenuIndex, hasOpdsServers, hasReadingStats)) {
       case DashboardMenuAction::RECENTS:
         onRecentsOpen();
         break;
@@ -348,14 +334,71 @@ void HomeActivity::loopDashboardHome() {
       case DashboardMenuAction::READING_STATS:
         onReadingStatsOpen();
         break;
-      case DashboardMenuAction::SAVED_ITEMS:
-        onSavedItemsOpen();
+      case DashboardMenuAction::MY_CLIPPINGS:
+        onMyClippingsOpen();
         break;
       case DashboardMenuAction::FILE_TRANSFER:
         onFileTransferOpen();
         break;
     }
   };
+  auto closeMenu = [this] {
+    dashboardMenuOpen = false;
+    // The menu contains a dense black selected row. A half refresh when it is
+    // dismissed costs slightly more time than FAST but avoids leaving a dark
+    // ghost over the white Dashboard reading surface.
+    renderer.promoteNextRefresh(HalDisplay::HALF_REFRESH);
+    requestUpdate();
+  };
+
+  if (gpio.hasTouch()) {
+    int touchedAction = -1;
+    for (int i = 0; i < 4; ++i) {
+      const Rect button = DashboardTheme::homeActionRectForScreen(renderer, i);
+      if (mappedInput.wasTapInRect(button.x, button.y, button.width, button.height)) {
+        touchedAction = i;
+        break;
+      }
+    }
+    if (touchedAction >= 0) {
+      if (dashboardMenuOpen) {
+        switch (touchedAction) {
+          case 0:
+            closeMenu();
+            break;
+          case 1:
+            activateMenu();
+            break;
+          case 2:
+            dashboardMenuIndex = ButtonNavigator::previousIndex(dashboardMenuIndex, menuCount);
+            requestUpdate();
+            break;
+          case 3:
+            dashboardMenuIndex = ButtonNavigator::nextIndex(dashboardMenuIndex, menuCount);
+            requestUpdate();
+            break;
+        }
+      } else {
+        switch (touchedAction) {
+          case 0:
+            dashboardMenuOpen = true;
+            dashboardMenuIndex = 0;
+            requestUpdate();
+            break;
+          case 1:
+            onFileBrowserOpen();
+            break;
+          case 2:
+            onSettingsOpen();
+            break;
+          case 3:
+            if (!recentBooks.empty()) onSelectBook(recentBooks[0].path);
+            break;
+        }
+      }
+      return;
+    }
+  }
 
   if (dashboardMenuOpen) {
     buttonNavigator.onNext([this, menuCount] {
@@ -378,12 +421,10 @@ void HomeActivity::loopDashboardHome() {
       return;
     }
 
-    const int panelTop = metrics.homeTopPadding + 80;
-    const int rowHeight = GUI.getMenuRowHeight(renderer);
+    const DashboardMenuLayout layout = DashboardTheme::menuLayoutForScreen(renderer, menuCount);
     int row = -1;
-    const auto touch = mappedInput.rowTouch(row, panelTop + BaseMetrics::values.verticalSpacing,
-                                            BaseMetrics::values.menuRowHeight + BaseMetrics::values.menuSpacing,
-                                            menuCount, 20, renderer.getScreenWidth() - 20, rowHeight);
+    const auto touch = mappedInput.rowTouch(row, layout.rows.y, layout.rowHeight + layout.rowGap, menuCount,
+                                            layout.rows.x, layout.rows.x + layout.rows.width, layout.rowHeight);
     if (touch != MappedInputManager::RowTouch::None) {
       dashboardMenuIndex = row;
       if (touch == MappedInputManager::RowTouch::Tap)
@@ -393,8 +434,7 @@ void HomeActivity::loopDashboardHome() {
       return;
     }
     if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-      dashboardMenuOpen = false;
-      requestUpdate();
+      closeMenu();
       return;
     }
     if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) activateMenu();
@@ -460,7 +500,7 @@ void HomeActivity::loop() {
       return;
     }
     const int menuIndex = selectorIndex - static_cast<int>(recentBooks.size());
-    switch (indexToMenuItem(menuIndex, hasOpdsServers, hasReadingStats, hasSavedBookmarks || hasSavedClippings)) {
+    switch (indexToMenuItem(menuIndex, hasOpdsServers, hasReadingStats)) {
       case HomeMenuItem::FILE_BROWSER:
         onFileBrowserOpen();
         break;
@@ -473,8 +513,8 @@ void HomeActivity::loop() {
       case HomeMenuItem::READING_STATS:
         onReadingStatsOpen();
         break;
-      case HomeMenuItem::SAVED_ITEMS:
-        onSavedItemsOpen();
+      case HomeMenuItem::MY_CLIPPINGS:
+        onMyClippingsOpen();
         break;
       case HomeMenuItem::FILE_TRANSFER:
         onFileTransferOpen();
@@ -546,11 +586,17 @@ void HomeActivity::loop() {
   // Row height from the theme, not the metrics table: RoundedRaff draws
   // font-derived rows and the touch grid must match the visuals exactly.
   const int menuRowHeight = GUI.getMenuRowHeight(renderer);
-  const auto menuTouch = mappedInput.rowTouch(menuRow, menuTop, menuRowHeight + metrics.menuSpacing, renderedMenuCount,
-                                              0, INT32_MAX, menuRowHeight);
+  const int menuTopInset = GUI.getMenuTopInset();
+  const int menuBottom = renderer.getScreenHeight() - metrics.buttonHintsHeight - metrics.verticalSpacing;
+  const int menuHeight = std::max(menuRowHeight, menuBottom - menuTop);
+  const HomeMenuViewport viewport = calculateHomeMenuViewport(renderedMenuCount, renderedMenuSelection, menuHeight,
+                                                              menuRowHeight, metrics.menuSpacing, menuTopInset);
+  const auto menuTouch = mappedInput.rowTouch(menuRow, menuTop + menuTopInset, menuRowHeight + metrics.menuSpacing,
+                                              viewport.count, 0, INT32_MAX, menuRowHeight);
   if (menuTouch != MappedInputManager::RowTouch::None) {
+    const int logicalMenuIndex = viewport.first + menuRow;
     const int touchedIndex =
-        metrics.homeContinueReadingInMenu ? menuRow : menuRow + static_cast<int>(recentBooks.size());
+        metrics.homeContinueReadingInMenu ? logicalMenuIndex : logicalMenuIndex + static_cast<int>(recentBooks.size());
     if (menuTouch == MappedInputManager::RowTouch::Down) {
       if (selectorIndex != touchedIndex) {
         selectorIndex = touchedIndex;
@@ -575,6 +621,43 @@ void HomeActivity::render(RenderLock&&) {
   const bool dashboardHome = usesDashboardHome();
 
   renderer.clearScreen();
+  if (dashboardHome && dashboardMenuOpen) {
+    const auto& dashboard = static_cast<const DashboardTheme&>(GUI);
+
+    std::array<const char*, 5> menuItems{};
+    std::array<UIIcon, 5> menuIcons{};
+    int menuItemCount = 0;
+    menuItems[menuItemCount] = tr(STR_MENU_RECENT_BOOKS);
+    menuIcons[menuItemCount++] = Recent;
+    if (hasOpdsServers) {
+      menuItems[menuItemCount] = tr(STR_OPDS_BROWSER);
+      menuIcons[menuItemCount++] = Library;
+    }
+    if (hasReadingStats) {
+      menuItems[menuItemCount] = tr(STR_READING_STATS);
+      menuIcons[menuItemCount++] = Statistics;
+    }
+    menuItems[menuItemCount] = tr(STR_MY_CLIPPINGS);
+    menuIcons[menuItemCount++] = Bookmark;
+    menuItems[menuItemCount] = tr(STR_FILE_TRANSFER);
+    menuIcons[menuItemCount++] = Transfer;
+    dashboard.drawHomeMenu(renderer, menuItems.data(), menuIcons.data(), menuItemCount, dashboardMenuIndex);
+
+    if (gpio.hasTouch()) {
+      dashboard.drawHomeTouchActions(renderer, tr(STR_CLOSE), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+    } else {
+      const auto labels = mappedInput.mapLabels(tr(STR_CLOSE), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+      GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    }
+    renderer.displayBuffer(cleanInitialRefresh && !firstRenderDone ? HalDisplay::HALF_REFRESH
+                                                                   : HalDisplay::FAST_REFRESH);
+    if (!firstRenderDone) {
+      firstRenderDone = true;
+      requestUpdate();
+    }
+    return;
+  }
+
   if (dashboardHome) {
     const Rect cover = DashboardTheme::coverRectForScreen(
         renderer, Rect{0, metrics.homeTopPadding, pageWidth, metrics.homeCoverTileHeight});
@@ -606,28 +689,16 @@ void HomeActivity::render(RenderLock&&) {
                           &globalReadingStats, currentBookChapterTitle.c_str());
 
   if (dashboardHome) {
-    if (dashboardMenuOpen) {
-      std::vector<const char*> menuItems = {tr(STR_MENU_RECENT_BOOKS)};
-      if (hasOpdsServers) menuItems.push_back(tr(STR_OPDS_BROWSER));
-      if (hasReadingStats) menuItems.push_back(tr(STR_READING_STATS));
-      if (hasSavedBookmarks || hasSavedClippings) {
-        menuItems.push_back(savedItemsLabel(hasSavedBookmarks, hasSavedClippings));
-      }
-      menuItems.push_back(tr(STR_FILE_TRANSFER));
-      const Rect panel{
-          20, metrics.homeTopPadding + 80, pageWidth - 40,
-          static_cast<int>(menuItems.size()) * (BaseMetrics::values.menuRowHeight + BaseMetrics::values.menuSpacing) +
-              BaseMetrics::values.verticalSpacing * 2};
-      renderer.fillRect(panel.x, panel.y, panel.width, panel.height, false);
-      renderer.drawRect(panel.x, panel.y, panel.width, panel.height);
-      GUI.drawButtonMenu(
-          renderer, panel, static_cast<int>(menuItems.size()), dashboardMenuIndex,
-          [&menuItems](const int index) { return std::string(menuItems[index]); }, [](int) { return Recent; });
+    if (gpio.hasTouch()) {
+      static_cast<const DashboardTheme&>(GUI).drawHomeTouchActions(renderer, tr(STR_DASHBOARD_MENU),
+                                                                   tr(STR_DASHBOARD_BROWSE), tr(STR_SETTINGS_TITLE),
+                                                                   recentBooks.empty() ? "" : tr(STR_DASHBOARD_READ));
+    } else {
+      const auto labels =
+          mappedInput.mapLabels(tr(STR_DASHBOARD_MENU), tr(STR_DASHBOARD_BROWSE), tr(STR_SETTINGS_TITLE),
+                                recentBooks.empty() ? "" : tr(STR_DASHBOARD_READ));
+      GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
     }
-
-    const auto labels = mappedInput.mapLabels(tr(STR_DASHBOARD_MENU), tr(STR_DASHBOARD_BROWSE), tr(STR_SETTINGS_TITLE),
-                                              recentBooks.empty() ? "" : tr(STR_DASHBOARD_READ));
-    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
     renderer.displayBuffer(cleanInitialRefresh && !firstRenderDone ? HalDisplay::HALF_REFRESH
                                                                    : HalDisplay::FAST_REFRESH);
     if (!firstRenderDone) {
@@ -640,44 +711,38 @@ void HomeActivity::render(RenderLock&&) {
     return;
   }
 
-  // Build menu items dynamically
-  std::vector<const char*> menuItems = {tr(STR_BROWSE_FILES), tr(STR_MENU_RECENT_BOOKS)};
-  std::vector<UIIcon> menuIcons = {Folder, Recent};
+  // Fixed upper bound: avoid two vector allocations and repeated insert()
+  // shifts on every Home repaint on the constrained C3 heap.
+  std::array<const char*, 8> menuItems{};
+  std::array<UIIcon, 8> menuIcons{};
+  int menuItemCount = 0;
+  const auto appendMenuItem = [&menuItems, &menuIcons, &menuItemCount](const char* label, const UIIcon icon) {
+    if (menuItemCount >= static_cast<int>(menuItems.size())) return;
+    menuItems[menuItemCount] = label;
+    menuIcons[menuItemCount] = icon;
+    ++menuItemCount;
+  };
+  if (metrics.homeContinueReadingInMenu && !recentBooks.empty()) appendMenuItem(tr(STR_CONTINUE_READING), Book);
+  appendMenuItem(tr(STR_BROWSE_FILES), Folder);
+  appendMenuItem(tr(STR_MENU_RECENT_BOOKS), Recent);
+  if (hasOpdsServers) appendMenuItem(tr(STR_OPDS_BROWSER), Library);
+  if (hasReadingStats) appendMenuItem(tr(STR_READING_STATS), Statistics);
+  appendMenuItem(tr(STR_MY_CLIPPINGS), Bookmark);
+  appendMenuItem(tr(STR_FILE_TRANSFER), Transfer);
+  appendMenuItem(tr(STR_SETTINGS_TITLE), Settings);
 
-  if (hasOpdsServers) {
-    menuItems.insert(menuItems.begin() + 2, tr(STR_OPDS_BROWSER));
-    menuIcons.insert(menuIcons.begin() + 2, Library);
-  }
-  if (hasReadingStats) {
-    const auto position = menuItems.begin() + 2 + (hasOpdsServers ? 1 : 0);
-    menuItems.insert(position, tr(STR_READING_STATS));
-    menuIcons.insert(menuIcons.begin() + 2 + (hasOpdsServers ? 1 : 0), Recent);
-  }
-  if (hasSavedBookmarks || hasSavedClippings) {
-    const auto position = menuItems.begin() + 2 + (hasOpdsServers ? 1 : 0) + (hasReadingStats ? 1 : 0);
-    menuItems.insert(position, savedItemsLabel(hasSavedBookmarks, hasSavedClippings));
-    menuIcons.insert(menuIcons.begin() + 2 + (hasOpdsServers ? 1 : 0) + (hasReadingStats ? 1 : 0), Bookmark);
-  }
-  menuItems.push_back(tr(STR_FILE_TRANSFER));
-  menuIcons.push_back(Transfer);
-  menuItems.push_back(tr(STR_SETTINGS_TITLE));
-  menuIcons.push_back(Settings);
-
-  if (metrics.homeContinueReadingInMenu && !recentBooks.empty()) {
-    // Insert Continue Reading at the top if enabled in theme
-    menuItems.insert(menuItems.begin(), tr(STR_CONTINUE_READING));
-    menuIcons.insert(menuIcons.begin(), Book);
-  }
-
+  const int menuTop = metrics.homeTopPadding + metrics.homeCoverTileHeight + metrics.homeMenuTopOffset;
+  const int menuBottom = pageHeight - metrics.buttonHintsHeight - metrics.verticalSpacing;
+  const Rect menuRect{0, menuTop, pageWidth, std::max(GUI.getMenuRowHeight(renderer), menuBottom - menuTop)};
+  const int logicalSelection =
+      metrics.homeContinueReadingInMenu ? selectorIndex : selectorIndex - static_cast<int>(recentBooks.size());
+  const HomeMenuViewport viewport =
+      calculateHomeMenuViewport(menuItemCount, logicalSelection, menuRect.height, GUI.getMenuRowHeight(renderer),
+                                metrics.menuSpacing, GUI.getMenuTopInset());
   GUI.drawButtonMenu(
-      renderer,
-      Rect{0, metrics.homeTopPadding + metrics.homeCoverTileHeight + metrics.homeMenuTopOffset, pageWidth,
-           pageHeight - (metrics.headerHeight + metrics.homeTopPadding + metrics.verticalSpacing +
-                         metrics.homeMenuTopOffset + metrics.buttonHintsHeight)},
-      static_cast<int>(menuItems.size()),
-      metrics.homeContinueReadingInMenu ? selectorIndex : selectorIndex - recentBooks.size(),
-      [&menuItems](int index) { return std::string(menuItems[index]); },
-      [&menuIcons](int index) { return menuIcons[index]; });
+      renderer, menuRect, viewport.count, viewport.selected,
+      [&menuItems, &viewport](const int index) { return std::string(menuItems[viewport.first + index]); },
+      [&menuIcons, &viewport](const int index) { return menuIcons[viewport.first + index]; });
 
   const auto labels = mappedInput.mapLabels(recentBooks.empty() ? "" : tr(STR_RESUME), tr(STR_SELECT), tr(STR_DIR_UP),
                                             tr(STR_DIR_DOWN));
@@ -717,20 +782,32 @@ void HomeActivity::onReadingStatsOpen() {
     getBookCachePath(sourcePath, cachePath);
   }
 
-  startActivityForResult(
-      std::make_unique<BookStatsActivity>(renderer, mappedInput, std::move(title), sourcePath, cachePath,
-                                          currentBookStats, globalReadingStats, currentBookProgressPercent),
-      [this](const ActivityResult&) {
-        dashboardMenuOpen = false;
-        loadReadingStats();
-        requestUpdate();
-      });
+  auto activity =
+      makeUniqueNoThrow<BookStatsActivity>(renderer, mappedInput, std::move(title), sourcePath, cachePath,
+                                           currentBookStats, globalReadingStats, currentBookProgressPercent);
+  if (!activity) {
+    LOG_ERR("HOME", "OOM: reading statistics activity");
+    return;
+  }
+  startActivityForResult(std::move(activity), [this](const ActivityResult&) {
+    dashboardMenuOpen = false;
+    loadReadingStats();
+    requestUpdate();
+  });
 }
 
-void HomeActivity::onSavedItemsOpen() {
-  startActivityForResult(std::make_unique<SavedItemsActivity>(renderer, mappedInput), [this](const ActivityResult&) {
+void HomeActivity::onMyClippingsOpen() {
+  // The global catalog was introduced after per-book bookmark and clipping
+  // payloads. Migrate it only when this screen is first used instead of
+  // scanning storage on every Home entry.
+  ensureSavedItemsCatalog();
+  auto activity = makeUniqueNoThrow<SavedItemsActivity>(renderer, mappedInput, true);
+  if (!activity) {
+    LOG_ERR("HOME", "OOM: saved-items activity");
+    return;
+  }
+  startActivityForResult(std::move(activity), [this](const ActivityResult&) {
     dashboardMenuOpen = false;
-    loadSavedItems();
     requestUpdate();
   });
 }

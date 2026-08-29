@@ -228,6 +228,7 @@ def build_family(
     cmd.extend(["--sizes", sizes])
     cmd.extend(["--name", name])
     cmd.extend(["--output-dir", str(output_dir) + "/"])
+    cmd.append("--darken-aa")
 
     if family.get("force_autohint", False):
         cmd.append("--force-autohint")

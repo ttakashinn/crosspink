@@ -120,16 +120,16 @@ EpdFontFamily notosans18FontFamily(&notosans18RegularFont, &notosans18BoldFont, 
 
 #endif  // OMIT_FONTS
 
-EpdFont smallFont(&notosans_8_regular);
+EpdFont smallFont(&inter_8_regular);
 EpdFontFamily smallFontFamily(&smallFont);
 
-EpdFont ui10MediumFont(&ubuntu_10_medium);
-EpdFont ui10BoldFont(&ubuntu_10_bold);
-EpdFontFamily ui10FontFamily(&ui10MediumFont, &ui10BoldFont);
+EpdFont ui10RegularFont(&inter_10_regular);
+EpdFont ui10BoldFont(&inter_10_bold);
+EpdFontFamily ui10FontFamily(&ui10RegularFont, &ui10BoldFont);
 
-EpdFont ui12MediumFont(&ubuntu_12_medium);
-EpdFont ui12BoldFont(&ubuntu_12_bold);
-EpdFontFamily ui12FontFamily(&ui12MediumFont, &ui12BoldFont);
+EpdFont ui12RegularFont(&inter_12_regular);
+EpdFont ui12BoldFont(&inter_12_bold);
+EpdFontFamily ui12FontFamily(&ui12RegularFont, &ui12BoldFont);
 
 // Definitions for SilentRestart.h. RTC_NOINIT survives ESP.restart() but not power loss.
 RTC_NOINIT_ATTR uint32_t silentRebootMagic;
@@ -137,6 +137,7 @@ RTC_NOINIT_ATTR uint32_t silentRebootTarget;
 constexpr uint32_t SILENT_REBOOT_MAGIC = 0xC1EAB007;
 constexpr uint32_t SILENT_REBOOT_TARGET_HOME = 0;
 constexpr uint32_t SILENT_REBOOT_TARGET_READER = 1;
+constexpr uint32_t SILENT_REBOOT_TARGET_VANNHANSO_SETTINGS = 2;
 
 // How the device is coming back to life, resolved once at boot. Both resume
 // flows suppress the splash and leave the panel holding its pre-boot frame; a
@@ -200,6 +201,19 @@ void silentRestartToReader() {
   silentRebootTarget = SILENT_REBOOT_TARGET_READER;
   silentRebootMagic = SILENT_REBOOT_MAGIC;
   LOG_DBG("MAIN", "Silent restart (target=reader)");
+  GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+  delay(50);
+  ESP.restart();
+}
+
+void silentRestartToVanNhanSoSettings() {
+  if (deepSleepInProgress) return;
+#if FREEINK_CAP_TOUCH
+  if (finishWifiSessionWithoutRestart()) return;
+#endif
+  silentRebootTarget = SILENT_REBOOT_TARGET_VANNHANSO_SETTINGS;
+  silentRebootMagic = SILENT_REBOOT_MAGIC;
+  LOG_DBG("MAIN", "Silent restart (target=Văn Nhân Số settings)");
   GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
   delay(50);
   ESP.restart();
@@ -379,7 +393,7 @@ void setup() {
   // Bound the target range too — RTC_NOINIT memory is uninitialized on cold boot.
   const bool isSilentReboot = (silentRebootMagic == SILENT_REBOOT_MAGIC);
   const uint32_t snapshotTarget =
-      (isSilentReboot && silentRebootTarget <= SILENT_REBOOT_TARGET_READER) ? silentRebootTarget : 0;
+      (isSilentReboot && silentRebootTarget <= SILENT_REBOOT_TARGET_VANNHANSO_SETTINGS) ? silentRebootTarget : 0;
   silentRebootMagic = 0;
   silentRebootTarget = 0;
 
@@ -562,6 +576,10 @@ void setup() {
   } else if (resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_READER &&
              !APP_STATE.openEpubPath.empty()) {
     activityManager.goToReader(APP_STATE.openEpubPath);
+  } else if (resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_VANNHANSO_SETTINGS) {
+    // Wi-Fi teardown from a manual update must preserve the user's place in
+    // the settings hierarchy instead of dropping them on Home.
+    activityManager.goToVanNhanSoSettings(/*returnToSettingsOnBack=*/true);
   } else if (resume == BootResume::Silent) {
     // target == home (or reader with no open book): land on home — don't fall
     // through to the sleep-wake "resume reader" logic, which fires on stale

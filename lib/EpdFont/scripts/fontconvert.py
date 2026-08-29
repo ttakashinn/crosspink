@@ -26,6 +26,7 @@ parser.add_argument("--zopfli", dest="zopfli", action="store_true", help="Use Zo
 parser.add_argument("--force-autohint", dest="force_autohint", action="store_true", help="Force FreeType auto-hinter instead of native font hinting. Improves stem width consistency for fonts with weak or no native TrueType hints.")
 parser.add_argument("--autohint-font", dest="autohint_fonts", action="append", default=[], metavar="PATH", help="Force the FreeType auto-hinter on one face of the fontstack, named by its path. Repeatable. For stacks that mix a manually hinted face with unhinted ones, where --force-autohint would discard the hints the former does have.")
 parser.add_argument("--pnum", dest="pnum", action="store_true", help="Use proportional numerals (pnum OpenType feature) instead of default tabular figures. Reduces visual gaps between digits in running prose.")
+parser.add_argument("--darken-aa", dest="darken_aa", action="store_true", help="Use darker 2-bit anti-aliasing thresholds for low-density e-ink reader fonts.")
 args = parser.parse_args()
 
 import freetype
@@ -39,6 +40,10 @@ size = args.size
 font_name = args.name
 # --mono only affects 1-bit fonts; it is meaningless for 2-bit greyscale.
 useMono = args.mono and not is2Bit
+# CrossInk's reader fonts lower the 4-bit -> 2-bit quantisation cutoffs from
+# 4/8/12 to 3/6/10. This strengthens partially covered edge pixels without
+# changing glyph metrics, pagination, decompression, or the 4-level wire data.
+aaThresholds = (3, 6, 10) if args.darken_aa else (4, 8, 12)
 base_load_flags = freetype.FT_LOAD_RENDER
 if useMono:
     # Rasterise with FreeType's native monochrome renderer (hinted, drop-out
@@ -359,7 +364,9 @@ for i_start, i_end in intervals:
                     px = 0
 
             if is2Bit:
-                # 0-3 white, 4-7 light grey, 8-11 dark grey, 12-15 black
+                # Default: 0-3 white, 4-7 light grey, 8-11 dark grey, 12-15 black.
+                # --darken-aa lowers each cutoff so edge coverage settles one
+                # shade darker on the low-density X3/X4 panels.
                 # Downsample to 2-bit bitmap
                 pixels2b = []
                 px = 0
@@ -370,11 +377,11 @@ for i_start, i_end in intervals:
                         bm = pixels4g[y * pitch + (x // 2)]
                         bm = (bm >> ((x % 2) * 4)) & 0xF
 
-                        if bm >= 12:
+                        if bm >= aaThresholds[2]:
                             px += 3
-                        elif bm >= 8:
+                        elif bm >= aaThresholds[1]:
                             px += 2
-                        elif bm >= 4:
+                        elif bm >= aaThresholds[0]:
                             px += 1
 
                         if (y * bitmap.width + x) % 4 == 3:

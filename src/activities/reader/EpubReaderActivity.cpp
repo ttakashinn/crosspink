@@ -376,11 +376,27 @@ bool EpubReaderActivity::loadBook() {
     GUI.drawPopup(renderer, tr(STR_INDEXING));
   }
 
-  bool loaded;
-  {
-    std::optional<GfxRenderer::FrameBufferLoan> loan;
-    if (uncached) loan.emplace(renderer);
-    loaded = loadedEpub->load(true, SETTINGS.embeddedStyle == 0);
+  // A book.bin left by an older firmware still exists on disk, but load()
+  // rejects its version and rebuilds it. Treat that path like a fresh book as
+  // well: on the C3 the EPUB inflater needs the lent framebuffer scratch even
+  // though the stale filename made `uncached` false. vns.2 only lent it for a
+  // physically missing cache, which made first-open upgrades fail on X3 while
+  // the roomier X4 completed the same rebuild.
+  const auto tryLoad = [this](Epub& candidate, const bool buildIfMissing) {
+    GfxRenderer::FrameBufferLoan loan(renderer);
+    return candidate.load(buildIfMissing, SETTINGS.embeddedStyle == 0);
+  };
+
+  bool loaded = tryLoad(*loadedEpub, true);
+  if (!loaded && Storage.exists((loadedEpub->getCachePath() + "/book.bin").c_str())) {
+    // A failed final reload can still leave a fully published book.bin. Drop
+    // every parser/file handle and try that durable generation once before
+    // reporting an invalid book. The retry is cache-only: malformed EPUBs and
+    // stale caches are not indexed twice.
+    LOG_ERR("ERS", "Initial EPUB load failed; retrying the published metadata cache once");
+    loadedEpub.reset();
+    loadedEpub = makeUniqueNoThrow<Epub>(bookPath, "/.crosspoint");
+    if (loadedEpub) loaded = tryLoad(*loadedEpub, false);
   }
   if (!loaded) {
     LOG_ERR("ERS", "Failed to load EPUB");

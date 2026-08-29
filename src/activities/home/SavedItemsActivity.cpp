@@ -3,6 +3,7 @@
 #include <GfxRenderer.h>
 #include <I18n.h>
 #include <Logging.h>
+#include <Memory.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -28,7 +29,9 @@ void SavedItemsActivity::onEnter() {
   reload();
 }
 
-const char* SavedItemsActivity::headerTitle() const { return tr(STR_BOOKMARKS_AND_CLIPPINGS); }
+const char* SavedItemsActivity::headerTitle() const {
+  return clippingsOnly ? tr(STR_MY_CLIPPINGS) : tr(STR_BOOKMARKS_AND_CLIPPINGS);
+}
 
 void SavedItemsActivity::reload() {
   const auto status = SavedItemsCatalog::load(books);
@@ -37,8 +40,9 @@ void SavedItemsActivity::reload() {
                  status == SavedItemsCatalog::LoadStatus::IO_ERROR;
   if (catalogError) books.clear();
   books.erase(std::remove_if(books.begin(), books.end(),
-                             [](const SavedItemsCatalog::Entry& entry) {
-                               return entry.bookmarkCount == 0 && entry.clippingCount == 0;
+                             [this](const SavedItemsCatalog::Entry& entry) {
+                               return clippingsOnly ? entry.clippingCount == 0
+                                                    : entry.bookmarkCount == 0 && entry.clippingCount == 0;
                              }),
               books.end());
   rebuildRows();
@@ -54,8 +58,13 @@ void SavedItemsActivity::rebuildRows() {
   for (size_t i = 0; i < books.size(); ++i) {
     const auto& book = books[i];
     char counts[96];
-    snprintf(counts, sizeof(counts), tr(STR_SAVED_ITEM_COUNTS), static_cast<unsigned>(book.bookmarkCount),
-             static_cast<unsigned>(book.clippingCount));
+    if (clippingsOnly) {
+      const StrId countText = book.clippingCount == 1 ? StrId::STR_CLIPPING_COUNT_ONE : StrId::STR_CLIPPING_COUNT;
+      snprintf(counts, sizeof(counts), I18N.get(countText), static_cast<unsigned>(book.clippingCount));
+    } else {
+      snprintf(counts, sizeof(counts), tr(STR_SAVED_ITEM_COUNTS), static_cast<unsigned>(book.bookmarkCount),
+               static_cast<unsigned>(book.clippingCount));
+    }
     std::string subtitle;
     if (!book.author.empty()) {
       subtitle = book.author;
@@ -86,7 +95,7 @@ void SavedItemsActivity::buildScreen(UiScreen& screen) {
     return;
   }
   if (books.empty()) {
-    screen.centeredText(tr(STR_NO_SAVED_ITEMS), screen.theme().bodyText);
+    screen.centeredText(clippingsOnly ? tr(STR_NO_GLOBAL_CLIPPINGS) : tr(STR_NO_SAVED_ITEMS), screen.theme().bodyText);
     return;
   }
   if (!mappedInput.hasTouch()) {
@@ -132,6 +141,10 @@ void SavedItemsActivity::activateIndex(const int index) {
   app.clearTapFlash();
   nav.selected = index;
   const auto& book = books[index];
+  if (clippingsOnly) {
+    openClippings(index);
+    return;
+  }
   if (book.bookmarkCount > 0 && book.clippingCount > 0) {
     showOpenMenu(index);
   } else if (book.bookmarkCount > 0) {
@@ -161,6 +174,10 @@ void SavedItemsActivity::showOpenMenu(const int index) {
 
 void SavedItemsActivity::showDeleteMenu(const int index) {
   if (index < 0 || index >= listCount()) return;
+  if (clippingsOnly) {
+    showDeleteConfirmation(index, false);
+    return;
+  }
   std::vector<std::string> options;
   if (books[index].bookmarkCount > 0) options.emplace_back(tr(STR_DELETE_BOOKMARKS));
   if (books[index].clippingCount > 0) options.emplace_back(tr(STR_DELETE_CLIPPINGS));
@@ -228,19 +245,24 @@ void SavedItemsActivity::openBookmarks(const int index) {
     requestUpdate();
     return;
   }
-  startActivityForResult(
-      std::make_unique<EpubReaderBookmarksActivity>(renderer, mappedInput, activeEpub, entry.sourcePath),
-      [this, entry](const ActivityResult& result) {
-        if (!result.isCancelled) {
-          if (const auto* position = std::get_if<ProgressChangeResult>(&result.data)) {
-            activityManager.goToReaderAt(entry.sourcePath, *position);
-            return;
-          }
-        }
-        activeEpub.reset();
-        reload();
-        requestUpdate();
-      });
+  auto activity = makeUniqueNoThrow<EpubReaderBookmarksActivity>(renderer, mappedInput, activeEpub, entry.sourcePath);
+  if (!activity) {
+    LOG_ERR("SAVED", "OOM: bookmarks activity");
+    activeEpub.reset();
+    requestUpdate();
+    return;
+  }
+  startActivityForResult(std::move(activity), [this, entry](const ActivityResult& result) {
+    if (!result.isCancelled) {
+      if (const auto* position = std::get_if<ProgressChangeResult>(&result.data)) {
+        activityManager.goToReaderAt(entry.sourcePath, *position);
+        return;
+      }
+    }
+    activeEpub.reset();
+    reload();
+    requestUpdate();
+  });
 }
 
 void SavedItemsActivity::openClippings(const int index) {
@@ -263,20 +285,27 @@ void SavedItemsActivity::openClippings(const int index) {
     requestUpdate();
     return;
   }
-  startActivityForResult(std::make_unique<EpubReaderClippingsActivity>(renderer, mappedInput, activeEpub,
-                                                                       activeClippings, activeClippingsWritable),
-                         [this, entry](const ActivityResult& result) {
-                           if (!result.isCancelled) {
-                             if (const auto* position = std::get_if<ProgressChangeResult>(&result.data)) {
-                               activityManager.goToReaderAt(entry.sourcePath, *position);
-                               return;
-                             }
-                           }
-                           activeClippings.clear();
-                           activeEpub.reset();
-                           reload();
-                           requestUpdate();
-                         });
+  auto activity = makeUniqueNoThrow<EpubReaderClippingsActivity>(renderer, mappedInput, activeEpub, activeClippings,
+                                                                 activeClippingsWritable);
+  if (!activity) {
+    LOG_ERR("SAVED", "OOM: clippings activity");
+    activeClippings.clear();
+    activeEpub.reset();
+    requestUpdate();
+    return;
+  }
+  startActivityForResult(std::move(activity), [this, entry](const ActivityResult& result) {
+    if (!result.isCancelled) {
+      if (const auto* position = std::get_if<ProgressChangeResult>(&result.data)) {
+        activityManager.goToReaderAt(entry.sourcePath, *position);
+        return;
+      }
+    }
+    activeClippings.clear();
+    activeEpub.reset();
+    reload();
+    requestUpdate();
+  });
 }
 
 void SavedItemsActivity::render(RenderLock&&) {

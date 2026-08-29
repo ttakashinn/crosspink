@@ -64,6 +64,9 @@ struct ThemeMetrics {
   // Selected-tab pill fills its equal-width slot (legacy RoundedRaff tabs)
   // instead of shrinking to hug the label (legacy Lyra tabs).
   bool tabPillFullSlot = false;
+  bool tabSpaceBetween = false;
+  int tabContentHorizontalPadding = 8;
+  int tabActiveUnderlineSize = 0;
 
   int scrollBarWidth;
   int scrollBarRightOffset;
@@ -136,7 +139,8 @@ enum UIIcon {
   Wifi,
   Hotspot,
   Bookmark,
-  Usb
+  Usb,
+  Statistics
 };
 
 // Default theme implementation (Classic Theme)
@@ -237,6 +241,9 @@ class BaseTheme {
   // grid from this, so hit bands always match the visuals (RoundedRaff derives
   // its row height from the font, not the metrics table).
   virtual int getMenuRowHeight(const GfxRenderer& renderer) const;
+  // Blank space before the first row drawn by drawButtonMenu. HomeActivity
+  // uses the same inset for paging and touch hit-testing.
+  virtual int getMenuTopInset() const;
   virtual void drawHeader(const GfxRenderer& renderer, Rect rect, const char* title,
                           const char* subtitle = nullptr) const;
   virtual void drawSubHeader(const GfxRenderer& renderer, Rect rect, const char* label,

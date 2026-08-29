@@ -26,6 +26,7 @@
 #include "reader/ReaderActivity.h"
 #include "settings/OpdsServerListActivity.h"
 #include "settings/SettingsActivity.h"
+#include "settings/VanNhanSoSettingsActivity.h"
 #include "util/BmpViewerActivity.h"
 #include "util/FrontlightPanelActivity.h"
 #include "util/FullScreenMessageActivity.h"
@@ -215,6 +216,10 @@ void ActivityManager::exitActivity(const RenderLock& lock) {
 }
 
 void ActivityManager::replaceActivity(std::unique_ptr<Activity>&& newActivity) {
+  if (!newActivity) {
+    LOG_ERR("ACT", "Refusing to replace current activity with null");
+    return;
+  }
   // Note: no lock here, this is usually called by loop() and we may run into deadlock
   if (currentActivity) {
     // Defer launch if we're currently in an activity, to avoid deleting the current activity
@@ -246,6 +251,10 @@ void ActivityManager::goToUsbDrive() {
 }
 
 void ActivityManager::goToSettings() { replaceActivity(std::make_unique<SettingsActivity>(renderer, mappedInput)); }
+
+void ActivityManager::goToVanNhanSoSettings(const bool returnToSettingsOnBack) {
+  replaceActivity(std::make_unique<VanNhanSoSettingsActivity>(renderer, mappedInput, returnToSettingsOnBack));
+}
 
 void ActivityManager::goToFileBrowser(std::string path) {
   replaceActivity(std::make_unique<FileBrowserActivity>(renderer, mappedInput, std::move(path)));
@@ -324,7 +333,7 @@ void ActivityManager::goHome(HomeMenuItem initialMenuItem, bool cleanInitialRefr
     } else if (activityName == "BookStats") {
       initialMenuItem = HomeMenuItem::READING_STATS;
     } else if (activityName == "SavedItems") {
-      initialMenuItem = HomeMenuItem::SAVED_ITEMS;
+      initialMenuItem = HomeMenuItem::MY_CLIPPINGS;
     } else if (activityName == "CrossPointWebServer") {
       initialMenuItem = HomeMenuItem::FILE_TRANSFER;
     } else if (activityName == "Settings") {
@@ -336,6 +345,10 @@ void ActivityManager::goHome(HomeMenuItem initialMenuItem, bool cleanInitialRefr
 void ActivityManager::goToCrashReport() { replaceActivity(std::make_unique<CrashActivity>(renderer, mappedInput)); }
 
 void ActivityManager::pushActivity(std::unique_ptr<Activity>&& activity) {
+  if (!activity) {
+    LOG_ERR("ACT", "Refusing to push a null activity");
+    return;
+  }
   if (pendingActivity) {
     // Should never happen in practice
     LOG_ERR("ACT", "pendingActivity while pushActivity is not expected");

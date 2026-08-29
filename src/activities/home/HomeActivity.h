@@ -28,8 +28,6 @@ class HomeActivity final : public Activity {
   int currentBookProgressPercent = -1;
   std::string currentBookChapterTitle;
   bool hasReadingStats = false;
-  bool hasSavedBookmarks = false;
-  bool hasSavedClippings = false;
   // Logical rect last passed to drawRecentBookCover. The cover snapshot only
   // needs to cover this region, not the entire framebuffer, so we cache the
   // tile instead of all 48 KB. Set in render() before the call.
@@ -42,7 +40,7 @@ class HomeActivity final : public Activity {
   const bool cleanInitialRefresh;
 
   // Convert HomeMenuItem to menu index (used in onEnter)
-  static int menuItemToIndex(HomeMenuItem item, bool hasOpdsUrl, bool hasStats, bool hasSavedItems) {
+  static int menuItemToIndex(HomeMenuItem item, bool hasOpdsUrl, bool hasStats) {
     int i = 0;
     if (item == HomeMenuItem::FILE_BROWSER) return i;
     ++i;
@@ -52,8 +50,8 @@ class HomeActivity final : public Activity {
     if (hasOpdsUrl) ++i;
     if (item == HomeMenuItem::READING_STATS) return hasStats ? i : 0;
     if (hasStats) ++i;
-    if (item == HomeMenuItem::SAVED_ITEMS) return hasSavedItems ? i : 0;
-    if (hasSavedItems) ++i;
+    if (item == HomeMenuItem::MY_CLIPPINGS) return i;
+    ++i;
     if (item == HomeMenuItem::FILE_TRANSFER) return i;
     ++i;
     if (item == HomeMenuItem::SETTINGS_MENU) return i;
@@ -61,13 +59,13 @@ class HomeActivity final : public Activity {
   }
 
   // Convert menu index to HomeMenuItem (used in loop)
-  static HomeMenuItem indexToMenuItem(int idx, bool hasOpdsUrl, bool hasStats, bool hasSavedItems) {
+  static HomeMenuItem indexToMenuItem(int idx, bool hasOpdsUrl, bool hasStats) {
     int i = 0;
     if (idx == i++) return HomeMenuItem::FILE_BROWSER;
     if (idx == i++) return HomeMenuItem::RECENTS;
     if (hasOpdsUrl && idx == i++) return HomeMenuItem::OPDS_BROWSER;
     if (hasStats && idx == i++) return HomeMenuItem::READING_STATS;
-    if (hasSavedItems && idx == i++) return HomeMenuItem::SAVED_ITEMS;
+    if (idx == i++) return HomeMenuItem::MY_CLIPPINGS;
     if (idx == i++) return HomeMenuItem::FILE_TRANSFER;
     if (idx == i) return HomeMenuItem::SETTINGS_MENU;
     return HomeMenuItem::NONE;
@@ -79,13 +77,13 @@ class HomeActivity final : public Activity {
   void onFileTransferOpen();
   void onOpdsBrowserOpen();
   void onReadingStatsOpen();
-  void onSavedItemsOpen();
+  void onMyClippingsOpen();
 
   int getMenuItemCount() const;
   int getDashboardMenuItemCount() const;
   bool usesDashboardHome() const;
   void loadReadingStats();
-  void loadSavedItems();
+  void ensureSavedItemsCatalog();
   void loopDashboardHome();
   bool storeCoverBuffer();    // Store frame buffer for cover image
   bool restoreCoverBuffer();  // Restore frame buffer from stored cover

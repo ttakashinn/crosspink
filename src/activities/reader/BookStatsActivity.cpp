@@ -72,13 +72,21 @@ void drawMetricCell(const GfxRenderer& renderer, const ReadingStatsRect& rect, c
   drawCentered(renderer, SMALL_FONT_ID, rect.x, rect.width, top + valueLine + 3, label);
 }
 
+void drawCardFrame(const GfxRenderer& renderer, const ReadingStatsRect& rect) {
+  const int radius = UITheme::getInstance().getMetrics().listRowRadius;
+  if (radius > 0)
+    renderer.drawRoundedRect(rect.x, rect.y, rect.width, rect.height, 1, radius, true);
+  else
+    renderer.drawRect(rect.x, rect.y, rect.width, rect.height);
+  renderer.drawLine(rect.x + 1, rect.y + CARD_TITLE_HEIGHT, rect.right() - 1, rect.y + CARD_TITLE_HEIGHT);
+}
+
 template <size_t N>
 void drawMetricCard(const GfxRenderer& renderer, const ReadingStatsRect& rect, const std::string& heading,
                     const std::array<std::string, N>& labels, const std::array<std::string, N>& values,
                     const int columns) {
   if (rect.width <= 0 || rect.height <= CARD_TITLE_HEIGHT || N == 0) return;
-  renderer.drawRect(rect.x, rect.y, rect.width, rect.height);
-  renderer.drawLine(rect.x, rect.y + CARD_TITLE_HEIGHT, rect.right(), rect.y + CARD_TITLE_HEIGHT);
+  drawCardFrame(renderer, rect);
   drawCentered(renderer, UI_10_FONT_ID, rect.x, rect.width,
                rect.y + (CARD_TITLE_HEIGHT - renderer.getLineHeight(UI_10_FONT_ID)) / 2, heading, EpdFontFamily::BOLD);
 
@@ -101,8 +109,7 @@ template <size_t N>
 void drawBarCard(const GfxRenderer& renderer, const ReadingStatsRect& rect, const char* heading,
                  const std::array<uint32_t, N>& values, const std::array<const char*, N>& labels) {
   if (rect.width <= 0 || rect.height <= CARD_TITLE_HEIGHT || N == 0) return;
-  renderer.drawRect(rect.x, rect.y, rect.width, rect.height);
-  renderer.drawLine(rect.x, rect.y + CARD_TITLE_HEIGHT, rect.right(), rect.y + CARD_TITLE_HEIGHT);
+  drawCardFrame(renderer, rect);
   drawCentered(renderer, UI_10_FONT_ID, rect.x, rect.width,
                rect.y + (CARD_TITLE_HEIGHT - renderer.getLineHeight(UI_10_FONT_ID)) / 2, heading, EpdFontFamily::BOLD);
 
@@ -301,7 +308,7 @@ void BookStatsActivity::adjustSelectedDate(const int delta) {
 void BookStatsActivity::saveEdits() {
   if (!editsChanged || !hasEditableBook()) return;
 
-  BookReadingStats persisted;
+  BookReadingStats persisted{};
   const auto bookLoad = ReadingStatsStore::loadBook(sourcePath, cachePath, persisted);
   if (bookLoad == ReadingStatsStore::LoadStatus::NEWER_VERSION || bookLoad == ReadingStatsStore::LoadStatus::IO_ERROR) {
     LOG_ERR("RSTAT", "Cannot save edited dates over unreadable/newer per-book stats");
@@ -309,19 +316,28 @@ void BookStatsActivity::saveEdits() {
   }
   if (bookLoad == ReadingStatsStore::LoadStatus::INVALID) persisted = {};
 
-  const bool wasCompleted = persisted.isCompleted;
+  const BookReadingStats originalBook = persisted;
+  const bool wasCompleted = originalBook.isCompleted;
   persisted.firstReadDateKey = stats.firstReadDateKey;
   persisted.firstReadDateManual = stats.firstReadDateManual;
   persisted.completedDateKey = stats.completedDateKey;
   persisted.completedDateManual = stats.completedDateManual;
   persisted.isCompleted = stats.isCompleted;
 
-  GlobalReadingStats persistedGlobal;
+  GlobalReadingStats persistedGlobal{};
   const auto globalLoad = ReadingStatsStore::loadGlobal(persistedGlobal);
   const bool globalWritable = globalLoad != ReadingStatsStore::LoadStatus::NEWER_VERSION &&
                               globalLoad != ReadingStatsStore::LoadStatus::IO_ERROR;
   if (globalLoad == ReadingStatsStore::LoadStatus::INVALID) persistedGlobal = {};
-  if (globalWritable && wasCompleted != persisted.isCompleted) {
+  const bool completionChanged = wasCompleted != persisted.isCompleted;
+  if (completionChanged && !globalWritable) {
+    // Do not commit half of a cross-file completion transaction. A retry
+    // would see the already-changed book and could no longer repair the
+    // global completed-books counter.
+    LOG_ERR("RSTAT", "Cannot change completion while global reading stats are unreadable/newer");
+    return;
+  }
+  if (completionChanged) {
     if (persisted.isCompleted) {
       persistedGlobal.completedBooks = ReadingStatsMath::saturatedAdd<uint32_t>(persistedGlobal.completedBooks, 1U);
     } else if (persistedGlobal.completedBooks > 0) {
@@ -333,9 +349,11 @@ void BookStatsActivity::saveEdits() {
     LOG_ERR("RSTAT", "Could not save edited reading dates");
     return;
   }
-  if (globalWritable && wasCompleted != persisted.isCompleted &&
-      ReadingStatsStore::saveGlobal(persistedGlobal) != ReadingStatsStore::SaveStatus::SAVED) {
+  if (completionChanged && ReadingStatsStore::saveGlobal(persistedGlobal) != ReadingStatsStore::SaveStatus::SAVED) {
     LOG_ERR("RSTAT", "Book completion changed but global reading stats could not be saved");
+    if (ReadingStatsStore::saveBook(sourcePath, cachePath, originalBook) != ReadingStatsStore::SaveStatus::SAVED) {
+      LOG_ERR("RSTAT", "CRITICAL: could not roll back per-book completion after global save failure");
+    }
     return;
   }
   editsChanged = false;
@@ -478,9 +496,17 @@ void BookStatsActivity::render(RenderLock&&) {
                                                       tr(STR_STATS_YEAR_FIELD)};
       for (int column = 0; column < 3; ++column) {
         const auto& field = layout.fields[row * 3 + column];
-        renderer.drawRect(field.x, field.y, field.width, field.height);
-        if (selectedDateField == row * 3 + column)
-          renderer.drawRect(field.x + 2, field.y + 2, field.width - 4, field.height - 4);
+        const int radius = metrics.listRowRadius;
+        if (radius > 0)
+          renderer.drawRoundedRect(field.x, field.y, field.width, field.height, 1, radius, true);
+        else
+          renderer.drawRect(field.x, field.y, field.width, field.height);
+        if (selectedDateField == row * 3 + column) {
+          if (radius > 2)
+            renderer.drawRoundedRect(field.x + 2, field.y + 2, field.width - 4, field.height - 4, 1, radius - 2, true);
+          else
+            renderer.drawRect(field.x + 2, field.y + 2, field.width - 4, field.height - 4);
+        }
         char value[8];
         if (!valid)
           snprintf(value, sizeof(value), "--");
@@ -494,8 +520,16 @@ void BookStatsActivity::render(RenderLock&&) {
       }
     }
     if (mappedInput.hasTouch()) {
-      renderer.drawRect(layout.decrease.x, layout.decrease.y, layout.decrease.width, layout.decrease.height);
-      renderer.drawRect(layout.increase.x, layout.increase.y, layout.increase.width, layout.increase.height);
+      const int radius = metrics.listRowRadius;
+      if (radius > 0) {
+        renderer.drawRoundedRect(layout.decrease.x, layout.decrease.y, layout.decrease.width, layout.decrease.height, 1,
+                                 radius, true);
+        renderer.drawRoundedRect(layout.increase.x, layout.increase.y, layout.increase.width, layout.increase.height, 1,
+                                 radius, true);
+      } else {
+        renderer.drawRect(layout.decrease.x, layout.decrease.y, layout.decrease.width, layout.decrease.height);
+        renderer.drawRect(layout.increase.x, layout.increase.y, layout.increase.width, layout.increase.height);
+      }
       drawCentered(renderer, UI_12_FONT_ID, layout.decrease.x, layout.decrease.width,
                    layout.decrease.y + (layout.decrease.height - renderer.getLineHeight(UI_12_FONT_ID)) / 2, "-",
                    EpdFontFamily::BOLD);

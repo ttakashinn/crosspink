@@ -533,7 +533,7 @@ void KOReaderSyncActivity::buildResultScreen(UiScreen& screen) {
     // or the band and the rows it contains fall out of sync.
     int16_t actionRowHeight = screen.theme().rowHeight;
     if (!mappedInput.hasTouch()) {
-      actionRowHeight = static_cast<int16_t>(UITheme::getInstance().getMetrics().listRowHeight);
+      actionRowHeight = uiScaledListMetric(UITheme::getInstance().getMetrics().listRowHeight);
       actionProps.rowHeight = actionRowHeight;
     }
     // Keep the theme's row inset + side padding so the selected-row highlight has
@@ -570,7 +570,7 @@ void KOReaderSyncActivity::buildResultScreen(UiScreen& screen) {
     // row height actually used on non-touch hardware (X3/X4).
     int16_t actionRowHeight = screen.theme().rowHeight;
     if (!mappedInput.hasTouch()) {
-      actionRowHeight = static_cast<int16_t>(UITheme::getInstance().getMetrics().listRowHeight);
+      actionRowHeight = uiScaledListMetric(UITheme::getInstance().getMetrics().listRowHeight);
       actionProps.rowHeight = actionRowHeight;
     }
     const auto actionsBand = static_cast<int16_t>(actionRowHeight + screen.theme().spaceMd);

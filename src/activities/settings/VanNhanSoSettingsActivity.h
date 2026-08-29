@@ -7,7 +7,8 @@
 
 class VanNhanSoSettingsActivity final : public UiListActivity {
  public:
-  explicit VanNhanSoSettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput);
+  explicit VanNhanSoSettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
+                                     bool returnToSettingsOnBack = false);
 
   void onEnter() override;
   void render(RenderLock&&) override;
@@ -16,6 +17,7 @@ class VanNhanSoSettingsActivity final : public UiListActivity {
   static constexpr int MAX_ITEM_COUNT = 7;
 
   OptionPopup optionPopup;
+  const bool returnToSettingsOnBack;
   std::string rowValues_[MAX_ITEM_COUNT];
   freeink::ui::ListItem rowItems_[MAX_ITEM_COUNT]{};
 
@@ -23,6 +25,7 @@ class VanNhanSoSettingsActivity final : public UiListActivity {
   void buildScreen(UiScreen& screen) override;
   void activateIndex(int index) override;
   bool handleCustomInput() override;
+  void onBackButton() override;
   const char* headerTitle() const override;
 
   StrId itemName(int index) const;

@@ -5,7 +5,9 @@
 
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
+#include "components/UIScale.h"
 #include "components/UITheme.h"
+#include "components/UIThemeTokens.h"
 
 namespace fui = freeink::ui;
 
@@ -119,6 +121,8 @@ void ButtonRemapActivity::render(RenderLock&&) {
                     tr(STR_REMAP_PROMPT));
 
   int topOffset = metrics.topPadding + metrics.headerHeight + metrics.tabBarHeight + metrics.verticalSpacing;
+  const int rowHeight =
+      mappedInput.hasTouch() ? uiThemeTokens(uiTarget).rowHeight : uiScaledListMetric(metrics.listRowHeight);
   renderUi();
 
   // Temporary warning banner for duplicates.
@@ -129,11 +133,9 @@ void ButtonRemapActivity::render(RenderLock&&) {
   }
 
   // Provide side button actions at the bottom of the screen (split across two lines).
-  GUI.drawHelpText(renderer,
-                   Rect{0, topOffset + 4 * metrics.listRowHeight + 4 * metrics.verticalSpacing, pageWidth, 20},
+  GUI.drawHelpText(renderer, Rect{0, topOffset + 4 * rowHeight + 4 * metrics.verticalSpacing, pageWidth, 20},
                    tr(STR_REMAP_RESET_HINT));
-  GUI.drawHelpText(renderer,
-                   Rect{0, topOffset + 4 * metrics.listRowHeight + 5 * metrics.verticalSpacing + 20, pageWidth, 20},
+  GUI.drawHelpText(renderer, Rect{0, topOffset + 4 * rowHeight + 5 * metrics.verticalSpacing + 20, pageWidth, 20},
                    tr(STR_REMAP_CANCEL_HINT));
 
   // Live preview of logical labels under front buttons.
@@ -171,7 +173,7 @@ void ButtonRemapActivity::buildScreen(UiScreen& screen) {
   props.inputMask = fui::InputNone;
   props.scrollIndicator = false;
   if (!mappedInput.hasTouch()) {
-    props.rowHeight = static_cast<int16_t>(metrics.listRowHeight);
+    props.rowHeight = uiScaledListMetric(metrics.listRowHeight);
   }
   screen.list(props);
 }

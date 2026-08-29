@@ -95,6 +95,7 @@ class RoundedRaffTheme : public BaseTheme {
                            int progressPercent, const GlobalReadingStats* globalStats,
                            const char* currentChapterTitle) const override;
   int getMenuRowHeight(const GfxRenderer& renderer) const override;
+  int getMenuTopInset() const override { return 0; }
   void drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                       const std::function<std::string(int index)>& buttonLabel,
                       const std::function<UIIcon(int index)>& rowIcon) const override;

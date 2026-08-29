@@ -38,6 +38,17 @@
 
 namespace fui = freeink::ui;
 
+namespace {
+
+bool opensChildSettingsScreen(const SettingInfo& setting) {
+  if (setting.type != SettingType::ACTION) return false;
+  // Reset opens a one-step confirmation surface rather than a child settings
+  // screen. Every other actionable entry navigates to a dedicated activity.
+  return setting.action != SettingAction::None && setting.action != SettingAction::ResetAllTimeStats;
+}
+
+}  // namespace
+
 const StrId SettingsActivity::categoryNames[categoryCount] = {StrId::STR_CAT_DISPLAY, StrId::STR_CAT_READER,
                                                               StrId::STR_CAT_CONTROLS, StrId::STR_CAT_SYSTEM};
 
@@ -186,6 +197,7 @@ void SettingsActivity::rebuildRowItems() {
     fui::ListItem item;
     item.label = I18N.get(settings[i].nameId);
     item.actionValue = static_cast<int16_t>(i);
+    item.chevron = opensChildSettingsScreen(settings[i]);
     rowItems_.push_back(item);
   }
 }
@@ -222,12 +234,12 @@ void SettingsActivity::onExit() {
 }
 
 void SettingsActivity::applyUiSettingChange(uint8_t CrossPointSettings::* valuePtr) {
-  // Theme changes take effect immediately, on this screen — reload the theme
-  // and re-derive the app's tokens so the very next repaint is in the new look.
-  if (valuePtr != &CrossPointSettings::uiTheme) {
+  // Theme and scale changes take effect immediately. resetUi() rebinds the
+  // scale-selected fonts before deriving fresh tokens for the next repaint.
+  if (valuePtr != &CrossPointSettings::uiTheme && valuePtr != &CrossPointSettings::uiScale) {
     return;
   }
-  UITheme::getInstance().reload();
+  if (valuePtr == &CrossPointSettings::uiTheme) UITheme::getInstance().reload();
   // Re-derive the shared tokens for the new look; the gate stays closed until
   // the repaint that rebuilds the interaction table in the new layout.
   resetUi();
@@ -542,12 +554,11 @@ void SettingsActivity::buildScreen(UiScreen& screen) {
   props.action = ACTION_ROW;
   props.inputMask = fui::InputTouch;  // physical buttons stay in loop()
   props.valueInset = 8;               // air between the value and the row edge
-  // Titles match the value's font size (smallText) so both sides of a row
-  // read as one unit; labels that still don't fit wrap onto a second line.
-  // maxLines=2 also marks the style explicitly set (an all-default smallText
-  // fails textStyleUnset and the list would substitute bodyText back); the
-  // common fits-on-one-line case takes the renderer's fast path anyway.
-  props.labelText = screen.theme().smallText;
+  // Settings labels are primary content, so use the normal UI body size while
+  // retaining the smaller trailing values as secondary information. Long
+  // labels wrap and grow only their own row; ListNav consumes the measured
+  // result, so increasing legibility cannot hide rows below the footer.
+  props.labelText = screen.theme().bodyText;
   props.labelText.maxLines = 2;
   syncTabListViewport(screen, props);
   screen.list(props);

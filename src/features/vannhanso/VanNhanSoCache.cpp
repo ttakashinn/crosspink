@@ -4,11 +4,9 @@
 #include <HalStorage.h>
 #include <Logging.h>
 
-#include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstring>
-#include <string>
-#include <vector>
 
 #include "VanNhanSoProfile.h"
 
@@ -19,20 +17,39 @@ constexpr const char* INDEX_PATH = "/.crosspoint/vannhanso-cache/index.txt";
 constexpr const char* INDEX_TEMP_PATH = "/.crosspoint/vannhanso-cache/index.tmp";
 constexpr const char* INDEX_BACKUP_PATH = "/.crosspoint/vannhanso-cache/index.bak";
 constexpr size_t MAX_PROFILE_CACHES = 8;
+constexpr size_t CACHE_TOKEN_CAPACITY = 33;
+using CacheToken = std::array<char, CACHE_TOKEN_CAPACITY>;
 
-bool safeCacheToken(const std::string& token) {
-  if (token.empty() || token.size() > 32) return false;
-  return std::all_of(token.begin(), token.end(), [](const char ch) {
-    return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || ch == 'x' || ch == '-';
-  });
+bool safeCacheToken(const char* token, const size_t length) {
+  if (!token || length == 0 || length > 32) return false;
+  for (size_t i = 0; i < length; ++i) {
+    const char ch = token[i];
+    if (!((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || ch == 'x' || ch == '-')) return false;
+  }
+  return true;
 }
 
-void removeProfileFiles(const std::string& token) {
-  if (!safeCacheToken(token)) return;
+void removeProfileFiles(const char* token, const size_t tokenLength) {
+  if (!safeCacheToken(token, tokenLength)) return;
   for (const char* extension : {"bmp", "bak", "date", "date.bak"}) {
-    const std::string path = std::string(vannhanso_profile::CACHE_DIRECTORY) + "/" + token + "." + extension;
-    Storage.remove(path.c_str());
+    char path[vannhanso_profile::PATH_MAX_LENGTH];
+    const int written = snprintf(path, sizeof(path), "%s/%.*s.%s", vannhanso_profile::CACHE_DIRECTORY,
+                                 static_cast<int>(tokenLength), token, extension);
+    if (written > 0 && static_cast<size_t>(written) < sizeof(path)) Storage.remove(path);
   }
+}
+
+bool cacheTokenEquals(const CacheToken& token, const char* value, const size_t valueLength) {
+  return valueLength < token.size() && strlen(token.data()) == valueLength &&
+         memcmp(token.data(), value, valueLength) == 0;
+}
+
+bool containsCacheToken(const std::array<CacheToken, MAX_PROFILE_CACHES>& entries, const size_t entryCount,
+                        const char* token, const size_t tokenLength) {
+  for (size_t i = 0; i < entryCount; ++i) {
+    if (cacheTokenEquals(entries[i], token, tokenLength)) return true;
+  }
+  return false;
 }
 
 void touchProfileIndex(const int screenWidth, const int screenHeight) {
@@ -46,31 +63,53 @@ void touchProfileIndex(const int screenWidth, const int screenHeight) {
     Storage.rename(INDEX_BACKUP_PATH, INDEX_PATH);
   }
 
-  std::vector<std::string> entries;
-  std::vector<std::string> evicted;
+  // This runs just after an HTTPS download, when the C3 heap is most
+  // fragmented. Keep the bounded LRU entirely on the stack.
+  std::array<CacheToken, MAX_PROFILE_CACHES> entries{};
+  size_t entryCount = 0;
   char body[512] = {};
   const size_t length = Storage.readFileToBuffer(INDEX_PATH, body, sizeof(body));
   size_t start = 0;
   while (start < length) {
     size_t end = start;
     while (end < length && body[end] != '\n' && body[end] != '\r') ++end;
-    const std::string entry(body + start, end - start);
-    if (safeCacheToken(entry) && entry != token) entries.push_back(entry);
+    const size_t entryLength = end - start;
+    if (safeCacheToken(body + start, entryLength) &&
+        !(entryLength == static_cast<size_t>(tokenLength) && memcmp(body + start, token, entryLength) == 0)) {
+      // A duplicate becomes the newest occurrence, preserving LRU semantics.
+      size_t duplicate = entryCount;
+      for (size_t i = 0; i < entryCount; ++i) {
+        if (cacheTokenEquals(entries[i], body + start, entryLength)) {
+          duplicate = i;
+          break;
+        }
+      }
+      if (duplicate < entryCount) {
+        for (size_t i = duplicate; i + 1 < entryCount; ++i) entries[i] = entries[i + 1];
+        --entryCount;
+      }
+      // Reserve the final slot for the profile being installed now.
+      if (entryCount == MAX_PROFILE_CACHES - 1) {
+        for (size_t i = 0; i + 1 < entryCount; ++i) entries[i] = entries[i + 1];
+        --entryCount;
+      }
+      memcpy(entries[entryCount].data(), body + start, entryLength);
+      entries[entryCount][entryLength] = '\0';
+      ++entryCount;
+    }
     while (end < length && (body[end] == '\n' || body[end] == '\r')) ++end;
     start = end;
   }
-  entries.emplace_back(token);
-  while (entries.size() > MAX_PROFILE_CACHES) {
-    evicted.push_back(entries.front());
-    entries.erase(entries.begin());
-  }
+  memcpy(entries[entryCount].data(), token, static_cast<size_t>(tokenLength) + 1);
+  ++entryCount;
 
   Storage.remove(INDEX_TEMP_PATH);
   HalFile file;
   if (!Storage.openFileForWrite("VNS", INDEX_TEMP_PATH, file)) return;
   bool writeOk = true;
-  for (const auto& entry : entries) {
-    writeOk = writeOk && file.write(reinterpret_cast<const uint8_t*>(entry.data()), entry.size()) == entry.size() &&
+  for (size_t i = 0; i < entryCount; ++i) {
+    const size_t entryLength = strlen(entries[i].data());
+    writeOk = writeOk && file.write(reinterpret_cast<const uint8_t*>(entries[i].data()), entryLength) == entryLength &&
               file.write(reinterpret_cast<const uint8_t*>("\n"), 1) == 1;
   }
   if (!file.close()) writeOk = false;
@@ -94,9 +133,27 @@ void touchProfileIndex(const int screenWidth, const int screenHeight) {
     return;
   }
   Storage.remove(INDEX_BACKUP_PATH);
-  // Delete evicted assets only after the durable index no longer references
-  // them. A failed index write therefore cannot orphan the active LRU state.
-  for (const auto& evictedToken : evicted) removeProfileFiles(evictedToken);
+  // Delete old assets only after the durable index no longer references them.
+  // Re-scan the old body to avoid retaining a second eviction collection.
+  start = 0;
+  while (start < length) {
+    size_t end = start;
+    while (end < length && body[end] != '\n' && body[end] != '\r') ++end;
+    const size_t oldLength = end - start;
+    if (safeCacheToken(body + start, oldLength) && !containsCacheToken(entries, entryCount, body + start, oldLength)) {
+      removeProfileFiles(body + start, oldLength);
+    }
+    while (end < length && (body[end] == '\n' || body[end] == '\r')) ++end;
+    start = end;
+  }
+}
+
+bool isLeapYear(const uint32_t year) { return (year % 4U == 0U && year % 100U != 0U) || year % 400U == 0U; }
+
+uint32_t daysInMonth(const uint32_t year, const uint32_t month) {
+  static constexpr uint8_t DAYS[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  if (month < 1 || month > 12) return 0;
+  return month == 2 && isLeapYear(year) ? 29U : DAYS[month - 1];
 }
 
 void recoverCacheState(const char* cachePath, const char* backupPath, const int screenWidth, const int screenHeight) {
@@ -119,6 +176,49 @@ void recoverCacheState(const char* cachePath, const char* backupPath, const int 
       }
     }
   }
+}
+
+bool findIndexedFallbackIn(const char* indexPath, const int screenWidth, const int screenHeight, char* output,
+                           const size_t outputSize) {
+  char body[512] = {};
+  const size_t length = Storage.readFileToBuffer(indexPath, body, sizeof(body));
+  if (length == 0) return false;
+
+  std::array<std::array<char, 33>, MAX_PROFILE_CACHES> entries{};
+  size_t entryCount = 0;
+  size_t start = 0;
+  while (start < length && entryCount < entries.size()) {
+    size_t end = start;
+    while (end < length && body[end] != '\n' && body[end] != '\r') ++end;
+    const size_t tokenLength = end - start;
+    if (safeCacheToken(body + start, tokenLength)) {
+      memcpy(entries[entryCount].data(), body + start, tokenLength);
+      entries[entryCount][tokenLength] = '\0';
+      ++entryCount;
+    }
+    while (end < length && (body[end] == '\n' || body[end] == '\r')) ++end;
+    start = end;
+  }
+
+  // The index is oldest -> newest. A profile change should keep showing the
+  // most recently installed image of the same panel size while the new profile
+  // is pending, rather than falling back to the CrossPoint "Sleeping" logo.
+  while (entryCount > 0) {
+    --entryCount;
+    const int written =
+        snprintf(output, outputSize, "%s/%s.bmp", vannhanso_profile::CACHE_DIRECTORY, entries[entryCount].data());
+    if (written > 0 && static_cast<size_t>(written) < outputSize && validateImage(output, screenWidth, screenHeight)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool findIndexedFallback(const int screenWidth, const int screenHeight, char* output, const size_t outputSize) {
+  // Prefer the canonical LRU index, but tolerate an interrupted index publish
+  // by checking its verified predecessor as well.
+  return findIndexedFallbackIn(INDEX_PATH, screenWidth, screenHeight, output, outputSize) ||
+         findIndexedFallbackIn(INDEX_BACKUP_PATH, screenWidth, screenHeight, output, outputSize);
 }
 }  // namespace
 
@@ -208,10 +308,12 @@ bool installDownloadedImage(const int screenWidth, const int screenHeight) {
 
 const char* findRenderableImage(const int screenWidth, const int screenHeight) {
   static char profilePath[vannhanso_profile::PATH_MAX_LENGTH];
+  static char fallbackPath[vannhanso_profile::PATH_MAX_LENGTH];
   if (vannhanso_profile::buildImagePath(screenWidth, screenHeight, profilePath, sizeof(profilePath)) &&
       validateImage(profilePath, screenWidth, screenHeight)) {
     return profilePath;
   }
+  if (findIndexedFallback(screenWidth, screenHeight, fallbackPath, sizeof(fallbackPath))) return fallbackPath;
   if (validateImage(CACHE_PATH, screenWidth, screenHeight)) return CACHE_PATH;
   if (validateImage(BACKUP_PATH, screenWidth, screenHeight)) return BACKUP_PATH;
   return nullptr;
@@ -236,7 +338,7 @@ bool readCurrentDate(const int screenWidth, const int screenHeight, uint32_t& da
   const uint32_t year = parsed / 10000U;
   const uint32_t month = (parsed / 100U) % 100U;
   const uint32_t day = parsed % 100U;
-  if (year < 2024 || year > 2100 || month < 1 || month > 12 || day < 1 || day > 31) return false;
+  if (year < 2024 || year > 2100 || day < 1 || day > daysInMonth(year, month)) return false;
   dateKey = parsed;
   return true;
 }

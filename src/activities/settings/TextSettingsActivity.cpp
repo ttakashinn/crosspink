@@ -245,10 +245,9 @@ void TextSettingsActivity::buildScreen(UiScreen& screen) {
   props.action = ACTION_ROW;
   props.inputMask = fui::InputTouch;  // physical buttons stay in loop()
   props.valueInset = 8;               // air between the value and the row edge
-  // Titles match the value's font size (smallText) so both sides of a row
-  // read as one unit; labels that still don't fit wrap onto a second line.
-  // maxLines=2 also marks the style explicitly set (see SettingsActivity).
-  props.labelText = screen.theme().smallText;
+  // Match the primary-label hierarchy used by the main Settings screen;
+  // trailing values remain small and long labels grow only their own row.
+  props.labelText = screen.theme().bodyText;
   props.labelText.maxLines = 2;
   syncTabListViewport(screen, props);
   screen.list(props);

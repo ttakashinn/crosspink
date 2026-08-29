@@ -13,8 +13,9 @@
 
 class SavedItemsActivity final : public UiListActivity {
  public:
-  SavedItemsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-      : UiListActivity("SavedItems", renderer, mappedInput, /*wantsTouchLongPress=*/true) {}
+  SavedItemsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const bool clippingsOnly = false)
+      : UiListActivity("SavedItems", renderer, mappedInput, /*wantsTouchLongPress=*/true),
+        clippingsOnly(clippingsOnly) {}
 
   void onEnter() override;
   void render(RenderLock&&) override;
@@ -27,6 +28,7 @@ class SavedItemsActivity final : public UiListActivity {
   std::vector<ClippingCodec::Record> activeClippings;
   bool activeClippingsWritable = true;
   bool catalogError = false;
+  const bool clippingsOnly;
   OptionPopup popup;
 
   int listCount() const override { return static_cast<int>(books.size()); }

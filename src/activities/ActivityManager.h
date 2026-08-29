@@ -24,7 +24,7 @@ enum class HomeMenuItem {
   RECENTS,
   OPDS_BROWSER,
   READING_STATS,
-  SAVED_ITEMS,
+  MY_CLIPPINGS,
   FILE_TRANSFER,
   SETTINGS_MENU
 };
@@ -94,6 +94,7 @@ class ActivityManager {
   void goToFileTransfer();
   void goToUsbDrive();
   void goToSettings();
+  void goToVanNhanSoSettings(bool returnToSettingsOnBack = false);
   void goToFileBrowser(std::string path = {});
   void goToRecentBooks();
   void goToBrowser();

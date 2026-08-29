@@ -11,6 +11,7 @@
 // std::unique_ptr<Activity> members. Destroying that unique_ptr needs the complete type, so the
 // definition must be visible here.
 #include "activities/Activity.h"
+#include "components/UIScale.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/ButtonNavigator.h"
@@ -181,7 +182,7 @@ void EndOfBookOptions::buildListScreen(UiScreen& screen) {
     // menu never scrolls, so there's no viewport to resync here. No
     // MappedInputManager reference here (this class isn't an Activity), so
     // this reads the capability directly like BaseTheme's draw code does.
-    props.rowHeight = static_cast<int16_t>(metrics.listRowHeight);
+    props.rowHeight = uiScaledListMetric(metrics.listRowHeight);
   }
   screen.list(props);
 }

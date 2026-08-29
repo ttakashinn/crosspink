@@ -12,11 +12,13 @@ class VanNhanSoUpdateActivity final : public Activity {
  public:
   explicit VanNhanSoUpdateActivity(
       GfxRenderer& renderer, MappedInputManager& mappedInput,
-      vannhanso_update_policy::UpdateTrigger trigger = vannhanso_update_policy::UpdateTrigger::MANUAL)
+      vannhanso_update_policy::UpdateTrigger trigger = vannhanso_update_policy::UpdateTrigger::MANUAL,
+      bool returnToVanNhanSoSettings = false)
       : Activity("VanNhanSoUpdate", renderer, mappedInput),
         trigger(trigger),
         automatic(vannhanso_update_policy::isAutomatic(trigger)),
-        sleepAfterUpdate(vannhanso_update_policy::shouldSleepAfterUpdate(trigger)) {}
+        sleepAfterUpdate(vannhanso_update_policy::shouldSleepAfterUpdate(trigger)),
+        returnToVanNhanSoSettings(returnToVanNhanSoSettings) {}
 
   void onEnter() override;
   void onExit() override;
@@ -43,6 +45,7 @@ class VanNhanSoUpdateActivity final : public Activity {
   const vannhanso_update_policy::UpdateTrigger trigger;
   const bool automatic;
   const bool sleepAfterUpdate;
+  const bool returnToVanNhanSoSettings;
   bool shouldTearDownWifiOnExit = false;
   bool cancelDownload = false;
   bool pendingProfileRequired = false;
@@ -74,7 +77,7 @@ class VanNhanSoUpdateActivity final : public Activity {
   void downloadSleepScreen();
   void recordAttempt();
   void recordSuccess();
-  void recordCancelled();
+  void recordCancelled(bool returnToStatus = false);
   void fail(CrossPointState::VanNhanSoUpdateError error);
   void failDownload(HttpDownloader::DownloadError result, const HttpDownloader::ResponseInfo& responseInfo);
   bool validateChecksum(const char* path, const std::string& expectedChecksum, bool logMismatch = true) const;

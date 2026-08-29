@@ -2,15 +2,15 @@
 
 #include <GfxRenderer.h>
 
-#include "fontIds.h"
+#include "components/UIScale.h"
+#include "components/UITheme.h"
 
 void FullScreenMessageActivity::onEnter() {
   Activity::onEnter();
 
-  const auto height = renderer.getLineHeight(UI_10_FONT_ID);
-  const auto top = (renderer.getScreenHeight() - height) / 2;
-
+  const int fontId = uiScaleSpec().bodyFontId;
   renderer.clearScreen();
-  renderer.drawCenteredText(UI_10_FONT_ID, top, text.c_str(), true, style);
+  UITheme::drawCenteredWrappedText(renderer, Rect{20, 0, renderer.getScreenWidth() - 40, renderer.getScreenHeight()},
+                                   fontId, text.c_str(), 5, true, style);
   renderer.displayBuffer(refreshMode);
 }

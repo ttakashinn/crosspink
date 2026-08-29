@@ -2,6 +2,7 @@
 
 #include <Bitmap.h>
 #include <GfxRenderer.h>
+#include <HalGPIO.h>
 #include <HalStorage.h>
 #include <I18n.h>
 
@@ -13,7 +14,19 @@
 #include "RecentBooksStore.h"
 #include "activities/reader/BookStatsActivity.h"
 #include "activities/reader/ReadingStatsClock.h"
+#include "components/UIScale.h"
 #include "components/UITheme.h"
+#include "components/icons/afternoon.h"
+#include "components/icons/book24.h"
+#include "components/icons/bookmark.h"
+#include "components/icons/chart.h"
+#include "components/icons/evening.h"
+#include "components/icons/library.h"
+#include "components/icons/morning.h"
+#include "components/icons/night.h"
+#include "components/icons/recent.h"
+#include "components/icons/streak.h"
+#include "components/icons/transfer.h"
 #include "fontIds.h"
 namespace {
 
@@ -28,6 +41,26 @@ constexpr int COVER_CORNER_RADIUS = 8;
 constexpr int TITLE_TOP_GAP = 28;
 constexpr int TITLE_SUBTITLE_GAP = 8;
 constexpr int FOOTER_BOTTOM_GAP = 54;
+constexpr int FOOTER_ICON_SIZE = 24;
+constexpr int FOOTER_ICON_TEXT_GAP = 14;
+constexpr int MENU_PANEL_MAX_WIDTH_X4 = 400;
+constexpr int MENU_PANEL_MAX_WIDTH_X3 = 420;
+constexpr int MENU_PANEL_MARGIN = 32;
+constexpr int MENU_PANEL_PADDING = 16;
+constexpr int MENU_PANEL_RADIUS = 12;
+constexpr int MENU_PANEL_BORDER = 2;
+constexpr int MENU_TITLE_BOTTOM_GAP = 10;
+constexpr int MENU_ROW_MIN_HEIGHT = 52;
+constexpr int MENU_ROW_GAP = 5;
+constexpr int MENU_ROW_RADIUS = 9;
+constexpr int MENU_ICON_SIZE = 32;
+constexpr int MENU_ICON_TEXT_GAP = 14;
+constexpr int MENU_ROW_SIDE_PADDING = 14;
+constexpr int ACTION_BUTTON_GAP = 8;
+constexpr int ACTION_SIDE_MARGIN_X4 = 20;
+constexpr int ACTION_SIDE_MARGIN_X3 = 38;
+constexpr int ACTION_BUTTON_RADIUS = 10;
+constexpr int ACTION_TEXT_Y_OFFSET = 7;
 
 struct DashboardData {
   BookReadingStats book;
@@ -113,17 +146,69 @@ std::string formatStreak(const GlobalReadingStats& stats, const uint32_t today) 
 
 const char* readerType(const GlobalReadingStats& stats) {
   const auto best = std::max_element(stats.timeOfDaySeconds.begin(), stats.timeOfDaySeconds.end());
-  if (best == stats.timeOfDaySeconds.end() || *best == 0) return tr(STR_STATS_NEW_READER);
+  if (best == stats.timeOfDaySeconds.end() || *best == 0) return tr(STR_STATS_NEW_READER_SHORT);
   switch (std::distance(stats.timeOfDaySeconds.begin(), best)) {
     case 0:
-      return tr(STR_STATS_MORNING_READER);
+      return tr(STR_STATS_MORNING_READER_SHORT);
     case 1:
-      return tr(STR_STATS_AFTERNOON_READER);
+      return tr(STR_STATS_AFTERNOON_READER_SHORT);
     case 2:
-      return tr(STR_STATS_EVENING_READER);
+      return tr(STR_STATS_EVENING_READER_SHORT);
     default:
-      return tr(STR_STATS_NIGHT_READER);
+      return tr(STR_STATS_NIGHT_READER_SHORT);
   }
+}
+
+const uint8_t* readerTypeIcon(const GlobalReadingStats& stats) {
+  const auto best = std::max_element(stats.timeOfDaySeconds.begin(), stats.timeOfDaySeconds.end());
+  if (best == stats.timeOfDaySeconds.end() || *best == 0) return Book24Icon;
+  switch (std::distance(stats.timeOfDaySeconds.begin(), best)) {
+    case 0:
+      return MorningReaderIcon;
+    case 1:
+      return AfternoonReaderIcon;
+    case 2:
+      return EveningReaderIcon;
+    default:
+      return NightReaderIcon;
+  }
+}
+
+const uint8_t* menuIcon(const UIIcon icon) {
+  switch (icon) {
+    case UIIcon::Recent:
+      return RecentIcon;
+    case UIIcon::Library:
+      return LibraryIcon;
+    case UIIcon::Statistics:
+      return ChartIcon;
+    case UIIcon::Bookmark:
+      return BookmarkIcon;
+    case UIIcon::Transfer:
+      return TransferIcon;
+    default:
+      return nullptr;
+  }
+}
+
+void drawIconLabel(const GfxRenderer& renderer, const uint8_t* icon, const int iconX, const int centerY,
+                   const char* label, const int maxTextWidth) {
+  const std::string visible = renderer.truncatedText(UI_10_FONT_ID, label, std::max(1, maxTextWidth));
+  const int lineHeight = renderer.getLineHeight(UI_10_FONT_ID);
+  renderer.drawIcon(icon, iconX, centerY - FOOTER_ICON_SIZE / 2, FOOTER_ICON_SIZE);
+  renderer.drawText(UI_10_FONT_ID, iconX + FOOTER_ICON_SIZE + FOOTER_ICON_TEXT_GAP, centerY - lineHeight / 2,
+                    visible.c_str(), true, EpdFontFamily::BOLD);
+}
+
+void drawRightAlignedIconLabel(const GfxRenderer& renderer, const uint8_t* icon, const int right, const int centerY,
+                               const char* label, const int maxTextWidth) {
+  const std::string visible = renderer.truncatedText(UI_10_FONT_ID, label, std::max(1, maxTextWidth));
+  const int labelWidth = renderer.getTextWidth(UI_10_FONT_ID, visible.c_str(), EpdFontFamily::BOLD);
+  const int textX = right - labelWidth;
+  const int iconX = textX - FOOTER_ICON_TEXT_GAP - FOOTER_ICON_SIZE;
+  renderer.drawIcon(icon, iconX, centerY - FOOTER_ICON_SIZE / 2, FOOTER_ICON_SIZE);
+  renderer.drawText(UI_10_FONT_ID, textX, centerY - renderer.getLineHeight(UI_10_FONT_ID) / 2, visible.c_str(), true,
+                    EpdFontFamily::BOLD);
 }
 
 void drawCover(const GfxRenderer& renderer, const Rect& target, const RecentBook& recent) {
@@ -242,29 +327,73 @@ void drawStatsColumn(const GfxRenderer& renderer, const Rect& cover, const Dashb
 
 void drawFooter(const GfxRenderer& renderer, const Rect& cover, const DashboardData& data) {
   const int inset = contentInset(renderer);
-  const int y = renderer.getScreenHeight() - UITheme::getInstance().getMetrics().buttonHintsHeight - FOOTER_BOTTOM_GAP;
+  // Dashboard Home always has a visible action row: physical-button hints on
+  // X3/X4 and actual touch targets on X4 Pro.
+  const int buttonHintReserve = DashboardMetrics::values.buttonHintsHeight;
+  const int centerY = renderer.getScreenHeight() - buttonHintReserve - FOOTER_BOTTOM_GAP;
   const int half = renderer.getScreenWidth() / 2;
   if (ReadingStatsClock::hasPersistentWallClock()) {
-    const std::string left = renderer.truncatedText(
-        UI_10_FONT_ID, formatStreak(data.global, ReadingStatsClock::currentLocalDateKey()).c_str(), half - inset - 8);
-    renderer.drawText(UI_10_FONT_ID, cover.x, y, left.c_str(), true, EpdFontFamily::BOLD);
-    const std::string right = renderer.truncatedText(UI_10_FONT_ID, readerType(data.global), half - inset - 8);
-    drawRightAligned(renderer, UI_10_FONT_ID, renderer.getScreenWidth() - inset - pairInwardShift(renderer), y, right,
-                     EpdFontFamily::BOLD, half - inset - 8);
+    const std::string streak = formatStreak(data.global, ReadingStatsClock::currentLocalDateKey());
+    const int maxTextWidth = half - inset - FOOTER_ICON_SIZE - FOOTER_ICON_TEXT_GAP - 8;
+    drawIconLabel(renderer, StreakIcon, cover.x, centerY, streak.c_str(), maxTextWidth);
+    drawRightAlignedIconLabel(renderer, readerTypeIcon(data.global),
+                              renderer.getScreenWidth() - inset - pairInwardShift(renderer), centerY,
+                              readerType(data.global), maxTextWidth);
     return;
   }
 
-  renderer.drawText(UI_12_FONT_ID, cover.x, y - renderer.getLineHeight(UI_12_FONT_ID),
+  renderer.drawText(UI_12_FONT_ID, cover.x, centerY - renderer.getLineHeight(UI_12_FONT_ID),
                     BookStatsActivity::formatDuration(data.global.totalReadingSeconds).c_str(), true,
                     EpdFontFamily::BOLD);
-  renderer.drawText(SMALL_FONT_ID, cover.x, y + 2, tr(STR_STATS_TOTAL_TIME));
+  renderer.drawText(SMALL_FONT_ID, cover.x, centerY + 2, tr(STR_STATS_TOTAL_TIME));
   const std::string books = std::to_string(data.global.completedBooks);
   drawRightAligned(renderer, UI_12_FONT_ID, renderer.getScreenWidth() - inset,
-                   y - renderer.getLineHeight(UI_12_FONT_ID), books, EpdFontFamily::BOLD);
-  drawRightAligned(renderer, SMALL_FONT_ID, renderer.getScreenWidth() - inset, y + 2, tr(STR_STATS_BOOKS_COMPLETED));
+                   centerY - renderer.getLineHeight(UI_12_FONT_ID), books, EpdFontFamily::BOLD);
+  drawRightAligned(renderer, SMALL_FONT_ID, renderer.getScreenWidth() - inset, centerY + 2,
+                   tr(STR_STATS_BOOKS_COMPLETED));
+}
+
+void drawHomeActionRow(GfxRenderer& renderer, const char* const* labels) {
+  for (int i = 0; i < 4; ++i) {
+    if (labels[i] == nullptr || labels[i][0] == '\0') continue;
+    const Rect button = DashboardTheme::homeActionRectForScreen(renderer, i);
+    renderer.fillRoundedRect(button.x, button.y, button.width, button.height, ACTION_BUTTON_RADIUS, true, true, false,
+                             false, Color::White);
+    renderer.drawRoundedRect(button.x, button.y, button.width, button.height, 1, ACTION_BUTTON_RADIUS, true, true,
+                             false, false, true);
+    // drawRoundedRect intentionally omits the unrounded lower corners; extend
+    // the side rails to the panel edge while keeping the bottom border open.
+    renderer.drawLine(button.x, button.y + ACTION_BUTTON_RADIUS, button.x, renderer.getScreenHeight() - 1, true);
+    renderer.drawLine(button.x + button.width - 1, button.y + ACTION_BUTTON_RADIUS, button.x + button.width - 1,
+                      renderer.getScreenHeight() - 1, true);
+    BaseTheme::drawHintLabel(renderer, UI_10_FONT_ID, labels[i], button.x, button.width, button.y, button.height,
+                             ACTION_TEXT_Y_OFFSET);
+  }
 }
 
 }  // namespace
+
+void DashboardTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
+                                     const char* btn4) const {
+  if (gpio.hasTouch()) return;
+
+  const GfxRenderer::Orientation originalOrientation = renderer.getOrientation();
+  renderer.setOrientation(GfxRenderer::Orientation::Portrait);
+
+  const char* labels[] = {btn1, btn2, btn3, btn4};
+  drawHomeActionRow(renderer, labels);
+
+  renderer.setOrientation(originalOrientation);
+}
+
+void DashboardTheme::drawHomeTouchActions(GfxRenderer& renderer, const char* action1, const char* action2,
+                                          const char* action3, const char* action4) const {
+  const GfxRenderer::Orientation originalOrientation = renderer.getOrientation();
+  renderer.setOrientation(GfxRenderer::Orientation::Portrait);
+  const char* labels[] = {action1, action2, action3, action4};
+  drawHomeActionRow(renderer, labels);
+  renderer.setOrientation(originalOrientation);
+}
 
 Rect DashboardTheme::coverRectForScreen(const GfxRenderer& renderer, const Rect tile) {
   const int inset = contentInset(renderer);
@@ -273,6 +402,71 @@ Rect DashboardTheme::coverRectForScreen(const GfxRenderer& renderer, const Rect 
   const int width = std::max(1, std::min(DashboardMetrics::coverImageWidth, maximumWidth));
   const int height = std::max(1, std::min(DashboardMetrics::coverImageHeight, width * 3 / 2));
   return Rect{inset + pairInwardShift(renderer), tile.y + TOP_INSET, width, height};
+}
+
+Rect DashboardTheme::homeActionRectForScreen(const GfxRenderer& renderer, const int actionIndex) {
+  if (actionIndex < 0 || actionIndex >= 4) return Rect{};
+  const int screenWidth = renderer.getScreenWidth();
+  const int sideMargin = screenWidth >= 528 ? ACTION_SIDE_MARGIN_X3 : ACTION_SIDE_MARGIN_X4;
+  const int available = screenWidth - sideMargin * 2 - ACTION_BUTTON_GAP * 3;
+  const int buttonWidth = std::max(1, available / 4);
+  const int usedWidth = buttonWidth * 4 + ACTION_BUTTON_GAP * 3;
+  const int startX = (screenWidth - usedWidth) / 2;
+  return Rect{startX + actionIndex * (buttonWidth + ACTION_BUTTON_GAP),
+              renderer.getScreenHeight() - DashboardMetrics::values.buttonHintsHeight, buttonWidth,
+              DashboardMetrics::values.buttonHintsHeight};
+}
+
+DashboardMenuLayout DashboardTheme::menuLayoutForScreen(const GfxRenderer& renderer, const int itemCount) {
+  const auto spec = uiScaleSpec();
+  const int rowHeight = std::max(MENU_ROW_MIN_HEIGHT, renderer.getLineHeight(spec.bodyFontId) + 20);
+  const int titleHeight = renderer.getLineHeight(UI_12_FONT_ID);
+  const int rowsHeight = std::max(0, itemCount) * rowHeight + std::max(0, itemCount - 1) * MENU_ROW_GAP;
+  const int panelHeight = MENU_PANEL_PADDING + titleHeight + MENU_TITLE_BOTTOM_GAP + rowsHeight + MENU_PANEL_PADDING;
+  const int maxWidth = wideScreen(renderer) ? MENU_PANEL_MAX_WIDTH_X3 : MENU_PANEL_MAX_WIDTH_X4;
+  const int panelWidth = std::max(1, std::min(maxWidth, renderer.getScreenWidth() - MENU_PANEL_MARGIN * 2));
+  const int safeTop = DashboardMetrics::values.homeTopPadding + MENU_PANEL_MARGIN;
+  const int buttonHintReserve = DashboardMetrics::values.buttonHintsHeight;
+  const int safeBottom = renderer.getScreenHeight() - buttonHintReserve - MENU_PANEL_MARGIN;
+  const int panelY = safeTop + std::max(0, safeBottom - safeTop - panelHeight) / 2;
+  const Rect panel{(renderer.getScreenWidth() - panelWidth) / 2, panelY, panelWidth, panelHeight};
+  const Rect rows{panel.x + MENU_PANEL_PADDING, panel.y + MENU_PANEL_PADDING + titleHeight + MENU_TITLE_BOTTOM_GAP,
+                  panel.width - MENU_PANEL_PADDING * 2, rowsHeight};
+  return DashboardMenuLayout{panel, rows, rowHeight, MENU_ROW_GAP};
+}
+
+void DashboardTheme::drawHomeMenu(GfxRenderer& renderer, const char* const* labels, const UIIcon* icons,
+                                  const int itemCount, const int selectedIndex) const {
+  const DashboardMenuLayout layout = menuLayoutForScreen(renderer, itemCount);
+  renderer.fillRoundedRect(layout.panel.x, layout.panel.y, layout.panel.width, layout.panel.height, MENU_PANEL_RADIUS,
+                           Color::White);
+  renderer.drawRoundedRect(layout.panel.x, layout.panel.y, layout.panel.width, layout.panel.height, MENU_PANEL_BORDER,
+                           MENU_PANEL_RADIUS, true);
+
+  const int titleY = layout.panel.y + MENU_PANEL_PADDING;
+  renderer.drawCenteredText(UI_12_FONT_ID, titleY, tr(STR_DASHBOARD_MENU), true, EpdFontFamily::BOLD);
+
+  const auto spec = uiScaleSpec();
+  const int lineHeight = renderer.getLineHeight(spec.bodyFontId);
+  for (int i = 0; i < itemCount; ++i) {
+    const int rowY = layout.rows.y + i * (layout.rowHeight + layout.rowGap);
+    const bool selected = i == selectedIndex;
+    if (selected) {
+      renderer.fillRoundedRect(layout.rows.x, rowY, layout.rows.width, layout.rowHeight, MENU_ROW_RADIUS,
+                               Color::LightGray);
+      renderer.fillRoundedRect(layout.rows.x, rowY + 8, 4, layout.rowHeight - 16, 2, Color::Black);
+    }
+
+    const uint8_t* icon = menuIcon(icons[i]);
+    const int iconX = layout.rows.x + MENU_ROW_SIDE_PADDING;
+    if (icon != nullptr) renderer.drawIcon(icon, iconX, rowY + (layout.rowHeight - MENU_ICON_SIZE) / 2, MENU_ICON_SIZE);
+    const int textX = iconX + MENU_ICON_SIZE + MENU_ICON_TEXT_GAP;
+    const int textWidth = layout.rows.x + layout.rows.width - MENU_ROW_SIDE_PADDING - textX;
+    const std::string visible = renderer.truncatedText(spec.bodyFontId, labels[i], std::max(1, textWidth),
+                                                       selected ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
+    renderer.drawText(spec.bodyFontId, textX, rowY + (layout.rowHeight - lineHeight) / 2, visible.c_str(), true,
+                      selected ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
+  }
 }
 
 void DashboardTheme::drawRecentBookCover(GfxRenderer& renderer, const Rect rect,

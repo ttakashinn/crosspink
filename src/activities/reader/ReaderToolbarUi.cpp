@@ -9,6 +9,7 @@
 
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
+#include "components/UIScale.h"
 #include "components/UITheme.h"
 #include "components/icons/readerToolbarIcons.h"
 
@@ -238,7 +239,7 @@ void ReaderToolbarUi::buildPanel(UiScreen& screen) {
   listProps_.action = ACTION_ROW;
   listProps_.inputMask = fui::InputTouch;  // physical buttons stay with the reader
   listProps_.rowHeight =
-      model_.denseRows ? static_cast<int16_t>(UITheme::getInstance().getMetrics().listRowHeight) : tokens.rowHeight;
+      model_.denseRows ? uiScaledListMetric(UITheme::getInstance().getMetrics().listRowHeight) : tokens.rowHeight;
   const fui::Rect listRect = screen.body();
   const int count = std::max(0, model_.itemCount);
   // The nav owns selection + viewport (same fui::ListNav idiom as the list

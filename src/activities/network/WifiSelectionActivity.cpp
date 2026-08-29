@@ -13,6 +13,7 @@
 #include "MappedInputManager.h"
 #include "WifiCredentialStore.h"
 #include "activities/util/KeyboardEntryActivity.h"
+#include "components/UIScale.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -862,7 +863,10 @@ void WifiSelectionActivity::render(RenderLock&&) {
       renderNetworkList(&screen, &metrics);
       break;
     case WifiSelectionState::HIDDEN_SSID_ENTRY:
-      // Transitioning to/from the SSID keyboard subactivity - nothing to draw
+    case WifiSelectionState::PASSWORD_ENTRY:
+      // Transitioning to/from a keyboard subactivity - nothing to draw. The
+      // early return above prevents this branch in normal execution; keeping
+      // both states explicit makes the state machine exhaustive.
       break;
     case WifiSelectionState::CONNECTING:
       renderConnecting(&screen, &metrics);
@@ -951,7 +955,7 @@ void WifiSelectionActivity::buildListScreen(UiScreen& screen) {
     // UiListActivity::syncListViewport; this screen predates that base and
     // syncs its own viewport directly). A long SSID that wraps grows only
     // its own row: list() sizes wrapped items per-row.
-    rowHeight = static_cast<int16_t>(metrics.listRowHeight);
+    rowHeight = uiScaledListMetric(metrics.listRowHeight);
     props.rowHeight = rowHeight;
   }
   listNav.syncToProps(screen.body(), rowHeight, screen.theme().listRowGap, static_cast<int>(networks.size()), props);
