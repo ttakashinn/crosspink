@@ -32,6 +32,12 @@ class ContentOpfParser final : public Print {
   HalFile tempItemStore;
   std::string coverItemId;
   bool hasExplicitStartReference = false;
+  bool failed = false;
+  bool packageSeen = false;
+  bool manifestSeen = false;
+  bool spineSeen = false;
+  uint32_t resolvedSpineItems = 0;
+  uint32_t unresolvedSpineItems = 0;
 
   // Index for fast idref→href lookup (binary search over .items.bin)
   struct ItemIndexEntry {
@@ -41,6 +47,7 @@ class ContentOpfParser final : public Print {
   };
   std::deque<ItemIndexEntry> itemIndex;
   bool useItemIndex = false;
+  bool itemIndexComplete = true;
 
   // FNV-1a hash function
   static uint32_t fnvHash(const std::string& s) {
@@ -73,6 +80,8 @@ class ContentOpfParser final : public Print {
   ~ContentOpfParser() override;
 
   bool setup();
+  bool isUsable(bool requireResolvedSpine) const;
+  uint32_t getUnresolvedSpineItems() const { return unresolvedSpineItems; }
 
   size_t write(uint8_t) override;
   size_t write(const uint8_t* buffer, size_t size) override;

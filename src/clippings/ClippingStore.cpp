@@ -1,16 +1,44 @@
 #include "ClippingStore.h"
 
 #include <HalStorage.h>
+#include <Logging.h>
 #include <Utf8.h>
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
 
 namespace ClippingStore {
 namespace {
 
 constexpr char FILE_NAME[] = "clippings-vns.bin";
 enum class ReadStatus { OK, MISSING, NEWER_VERSION, INVALID, IO_ERROR };
+
+uint64_t fnv1a64(const std::string& value) {
+  uint64_t hash = 14695981039346656037ULL;
+  for (const char byte : value) {
+    hash ^= static_cast<uint8_t>(byte);
+    hash *= 1099511628211ULL;
+  }
+  return hash;
+}
+
+std::string parentPath(const std::string& path) {
+  const size_t slash = path.find_last_of('/');
+  if (slash == std::string::npos) return ".";
+  if (slash == 0) return "/";
+  return path.substr(0, slash);
+}
+
+std::string durableDirectory(const std::string& legacyCachePath) {
+  const std::string root = parentPath(legacyCachePath);
+  return root + (root == "/" ? "" : "/") + "clippings";
+}
+
+std::string durablePathFor(const std::string& sourcePath, const std::string& legacyCachePath, const char* suffix) {
+  const std::string directory = durableDirectory(legacyCachePath);
+  return directory + "/epub_" + std::to_string(fnv1a64(sourcePath)) + ".bin" + suffix;
+}
 
 uint16_t readU16(const uint8_t* bytes) {
   return static_cast<uint16_t>(bytes[0]) | (static_cast<uint16_t>(bytes[1]) << 8);
@@ -28,7 +56,7 @@ void updateCrc(uint32_t& crc, const uint8_t* bytes, const size_t length) {
   }
 }
 
-std::string pathFor(const std::string& cachePath, const char* suffix) {
+std::string legacyPathFor(const std::string& cachePath, const char* suffix) {
   return cachePath + (cachePath.empty() || cachePath.back() == '/' ? "" : "/") + FILE_NAME + suffix;
 }
 bool removeIfPresent(const std::string& path) { return !Storage.exists(path.c_str()) || Storage.remove(path.c_str()); }
@@ -174,12 +202,8 @@ bool writeVerified(const std::string& path, const std::vector<uint8_t>& bytes) {
 
 }  // namespace
 
-LoadStatus load(const std::string& cachePath, std::vector<ClippingCodec::Record>& records) {
-  const std::array<std::pair<std::string, LoadStatus>, 3> paths = {
-      std::pair{pathFor(cachePath, ""), LoadStatus::LOADED},
-      std::pair{pathFor(cachePath, ".bak"), LoadStatus::LOADED_BACKUP},
-      std::pair{pathFor(cachePath, ".tmp"), LoadStatus::LOADED_TEMP},
-  };
+LoadStatus loadFromBasePaths(const std::array<std::pair<std::string, LoadStatus>, 3>& paths,
+                             std::vector<ClippingCodec::Record>& records) {
   std::array<ReadStatus, 3> statuses{};
   bool invalid = false;
   for (size_t i = 0; i < paths.size(); ++i) {
@@ -217,12 +241,15 @@ LoadStatus load(const std::string& cachePath, std::vector<ClippingCodec::Record>
   return invalid ? LoadStatus::INVALID : LoadStatus::MISSING;
 }
 
-SaveStatus save(const std::string& cachePath, const std::vector<ClippingCodec::Record>& records) {
+SaveStatus save(const std::string& sourcePath, const std::string& legacyCachePath,
+                const std::vector<ClippingCodec::Record>& records) {
   std::vector<uint8_t> bytes;
   if (ClippingCodec::encode(records, bytes) != ClippingCodec::Status::OK) return SaveStatus::INVALID;
-  const std::string finalPath = pathFor(cachePath, "");
-  const std::string backupPath = pathFor(cachePath, ".bak");
-  const std::string tempPath = pathFor(cachePath, ".tmp");
+  const std::string directory = durableDirectory(legacyCachePath);
+  if (!Storage.exists(directory.c_str()) && !Storage.mkdir(directory.c_str())) return SaveStatus::IO_ERROR;
+  const std::string finalPath = durablePathFor(sourcePath, legacyCachePath, "");
+  const std::string backupPath = durablePathFor(sourcePath, legacyCachePath, ".bak");
+  const std::string tempPath = durablePathFor(sourcePath, legacyCachePath, ".tmp");
 
   bool finalValid = false;
   for (const std::string* path : {&finalPath, &backupPath, &tempPath}) {
@@ -246,6 +273,55 @@ SaveStatus save(const std::string& cachePath, const std::vector<ClippingCodec::R
     return SaveStatus::IO_ERROR;
   }
   return fileMatches(finalPath, bytes) ? SaveStatus::SAVED : SaveStatus::IO_ERROR;
+}
+
+LoadStatus load(const std::string& sourcePath, const std::string& legacyCachePath,
+                std::vector<ClippingCodec::Record>& records) {
+  const std::array<std::pair<std::string, LoadStatus>, 3> durablePaths = {
+      std::pair{durablePathFor(sourcePath, legacyCachePath, ""), LoadStatus::LOADED},
+      std::pair{durablePathFor(sourcePath, legacyCachePath, ".tmp"), LoadStatus::LOADED_TEMP},
+      std::pair{durablePathFor(sourcePath, legacyCachePath, ".bak"), LoadStatus::LOADED_BACKUP},
+  };
+  const LoadStatus durable = loadFromBasePaths(durablePaths, records);
+  if (durable != LoadStatus::MISSING) return durable;
+
+  const std::array<std::pair<std::string, LoadStatus>, 3> legacyPaths = {
+      std::pair{legacyPathFor(legacyCachePath, ""), LoadStatus::LOADED},
+      std::pair{legacyPathFor(legacyCachePath, ".tmp"), LoadStatus::LOADED_TEMP},
+      std::pair{legacyPathFor(legacyCachePath, ".bak"), LoadStatus::LOADED_BACKUP},
+  };
+  const LoadStatus legacy = loadFromBasePaths(legacyPaths, records);
+  if (legacy == LoadStatus::LOADED || legacy == LoadStatus::LOADED_BACKUP || legacy == LoadStatus::LOADED_TEMP) {
+    if (save(sourcePath, legacyCachePath, records) != SaveStatus::SAVED) {
+      LOG_ERR("CLIP", "Could not migrate legacy clipping data out of the book cache");
+      return LoadStatus::IO_ERROR;
+    }
+    return LoadStatus::LOADED;
+  }
+  return legacy;
+}
+
+bool migrate(const std::string& oldSourcePath, const std::string& oldCachePath, const std::string& newSourcePath,
+             const std::string& newCachePath) {
+  std::vector<ClippingCodec::Record> records;
+  const std::array<std::pair<std::string, LoadStatus>, 3> oldPaths = {
+      std::pair{durablePathFor(oldSourcePath, oldCachePath, ""), LoadStatus::LOADED},
+      std::pair{durablePathFor(oldSourcePath, oldCachePath, ".tmp"), LoadStatus::LOADED_TEMP},
+      std::pair{durablePathFor(oldSourcePath, oldCachePath, ".bak"), LoadStatus::LOADED_BACKUP},
+  };
+  const LoadStatus status = loadFromBasePaths(oldPaths, records);
+  if (status == LoadStatus::MISSING) return true;
+  if ((status != LoadStatus::LOADED && status != LoadStatus::LOADED_TEMP && status != LoadStatus::LOADED_BACKUP) ||
+      save(newSourcePath, newCachePath, records) != SaveStatus::SAVED) {
+    return false;
+  }
+
+  bool removed = true;
+  for (const char* suffix : {"", ".bak", ".tmp"}) {
+    const std::string oldPath = durablePathFor(oldSourcePath, oldCachePath, suffix);
+    removed = removeIfPresent(oldPath) && removed;
+  }
+  return removed;
 }
 
 }  // namespace ClippingStore

@@ -47,6 +47,7 @@ bool Epub::findContentOpfFile(std::string* contentOpfFile) const {
 }
 
 bool Epub::parseContentOpf(BookMetadataCache::BookMetadata& bookMetadata, const bool writeSpineEntries) {
+  constexpr size_t MAX_COVER_WRAPPER_SIZE = 128 * 1024;
   std::string contentOpfFilePath;
   if (!findContentOpfFile(&contentOpfFilePath)) {
     LOG_ERR("EBP", "Could not find content.opf in zip");
@@ -75,6 +76,14 @@ bool Epub::parseContentOpf(BookMetadataCache::BookMetadata& bookMetadata, const 
     return false;
   }
 
+  if (!opfParser.isUsable(writeSpineEntries)) {
+    LOG_ERR("EBP", "content.opf has no usable package/manifest/spine");
+    return false;
+  }
+  if (opfParser.getUnresolvedSpineItems() > 0) {
+    LOG_ERR("EBP", "Ignored %u unresolved spine references", opfParser.getUnresolvedSpineItems());
+  }
+
   // Grab data from opfParser into epub. Normalize titles to NFC so NFD (combining
   // mark) text renders correctly — the device fonts have no mark positioning.
   bookMetadata.title = utf8ComposeNfc(opfParser.title);
@@ -87,7 +96,12 @@ bool Epub::parseContentOpf(BookMetadataCache::BookMetadata& bookMetadata, const 
   if (bookMetadata.coverItemHref.empty() && !opfParser.guideCoverPageHref.empty()) {
     LOG_DBG("EBP", "No cover from metadata, trying guide cover page: %s", opfParser.guideCoverPageHref.c_str());
     size_t coverPageSize;
-    uint8_t* coverPageData = readItemContentsToBytes(opfParser.guideCoverPageHref, &coverPageSize, true);
+    uint8_t* coverPageData = nullptr;
+    if (getItemSize(opfParser.guideCoverPageHref, &coverPageSize) && coverPageSize <= MAX_COVER_WRAPPER_SIZE) {
+      coverPageData = readItemContentsToBytes(opfParser.guideCoverPageHref, &coverPageSize, true);
+    } else {
+      LOG_ERR("EBP", "Skipping oversized or unreadable cover wrapper: %s", opfParser.guideCoverPageHref.c_str());
+    }
     if (coverPageData) {
       const std::string coverPageHtml(reinterpret_cast<char*>(coverPageData), coverPageSize);
       free(coverPageData);
@@ -215,6 +229,7 @@ bool Epub::parseTocNavFile() const {
 }
 
 void Epub::discoverCssFilesFromZip() {
+  constexpr size_t MAX_DISCOVERED_CSS_FILES = 256;
   const std::string& opfDir = contentBasePath;
   ZipFile zf(filepath);
 
@@ -224,6 +239,10 @@ void Epub::discoverCssFilesFromZip() {
         }
 
         if (!FsHelpers::hasCssExtension(filePath)) {
+          return;
+        }
+
+        if (cssFiles.size() >= MAX_DISCOVERED_CSS_FILES) {
           return;
         }
 

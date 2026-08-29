@@ -10,6 +10,7 @@
 #include "components/UITheme.h"
 #include "components/UiAppHelpers.h"
 #include "fontIds.h"
+#include "saved_items/SavedItemsCatalog.h"
 
 namespace fui = freeink::ui;
 
@@ -138,12 +139,12 @@ bool EpubReaderBookmarksActivity::handleButtons() {
     return true;
   }
 
+  if (mappedInput.wasLongPressed(MappedInputManager::Button::Confirm, ENTER_DELETE_MODE_MS)) {
+    showDeleteConfirmation();
+    return true;
+  }
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    if (mappedInput.getHeldTime() > ENTER_DELETE_MODE_MS) {
-      showDeleteConfirmation();
-    } else {
-      openSelectedBookmark();
-    }
+    openSelectedBookmark();
     return true;
   }
 
@@ -174,6 +175,9 @@ void EpubReaderBookmarksActivity::deleteSelectedBookmark() {
   rebuildBookmarkRowItems();
   if (!BookmarkFile::save(epubPath, bookmarks)) {
     LOG_ERR("EPB", "Failed to save bookmarks after delete");
+  } else if (!SavedItemsCatalog::updateBookmarks(epubPath, epub ? epub->getTitle() : "", epub ? epub->getAuthor() : "",
+                                                 bookmarks.size())) {
+    LOG_ERR("SAVED", "Could not update bookmark count after delete");
   }
 
   // Move selector up if we deleted the last item

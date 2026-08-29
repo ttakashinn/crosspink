@@ -155,7 +155,9 @@ enum class BootResume : uint8_t {
 // startDeepSleep() does not return, so a set latch only ends at the wakeup reset.
 static bool deepSleepInProgress = false;
 
-void vanNhanSoUpdateFinishedBeforeSleep() { vanNhanSoUpdateCoordinator.markSleepUpdateFinished(); }
+void vanNhanSoUpdateFinishedBeforeSleep(const bool continueSleeping) {
+  vanNhanSoUpdateCoordinator.markSleepUpdateFinished(continueSleeping);
+}
 
 #if FREEINK_CAP_TOUCH
 static bool finishWifiSessionWithoutRestart() {
@@ -264,7 +266,7 @@ static bool loadSleepFrameBuffer() {
 
 // Enter deep sleep mode
 void enterDeepSleep(bool fromTimeout = false) {
-#if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3
+#if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3 || FREEINK_DEVICE_X4PRO
   if (vanNhanSoUpdateCoordinator.interceptSleepForUpdate(fromTimeout)) return;
 #endif
 
@@ -389,7 +391,13 @@ void setup() {
 #if defined(SIMULATOR)
       !gpio.verifyPowerButtonWakeup(0, true)
 #else
-      !gpio.verifyPowerButtonWakeup()
+      // X3/X4 cut their battery rail for sleep. Their next valid no-USB
+      // POWERON is the power button itself, and holdPowerRails() has already
+      // latched the rail before this point; sampling the live button again can
+      // reject a legitimate short press after it has been released. A true
+      // deep-sleep GPIO/EXT1 wake is likewise authoritative. Retain live-pin
+      // verification only for other board topologies.
+      !gpio.isXteinkDevice() && !gpio.isPowerButtonDeepSleepWakeup() && !gpio.verifyPowerButtonWakeup()
 #endif
   ) {
     LOG_DBG("MAIN", "Power-button wake not held through verification, sleeping");
@@ -582,7 +590,7 @@ void setup() {
 #endif
   }
 
-#if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3
+#if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3 || FREEINK_DEVICE_X4PRO
   // 1.6.0rc made showBootScreen/isPersistedSleepWake one-shot presentation
   // state. The daily update deliberately keys off a verified user power start
   // instead: using the presentation flag would skip a genuine cold start.
@@ -722,7 +730,7 @@ void loop() {
 
   const unsigned long sleepTimeoutMs = SETTINGS.getSleepTimeoutMs();
   if (
-#if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3
+#if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3 || FREEINK_DEVICE_X4PRO
       !vanNhanSoUpdateCoordinator.isSleepUpdateInProgress() &&
 #endif
       sleepTimeoutMs > 0 && millis() - lastActivityTime >= sleepTimeoutMs) {
@@ -739,7 +747,7 @@ void loop() {
   if (!gpio.isPressed(HalGPIO::BTN_POWER)) powerReleasedSinceWake = true;
 
   if (powerReleasedSinceWake &&
-#if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3
+#if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3 || FREEINK_DEVICE_X4PRO
       !vanNhanSoUpdateCoordinator.isSleepUpdateInProgress() &&
 #endif
       millis() >= allowSleepAt && gpio.isPressed(HalGPIO::BTN_POWER) &&
@@ -786,10 +794,20 @@ void loop() {
   activityManager.loop();
   const unsigned long activityDuration = millis() - activityStartTime;
 
-#if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3
+#if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3 || FREEINK_DEVICE_X4PRO
   bool sleepFromTimeout = false;
-  if (vanNhanSoUpdateCoordinator.consumeFinishedSleepUpdate(sleepFromTimeout)) {
-    enterDeepSleep(sleepFromTimeout);
+  bool continueSleeping = true;
+  if (vanNhanSoUpdateCoordinator.consumeFinishedSleepUpdate(sleepFromTimeout, continueSleeping)) {
+    if (continueSleeping) {
+      enterDeepSleep(sleepFromTimeout);
+    } else {
+      // The update consumed an input edge while running synchronously, so make
+      // the cancellation a real wake interaction and require a fresh power
+      // release before another long-hold sleep can fire.
+      lastActivityTime = millis();
+      powerReleasedSinceWake = false;
+      LOG_INF("VNS", "Sleep cancelled by user activity during refresh");
+    }
     return;
   }
 #endif

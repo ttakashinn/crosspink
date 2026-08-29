@@ -91,7 +91,9 @@ class RoundedRaffTheme : public BaseTheme {
                   const char* subtitle = nullptr) const override;
   void drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
                            int selectorIndex, bool& coverRendered, bool& coverBufferStored, bool& bufferRestored,
-                           std::function<bool()> storeCoverBuffer) const override;
+                           std::function<bool()> storeCoverBuffer, const BookReadingStats* bookStats,
+                           int progressPercent, const GlobalReadingStats* globalStats,
+                           const char* currentChapterTitle) const override;
   int getMenuRowHeight(const GfxRenderer& renderer) const override;
   void drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                       const std::function<std::string(int index)>& buttonLabel,

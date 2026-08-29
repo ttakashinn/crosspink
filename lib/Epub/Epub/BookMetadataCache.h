@@ -64,6 +64,7 @@ class BookMetadataCache {
   // SdFat's shared sector cache (one 512B transaction per 4-byte pod). One
   // wrapper serves whichever pass is active (spine, then toc).
   std::unique_ptr<serialization::BufferedFileWriter> passOut;
+  bool passWriteFailed = false;
 
   // Cumulative spine sizes, cached in RAM at load() so progress/percent lookups are
   // O(1) instead of 2 seeks + a heap-allocating SpineEntry read per access (4 bytes
@@ -91,10 +92,8 @@ class BookMetadataCache {
     return hash;
   }
 
-  uint32_t writeSpineEntry(HalFile& file, const SpineEntry& entry) const;
-  uint32_t writeTocEntry(HalFile& file, const TocEntry& entry) const;
-  SpineEntry readSpineEntry(HalFile& file) const;
-  TocEntry readTocEntry(HalFile& file) const;
+  bool writeSpineEntry(HalFile& file, const SpineEntry& entry) const;
+  bool writeTocEntry(HalFile& file, const TocEntry& entry) const;
 
  public:
   BookMetadata coreMetadata;
@@ -112,7 +111,7 @@ class BookMetadataCache {
   // Building phase (stream to disk immediately)
   bool beginWrite();
   bool beginContentOpfPass();
-  void createSpineEntry(const std::string& href);
+  bool createSpineEntry(const std::string& href);
   bool endContentOpfPass();
   bool beginTocPass();
   void createTocEntry(const std::string& title, const std::string& href, const std::string& anchor, uint8_t level);

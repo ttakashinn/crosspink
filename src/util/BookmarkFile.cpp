@@ -61,3 +61,15 @@ bool BookmarkFile::save(const std::string& bookPath, const std::vector<BookmarkE
   const std::string path = BookmarkUtil::getBookmarkPath(bookPath);
   return PersistableStoreBase::writeDocToFile(path.c_str(), doc);
 }
+
+bool BookmarkFile::migrate(const std::string& oldBookPath, const std::string& newBookPath) {
+  const std::string oldPath = BookmarkUtil::getBookmarkPath(oldBookPath);
+  const std::string newPath = BookmarkUtil::getBookmarkPath(newBookPath);
+  if (oldPath == newPath || !Storage.exists(oldPath.c_str())) return true;
+  if (Storage.exists(newPath.c_str())) {
+    LOG_ERR("BKM", "Refusing to overwrite bookmarks while moving a book");
+    return false;
+  }
+  Storage.mkdir(BookmarkUtil::getBookmarksDir().c_str());
+  return Storage.rename(oldPath.c_str(), newPath.c_str());
+}

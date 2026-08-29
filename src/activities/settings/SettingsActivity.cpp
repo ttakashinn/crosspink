@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include "BackupReadingStatsActivity.h"
 #include "ButtonRemapActivity.h"
 #include "ClearCacheActivity.h"
 #include "CrossPointSettings.h"
@@ -27,6 +28,8 @@
 #include "VanNhanSoSettingsActivity.h"
 #include "VanNhanSoUpdateActivity.h"
 #include "activities/network/WifiSelectionActivity.h"
+#include "activities/reader/ReadingStatsStore.h"
+#include "activities/util/ConfirmationActivity.h"
 #include "activities/util/IntervalSelectionActivity.h"
 #include "components/UITheme.h"
 #include "components/UIThemeTokens.h"
@@ -72,7 +75,7 @@ void SettingsActivity::rebuildSettingsLists() {
         continue;
       }
       displaySettings.push_back(setting);
-#if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3
+#if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3 || FREEINK_DEVICE_X4PRO
       if (setting.valuePtr == &CrossPointSettings::sleepScreen &&
           SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::VANNHANSO) {
         displaySettings.push_back(SettingInfo::Action(StrId::STR_VANNHANSO, SettingAction::ConfigureVanNhanSo));
@@ -99,6 +102,8 @@ void SettingsActivity::rebuildSettingsLists() {
     controlsSettings.insert(controlsSettings.begin(),
                             SettingInfo::Action(StrId::STR_REMAP_FRONT_BUTTONS, SettingAction::RemapFrontButtons));
   }
+  systemSettings.push_back(SettingInfo::Action(StrId::STR_BACKUP_STATS, SettingAction::BackupReadingStats));
+  systemSettings.push_back(SettingInfo::Action(StrId::STR_RESET_ALL_TIME_STATS, SettingAction::ResetAllTimeStats));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_WIFI_NETWORKS, SettingAction::Network));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_KOREADER_SYNC, SettingAction::KOReaderSync));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_OPDS_SERVERS, SettingAction::OPDSBrowser));
@@ -352,6 +357,21 @@ void SettingsActivity::toggleCurrentSetting() {
       case SettingAction::Network:
         startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput, false), resultHandler);
         break;
+      case SettingAction::BackupReadingStats:
+        startActivityForResult(std::make_unique<BackupReadingStatsActivity>(renderer, mappedInput), resultHandler);
+        break;
+      case SettingAction::ResetAllTimeStats:
+        startActivityForResult(
+            std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_RESET_ALL_TIME_STATS),
+                                                   tr(STR_RESET_ALL_TIME_STATS_CONFIRM)),
+            [this](const ActivityResult& result) {
+              if (!result.isCancelled &&
+                  ReadingStatsStore::saveGlobal(GlobalReadingStats{}) != ReadingStatsStore::SaveStatus::SAVED) {
+                LOG_ERR("SET", "Failed to reset all-time reading statistics");
+              }
+              requestUpdate();
+            });
+        break;
       case SettingAction::ClearCache:
         startActivityForResult(std::make_unique<ClearCacheActivity>(renderer, mappedInput), resultHandler);
         break;
@@ -477,6 +497,19 @@ std::string SettingsActivity::settingValueText(const SettingInfo& setting) {
       char valueBuffer[32];
       snprintf(valueBuffer, sizeof(valueBuffer), tr(STR_SLEEP_TIMER_VALUE_FORMAT),
                static_cast<unsigned int>(SETTINGS.*(setting.valuePtr)));
+      return valueBuffer;
+    }
+    if (setting.nameId == StrId::STR_READING_IDLE_THRESHOLD) {
+      const uint16_t seconds = SETTINGS.getReadingIdleTimeThresholdSeconds();
+      char valueBuffer[32];
+      if (seconds % 60 == 0) {
+        snprintf(valueBuffer, sizeof(valueBuffer), tr(STR_STATS_MINUTES_VALUE), static_cast<unsigned>(seconds / 60));
+      } else if (seconds >= 60) {
+        snprintf(valueBuffer, sizeof(valueBuffer), tr(STR_STATS_MINUTES_SECONDS_VALUE),
+                 static_cast<unsigned>(seconds / 60), static_cast<unsigned>(seconds % 60));
+      } else {
+        snprintf(valueBuffer, sizeof(valueBuffer), tr(STR_STATS_SECONDS_VALUE), static_cast<unsigned>(seconds));
+      }
       return valueBuffer;
     }
     return std::to_string(SETTINGS.*(setting.valuePtr));

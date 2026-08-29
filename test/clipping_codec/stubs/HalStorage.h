@@ -55,6 +55,10 @@ class HalStorage {
   }
 
   bool exists(const char* path) const { return std::filesystem::exists(path); }
+  bool mkdir(const char* path, bool = true) {
+    std::error_code error;
+    return std::filesystem::exists(path) || std::filesystem::create_directories(path, error);
+  }
   bool remove(const char* path) {
     std::error_code error;
     const bool removed = std::filesystem::remove(path, error);

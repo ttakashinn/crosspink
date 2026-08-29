@@ -16,6 +16,7 @@
 #include "ReaderActivity.h"
 #include "ReaderProgressSaveDebouncer.h"
 #include "ReaderToolbarUi.h"
+#include "ReadingStats.h"
 #include "clippings/ClippingCodec.h"
 #include "components/OptionPopup.h"
 
@@ -52,6 +53,7 @@ class EpubReaderActivity final : public ReaderActivity {
   bool currentPageBookmarked = false;
   int idlePrewarmSpine = -1;
   int idlePrewarmPage = -1;
+  int idlePrewarmFontId = 0;
   unsigned long lastRenderCompleteMs = 0;
   bool bookmarkRemoved = false;
   std::vector<BookmarkEntry> cachedBookmarks;
@@ -60,6 +62,17 @@ class EpubReaderActivity final : public ReaderActivity {
   bool recentsEntryRemoved = false;
   unsigned long bookmarkMessageTime = 0UL;
   bool pendingReadFolderMove = false;
+  BookReadingStats readingStats;
+  ReadingSessionTracker readingSession;
+  ReadingStatsLocalDateTime readingIntervalStartedAt;
+  unsigned long readingPageStartedMs = 0;
+  bool readingTimerActive = false;
+  int readingDisplayedSpine = -1;
+  int readingDisplayedPage = -1;
+  bool readingStatsWritable = true;
+  bool readingStatsFinalized = false;
+  bool completedDuringVisit = false;
+  std::optional<ProgressChangeResult> initialPosition;
 
   // Toolbar reader menu (SETTINGS.readerMenuStyle == READER_MENU_TOOLBAR): drawn
   // over the page instead of pushing the full-screen list menu. Select opens the
@@ -179,6 +192,13 @@ class EpubReaderActivity final : public ReaderActivity {
   void loadCachedBookmarks();
   void addBookmark();
   void updateBookmarkFlag();
+  void pauseReadingStats(bool forwardPageTurn = false);
+  void resumeReadingStats();
+  void noteRenderedPageForStats();
+  void finalizeReadingStats();
+  BookReadingStats readingStatsSnapshot() const;
+  GlobalReadingStats globalReadingStatsSnapshot() const;
+  int currentBookProgressPercent() const;
 
   void navigateToHref(const std::string& href, bool savePosition = false);
   void restoreSavedPosition();
@@ -205,7 +225,12 @@ class EpubReaderActivity final : public ReaderActivity {
   explicit EpubReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string bookPath,
                               bool allowFastInitialRefresh)
       : ReaderActivity("EpubReader", renderer, mappedInput, std::move(bookPath), allowFastInitialRefresh) {}
+  EpubReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string bookPath,
+                     bool allowFastInitialRefresh, ProgressChangeResult position)
+      : ReaderActivity("EpubReader", renderer, mappedInput, std::move(bookPath), allowFastInitialRefresh),
+        initialPosition(std::move(position)) {}
   ~EpubReaderActivity() override;
+  void onExit() override;
 
 #if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
   void onEnter() override;

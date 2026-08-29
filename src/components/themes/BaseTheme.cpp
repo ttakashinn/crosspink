@@ -144,25 +144,42 @@ void BaseTheme::drawProgressBar(const GfxRenderer& renderer, Rect rect, const si
 void BaseTheme::drawHintLabel(GfxRenderer& renderer, const int fontId, const char* label, const int x,
                               const int boxWidth, const int boxTop, const int boxHeight, const int singleLineYOffset) {
   constexpr int textPadding = 4;  // keeps a wrapped label off the button's border
+  // getTextHeight() is the ascender only; getLineHeight() also reserves the
+  // descender. Button labels such as Vietnamese "đọc" therefore have to be
+  // constrained with the full line box or their last pixels can land on row
+  // 792, one row beyond X3's portrait framebuffer.
   const int maxTextWidth = boxWidth - (textPadding * 2);
 
   const int textWidth = renderer.getTextWidth(fontId, label);
   if (textWidth <= maxTextWidth) {
-    renderer.drawText(fontId, x + (boxWidth - 1 - textWidth) / 2, boxTop + singleLineYOffset, label);
+    // Some fonts used by translated button labels are taller than the
+    // historical fixed offset allowed for. Keep the requested baseline when
+    // it fits, but clamp the glyph box inside the physical screen button so a
+    // descender cannot write below the framebuffer on X3/X4.
+    const int lastSafeTop = std::max(boxTop, boxTop + boxHeight - renderer.getLineHeight(fontId));
+    const int textTop = std::clamp(boxTop + singleLineYOffset, boxTop, lastSafeTop);
+    renderer.drawText(fontId, x + (boxWidth - 1 - textWidth) / 2, textTop, label);
     return;
   }
 
   // Spaced by the glyph height, not getLineHeight() — that returns the font's
   // full advanceY (leading included), which stacks two lines taller than the
   // button and clips the second one.
-  constexpr int lineGap = 2;
-  const int step = renderer.getTextHeight(fontId) + lineGap;
-  const auto lines = renderer.wrappedText(fontId, label, maxTextWidth, 2);
-  const int block = static_cast<int>(lines.size()) * step - lineGap;
-  int lineY = boxTop + std::max(1, (boxHeight - block) / 2);
+  // A two-line UI_10 label is taller than the 40 px hardware-hint strip on
+  // X3/X4. Use the compact UI font only for the wrapped fallback; single-line
+  // labels retain the theme's requested font.
+  const int wrappedFontId = fontId == SMALL_FONT_ID ? fontId : SMALL_FONT_ID;
+  const auto lines = renderer.wrappedText(wrappedFontId, label, maxTextWidth, 2);
+  const int lineBoxHeight = renderer.getLineHeight(wrappedFontId);
+  const int naturalStep = renderer.getTextHeight(wrappedFontId) + 2;
+  const int lineCount = static_cast<int>(lines.size());
+  const int maxStep = lineCount > 1 ? std::max(1, (boxHeight - lineBoxHeight) / (lineCount - 1)) : 0;
+  const int step = lineCount > 1 ? std::min(naturalStep, maxStep) : 0;
+  const int block = lineBoxHeight + std::max(0, lineCount - 1) * step;
+  int lineY = boxTop + std::max(0, (boxHeight - block) / 2);
   for (const auto& line : lines) {
-    const int lineWidth = renderer.getTextWidth(fontId, line.c_str());
-    renderer.drawText(fontId, x + (boxWidth - 1 - lineWidth) / 2, lineY, line.c_str());
+    const int lineWidth = renderer.getTextWidth(wrappedFontId, line.c_str());
+    renderer.drawText(wrappedFontId, x + (boxWidth - 1 - lineWidth) / 2, lineY, line.c_str());
     lineY += step;
   }
 }
@@ -406,7 +423,8 @@ void BaseTheme::drawSubHeader(const GfxRenderer& renderer, Rect rect, const char
 // TODO: Refactor method to make it cleaner, split into smaller methods
 void BaseTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
                                     const int selectorIndex, bool& coverRendered, bool& coverBufferStored,
-                                    bool& bufferRestored, std::function<bool()> storeCoverBuffer) const {
+                                    bool& bufferRestored, std::function<bool()> storeCoverBuffer,
+                                    const BookReadingStats*, const int, const GlobalReadingStats*, const char*) const {
   const bool hasContinueReading = !recentBooks.empty();
   const bool bookSelected = hasContinueReading && selectorIndex == 0;
 

@@ -11,8 +11,11 @@ class VanNhanSoUpdateCoordinator {
   void startFirstBootUpdateIfEligible(bool eligible);
   bool interceptSleepForUpdate(bool fromTimeout);
   bool isSleepUpdateInProgress() const { return sleepUpdateInProgress; }
-  void markSleepUpdateFinished() { sleepUpdateFinished = true; }
-  bool consumeFinishedSleepUpdate(bool& fromTimeout);
+  void markSleepUpdateFinished(bool continueSleeping) {
+    sleepUpdateFinished = true;
+    continueSleepingAfterUpdate = continueSleeping;
+  }
+  bool consumeFinishedSleepUpdate(bool& fromTimeout, bool& continueSleeping);
 
  private:
   ActivityManager& activityManager;
@@ -21,5 +24,6 @@ class VanNhanSoUpdateCoordinator {
   bool sleepUpdateInProgress = false;
   bool sleepUpdateFinished = false;
   bool sleepFromTimeout = false;
+  bool continueSleepingAfterUpdate = true;
   bool skipSleepUpdateOnce = false;
 };

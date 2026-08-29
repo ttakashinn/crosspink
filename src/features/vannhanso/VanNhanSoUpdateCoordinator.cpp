@@ -6,6 +6,7 @@
 
 #include "activities/ActivityManager.h"
 #include "activities/settings/VanNhanSoUpdateActivity.h"
+#include "features/vannhanso/VanNhanSoUpdatePolicy.h"
 
 VanNhanSoUpdateCoordinator::VanNhanSoUpdateCoordinator(ActivityManager& activityManager, GfxRenderer& renderer,
                                                        MappedInputManager& mappedInput)
@@ -21,7 +22,8 @@ void VanNhanSoUpdateCoordinator::startFirstBootUpdateIfEligible(const bool eligi
   // cancellable, so it never blocks entry to the reader/home screen.
   activityManager.loop();
   activityManager.requestUpdateAndWait();
-  auto updateActivity = makeUniqueNoThrow<VanNhanSoUpdateActivity>(renderer, mappedInput, true);
+  auto updateActivity = makeUniqueNoThrow<VanNhanSoUpdateActivity>(
+      renderer, mappedInput, vannhanso_update_policy::UpdateTrigger::FIRST_START_OF_DAY);
   if (updateActivity) {
     activityManager.pushActivity(std::move(updateActivity));
   } else {
@@ -38,7 +40,8 @@ bool VanNhanSoUpdateCoordinator::interceptSleepForUpdate(const bool fromTimeout)
   skipSleepUpdateOnce = false;
   if (!shouldUpdate) return false;
 
-  auto updateActivity = makeUniqueNoThrow<VanNhanSoUpdateActivity>(renderer, mappedInput, true, true);
+  auto updateActivity = makeUniqueNoThrow<VanNhanSoUpdateActivity>(
+      renderer, mappedInput, vannhanso_update_policy::UpdateTrigger::ENTERING_SLEEP);
   if (!updateActivity) {
     LOG_ERR("VNS", "OOM: update-before-sleep activity; sleeping with cached image");
     return false;
@@ -50,12 +53,16 @@ bool VanNhanSoUpdateCoordinator::interceptSleepForUpdate(const bool fromTimeout)
   return true;
 }
 
-bool VanNhanSoUpdateCoordinator::consumeFinishedSleepUpdate(bool& fromTimeout) {
+bool VanNhanSoUpdateCoordinator::consumeFinishedSleepUpdate(bool& fromTimeout, bool& continueSleeping) {
   if (!sleepUpdateFinished) return false;
 
   sleepUpdateFinished = false;
   sleepUpdateInProgress = false;
-  skipSleepUpdateOnce = true;
+  continueSleeping = continueSleepingAfterUpdate;
+  continueSleepingAfterUpdate = true;
+  // Bypass the interceptor only for the immediate continuation into sleep. A
+  // user-cancelled sleep must check again on the next genuine sleep request.
+  skipSleepUpdateOnce = continueSleeping;
   fromTimeout = sleepFromTimeout;
   return true;
 }

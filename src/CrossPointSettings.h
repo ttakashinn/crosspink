@@ -169,7 +169,8 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   };
 
   // UI Theme
-  enum UI_THEME { CLASSIC = 0, LYRA = 1, LYRA_3_COVERS = 2, ROUNDEDRAFF = 3 };
+  // Persisted numeric values: append new themes, never reorder existing ones.
+  enum UI_THEME { CLASSIC = 0, LYRA = 1, LYRA_3_COVERS = 2, ROUNDEDRAFF = 3, DASHBOARD = 4 };
 
   // Image rendering in EPUB reader
   enum IMAGE_RENDERING { IMAGES_DISPLAY = 0, IMAGES_PLACEHOLDER = 1, IMAGES_SUPPRESS = 2, IMAGE_RENDERING_COUNT };
@@ -336,6 +337,12 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t removeReadBooksFromRecents = 0;
   // Move epub to /Read/ folder on SD card when finished (0 = disabled, 1 = enabled)
   uint8_t moveFinishedToReadFolder = 0;
+  // Reading-idle cutoff in 10-second units. Page dwell above this value is not
+  // counted as reading time, pace, or a page turn.
+  uint8_t readingIdleTimeThresholdUnits = 30;
+  // Disabling this freezes the accumulated statistics while normal reading
+  // progress continues to be saved by the reader's existing progress store.
+  uint8_t trackReadingStats = 1;
   // Short press Back goes to file browser instead of home (0 = disabled, 1 = enabled)
   uint8_t backShortToFileBrowser = 0;
   // Image rendering mode in EPUB reader
@@ -364,6 +371,21 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   static constexpr uint8_t MIN_SLEEP_TIMEOUT_MINUTES = 1;
   static constexpr uint8_t SLEEP_TIMEOUT_NEVER_MINUTES = 31;
   static constexpr uint8_t MAX_SLEEP_TIMEOUT_MINUTES = SLEEP_TIMEOUT_NEVER_MINUTES;
+  static constexpr uint16_t READING_IDLE_TIME_THRESHOLD_UNIT_SECONDS = 10;
+  static constexpr uint16_t MIN_READING_IDLE_TIME_THRESHOLD_SECONDS = 30;
+  static constexpr uint16_t MAX_READING_IDLE_TIME_THRESHOLD_SECONDS = 10 * 60;
+  static constexpr uint8_t MIN_READING_IDLE_TIME_THRESHOLD_UNITS =
+      MIN_READING_IDLE_TIME_THRESHOLD_SECONDS / READING_IDLE_TIME_THRESHOLD_UNIT_SECONDS;
+  static constexpr uint8_t MAX_READING_IDLE_TIME_THRESHOLD_UNITS =
+      MAX_READING_IDLE_TIME_THRESHOLD_SECONDS / READING_IDLE_TIME_THRESHOLD_UNIT_SECONDS;
+
+  uint16_t getReadingIdleTimeThresholdSeconds() const {
+    const uint8_t units = std::clamp(readingIdleTimeThresholdUnits, MIN_READING_IDLE_TIME_THRESHOLD_UNITS,
+                                     MAX_READING_IDLE_TIME_THRESHOLD_UNITS);
+    return static_cast<uint16_t>(units) * READING_IDLE_TIME_THRESHOLD_UNIT_SECONDS;
+  }
+
+  bool shouldTrackReadingStats() const { return trackReadingStats != 0; }
 
   // Callback to resolve SD card font IDs. Set by SdCardFontSystem::begin().
   // Returns font ID or 0 if not found.

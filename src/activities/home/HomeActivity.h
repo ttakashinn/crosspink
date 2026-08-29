@@ -5,6 +5,7 @@
 #include "./FileBrowserActivity.h"
 #include "RecentBooksStore.h"
 #include "activities/Activity.h"
+#include "activities/reader/ReadingStats.h"
 #include "util/ButtonNavigator.h"
 
 struct Rect;
@@ -20,6 +21,15 @@ class HomeActivity final : public Activity {
   bool coverBufferStored = false;  // Track if cover buffer is stored
   uint8_t* coverBuffer = nullptr;  // HomeActivity's own buffer for cover image
   size_t coverBufferSize = 0;      // Bytes allocated to coverBuffer
+  bool dashboardMenuOpen = false;
+  int dashboardMenuIndex = 0;
+  BookReadingStats currentBookStats;
+  GlobalReadingStats globalReadingStats;
+  int currentBookProgressPercent = -1;
+  std::string currentBookChapterTitle;
+  bool hasReadingStats = false;
+  bool hasSavedBookmarks = false;
+  bool hasSavedClippings = false;
   // Logical rect last passed to drawRecentBookCover. The cover snapshot only
   // needs to cover this region, not the entire framebuffer, so we cache the
   // tile instead of all 48 KB. Set in render() before the call.
@@ -32,7 +42,7 @@ class HomeActivity final : public Activity {
   const bool cleanInitialRefresh;
 
   // Convert HomeMenuItem to menu index (used in onEnter)
-  static int menuItemToIndex(HomeMenuItem item, bool hasOpdsUrl) {
+  static int menuItemToIndex(HomeMenuItem item, bool hasOpdsUrl, bool hasStats, bool hasSavedItems) {
     int i = 0;
     if (item == HomeMenuItem::FILE_BROWSER) return i;
     ++i;
@@ -40,6 +50,10 @@ class HomeActivity final : public Activity {
     ++i;
     if (item == HomeMenuItem::OPDS_BROWSER) return hasOpdsUrl ? i : 0;
     if (hasOpdsUrl) ++i;
+    if (item == HomeMenuItem::READING_STATS) return hasStats ? i : 0;
+    if (hasStats) ++i;
+    if (item == HomeMenuItem::SAVED_ITEMS) return hasSavedItems ? i : 0;
+    if (hasSavedItems) ++i;
     if (item == HomeMenuItem::FILE_TRANSFER) return i;
     ++i;
     if (item == HomeMenuItem::SETTINGS_MENU) return i;
@@ -47,11 +61,13 @@ class HomeActivity final : public Activity {
   }
 
   // Convert menu index to HomeMenuItem (used in loop)
-  static HomeMenuItem indexToMenuItem(int idx, bool hasOpdsUrl) {
+  static HomeMenuItem indexToMenuItem(int idx, bool hasOpdsUrl, bool hasStats, bool hasSavedItems) {
     int i = 0;
     if (idx == i++) return HomeMenuItem::FILE_BROWSER;
     if (idx == i++) return HomeMenuItem::RECENTS;
     if (hasOpdsUrl && idx == i++) return HomeMenuItem::OPDS_BROWSER;
+    if (hasStats && idx == i++) return HomeMenuItem::READING_STATS;
+    if (hasSavedItems && idx == i++) return HomeMenuItem::SAVED_ITEMS;
     if (idx == i++) return HomeMenuItem::FILE_TRANSFER;
     if (idx == i) return HomeMenuItem::SETTINGS_MENU;
     return HomeMenuItem::NONE;
@@ -62,8 +78,15 @@ class HomeActivity final : public Activity {
   void onSettingsOpen();
   void onFileTransferOpen();
   void onOpdsBrowserOpen();
+  void onReadingStatsOpen();
+  void onSavedItemsOpen();
 
   int getMenuItemCount() const;
+  int getDashboardMenuItemCount() const;
+  bool usesDashboardHome() const;
+  void loadReadingStats();
+  void loadSavedItems();
+  void loopDashboardHome();
   bool storeCoverBuffer();    // Store frame buffer for cover image
   bool restoreCoverBuffer();  // Restore frame buffer from stored cover
   void freeCoverBuffer();     // Free the stored cover buffer

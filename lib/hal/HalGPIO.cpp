@@ -267,14 +267,19 @@ bool HalGPIO::coldBootImpliesPowerButton() const {
   return isXteinkDevice() || BoardConfig::isPaperMono() || BoardConfig::isSticky();
 }
 
+bool HalGPIO::isPowerButtonDeepSleepWakeup() const {
+  const auto wakeupCause = esp_sleep_get_wakeup_cause();
+  return esp_reset_reason() == ESP_RST_DEEPSLEEP &&
+         (wakeupCause == ESP_SLEEP_WAKEUP_GPIO || wakeupCause == ESP_SLEEP_WAKEUP_EXT1);
+}
+
 HalGPIO::WakeupReason HalGPIO::getWakeupReason() const {
   const auto wakeupCause = esp_sleep_get_wakeup_cause();
   const auto resetReason = esp_reset_reason();
 
   const bool usbConnected = isUsbConnected();
 
-  if (resetReason == ESP_RST_DEEPSLEEP &&
-      (wakeupCause == ESP_SLEEP_WAKEUP_GPIO || wakeupCause == ESP_SLEEP_WAKEUP_EXT1)) {
+  if (isPowerButtonDeepSleepWakeup()) {
     return WakeupReason::PowerButton;
   }
   if (wakeupCause == ESP_SLEEP_WAKEUP_UNDEFINED && resetReason == ESP_RST_POWERON && !usbConnected &&

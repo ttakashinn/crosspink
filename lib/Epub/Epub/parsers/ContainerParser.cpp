@@ -3,6 +3,10 @@
 #include <Logging.h>
 #include <XmlParserUtils.h>
 
+namespace {
+constexpr size_t MAX_ROOTFILE_PATH = 4096;
+}
+
 bool ContainerParser::setup() {
   parser = XML_ParserCreate(nullptr);
   if (!parser) {
@@ -20,7 +24,7 @@ ContainerParser::~ContainerParser() { destroyXmlParser(parser); }
 size_t ContainerParser::write(const uint8_t data) { return write(&data, 1); }
 
 size_t ContainerParser::write(const uint8_t* buffer, const size_t size) {
-  if (!parser) return 0;
+  if (!parser || size > remainingSize) return 0;
 
   const uint8_t* currentBufferPos = buffer;
   auto remainingInBuffer = size;
@@ -53,17 +57,17 @@ void XMLCALL ContainerParser::startElement(void* userData, const XML_Char* name,
   auto* self = static_cast<ContainerParser*>(userData);
 
   // Simple state tracking to ensure we are looking at the valid schema structure
-  if (self->state == START && strcmp(name, "container") == 0) {
+  if (self->state == START && xmlLocalNameEquals(name, "container")) {
     self->state = IN_CONTAINER;
     return;
   }
 
-  if (self->state == IN_CONTAINER && strcmp(name, "rootfiles") == 0) {
+  if (self->state == IN_CONTAINER && xmlLocalNameEquals(name, "rootfiles")) {
     self->state = IN_ROOTFILES;
     return;
   }
 
-  if (self->state == IN_ROOTFILES && strcmp(name, "rootfile") == 0) {
+  if (self->state == IN_ROOTFILES && xmlLocalNameEquals(name, "rootfile")) {
     const char* mediaType = nullptr;
     const char* path = nullptr;
 
@@ -76,8 +80,10 @@ void XMLCALL ContainerParser::startElement(void* userData, const XML_Char* name,
     }
 
     // Check if this is the standard OEBPS package
-    if (mediaType && path && strcmp(mediaType, "application/oebps-package+xml") == 0) {
-      self->fullPath = path;
+    if (self->fullPath.empty() && mediaType && path && strcmp(mediaType, "application/oebps-package+xml") == 0) {
+      size_t length = 0;
+      while (length <= MAX_ROOTFILE_PATH && path[length] != '\0') ++length;
+      if (length <= MAX_ROOTFILE_PATH) self->fullPath.assign(path, length);
     }
   }
 }
@@ -85,9 +91,9 @@ void XMLCALL ContainerParser::startElement(void* userData, const XML_Char* name,
 void XMLCALL ContainerParser::endElement(void* userData, const XML_Char* name) {
   auto* self = static_cast<ContainerParser*>(userData);
 
-  if (self->state == IN_ROOTFILES && strcmp(name, "rootfiles") == 0) {
+  if (self->state == IN_ROOTFILES && xmlLocalNameEquals(name, "rootfiles")) {
     self->state = IN_CONTAINER;
-  } else if (self->state == IN_CONTAINER && strcmp(name, "container") == 0) {
+  } else if (self->state == IN_CONTAINER && xmlLocalNameEquals(name, "container")) {
     self->state = START;
   }
 }

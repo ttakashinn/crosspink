@@ -46,7 +46,18 @@ TEST_F(VanNhanSoProfileTest, InvalidWeatherIndexFallsBackToHanoiWithoutReadingPa
 
   char query[profile::QUERY_MAX_LENGTH];
   ASSERT_TRUE(profile::buildQuery(query, sizeof(query)));
-  EXPECT_NE(std::strstr(query, "weather=hanoi"), nullptr);
+  // Hanoi is the backend default, so the canonical query omits it.
+  EXPECT_EQ(std::strstr(query, "weather="), nullptr);
+  EXPECT_STREQ(query, "grayscale=1");
+}
+
+TEST_F(VanNhanSoProfileTest, DefaultValuesUseTheBackendCanonicalQueryWithoutRedirectOnlyParameters) {
+  char query[profile::QUERY_MAX_LENGTH];
+  ASSERT_TRUE(profile::buildQuery(query, sizeof(query)));
+  EXPECT_STREQ(query, "grayscale=1");
+  EXPECT_EQ(std::strstr(query, "vocab=mixed"), nullptr);
+  EXPECT_EQ(std::strstr(query, "weather=hanoi"), nullptr);
+  EXPECT_EQ(std::strstr(query, "finance=1"), nullptr);
 }
 
 TEST_F(VanNhanSoProfileTest, IdentityChangesWithLocationAndScreenAndRejectsSmallBuffers) {

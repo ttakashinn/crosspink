@@ -15,4 +15,8 @@ bool load(const std::string& bookPath, std::vector<BookmarkEntry>& bookmarks);
 // Saves the bookmarks for bookPath, creating the bookmarks directory as needed.
 bool save(const std::string& bookPath, const std::vector<BookmarkEntry>& bookmarks);
 
+// Keep bookmarks attached when a completed book is moved to another path.
+// Refuses to overwrite an existing destination bookmark file.
+bool migrate(const std::string& oldBookPath, const std::string& newBookPath);
+
 }  // namespace BookmarkFile

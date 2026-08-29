@@ -110,6 +110,12 @@ class HalGPIO {
   // Should only be called when wakeup reason is PowerButton.
   bool verifyPowerButtonWakeup();
 
+  // A GPIO/EXT1 wake reported together with ESP_RST_DEEPSLEEP is already
+  // hardware evidence of a real power-button wake. Such a press may have been
+  // released before setup() starts, so it must not be re-verified by sampling
+  // the live pin.
+  bool isPowerButtonDeepSleepWakeup() const;
+
   // Check if USB is connected
   bool isUsbConnected() const;
 

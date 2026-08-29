@@ -22,6 +22,7 @@
 #if FREEINK_CAP_USB_MSC
 #include "network/UsbDriveActivity.h"
 #endif
+#include "reader/EpubReaderActivity.h"
 #include "reader/ReaderActivity.h"
 #include "settings/OpdsServerListActivity.h"
 #include "settings/SettingsActivity.h"
@@ -286,6 +287,20 @@ void ActivityManager::goToReader(std::string path, const bool allowFastInitialRe
   }
 }
 
+void ActivityManager::goToReaderAt(std::string path, ProgressChangeResult position) {
+  if (!FsHelpers::hasEpubExtension(path)) {
+    goToReader(std::move(path));
+    return;
+  }
+  auto activity =
+      makeUniqueNoThrow<EpubReaderActivity>(renderer, mappedInput, std::move(path), false, std::move(position));
+  if (!activity) {
+    LOG_ERR("ACT", "OOM: EPUB reader activity with saved position");
+    return;
+  }
+  replaceActivity(std::move(activity));
+}
+
 void ActivityManager::goToSleep(bool fromTimeout) {
   replaceActivity(std::make_unique<SleepActivity>(renderer, mappedInput, fromTimeout));
   loop();  // Important: sleep screen must be rendered immediately, the caller will go to sleep right after this returns
@@ -306,6 +321,10 @@ void ActivityManager::goHome(HomeMenuItem initialMenuItem, bool cleanInitialRefr
       initialMenuItem = HomeMenuItem::RECENTS;
     } else if (activityName == "OpdsBookBrowser") {
       initialMenuItem = HomeMenuItem::OPDS_BROWSER;
+    } else if (activityName == "BookStats") {
+      initialMenuItem = HomeMenuItem::READING_STATS;
+    } else if (activityName == "SavedItems") {
+      initialMenuItem = HomeMenuItem::SAVED_ITEMS;
     } else if (activityName == "CrossPointWebServer") {
       initialMenuItem = HomeMenuItem::FILE_TRANSFER;
     } else if (activityName == "Settings") {

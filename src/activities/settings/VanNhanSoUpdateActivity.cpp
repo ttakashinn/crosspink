@@ -116,6 +116,23 @@ bool isSha256Hex(const std::string& value) {
   return true;
 }
 
+bool buildServerProfileSignature(char* output, const size_t outputSize) {
+  if (!output || outputSize < 17) return false;
+  char query[vannhanso_profile::QUERY_MAX_LENGTH];
+  if (!vannhanso_profile::buildQuery(query, sizeof(query))) return false;
+
+  uint8_t digest[32];
+  mbedtls_sha256_context context;
+  mbedtls_sha256_init(&context);
+  mbedtls_sha256_starts(&context, /*is224=*/0);
+  mbedtls_sha256_update(&context, reinterpret_cast<const unsigned char*>(query), strlen(query));
+  mbedtls_sha256_finish(&context, digest);
+  mbedtls_sha256_free(&context);
+  for (size_t i = 0; i < 8; ++i) snprintf(output + i * 2, 3, "%02x", digest[i]);
+  output[16] = '\0';
+  return true;
+}
+
 bool isTrustedAssetUrl(const char* value) {
   if (!value) return false;
   static constexpr const char* ORIGIN_PREFIX = "https://vannhanso.com/";
@@ -201,6 +218,7 @@ std::string formatDateTime(const uint32_t dateKey, const uint16_t minuteOfDay) {
   }
   return value;
 }
+
 }  // namespace
 
 void VanNhanSoUpdateActivity::onEnter() {
@@ -209,6 +227,10 @@ void VanNhanSoUpdateActivity::onEnter() {
   syncPendingProfile();
 
   if (automatic) {
+    // An explicit sleep starts while the power button may still be held. Ignore
+    // only that original hold; a later power press is new user activity and
+    // must be able to cancel the pending sleep.
+    ignoreTriggerPowerUntilRelease = sleepAfterUpdate && mappedInput.isPressed(MappedInputManager::Button::Power);
     startAutomaticUpdate();
     return;
   }
@@ -230,7 +252,7 @@ void VanNhanSoUpdateActivity::onExit() {
     }
   }
 
-  if (automatic && sleepAfterUpdate) vanNhanSoUpdateFinishedBeforeSleep();
+  if (automatic && sleepAfterUpdate) vanNhanSoUpdateFinishedBeforeSleep(!sleepCancelledByUser);
 }
 
 void VanNhanSoUpdateActivity::beginManualUpdate() {
@@ -259,7 +281,10 @@ void VanNhanSoUpdateActivity::beginManualUpdate() {
 void VanNhanSoUpdateActivity::startAutomaticUpdate() {
   state = WIFI_SELECTION;
 
-  if (resolveCurrentDate(false) && isCurrentCache()) {
+  const bool haveCurrentDate = resolveCurrentDate(false);
+  if (haveCurrentDate && vannhanso_update_policy::shouldSkipCurrentCache(
+                             trigger, isCurrentCache(), currentDateKey, currentMinute,
+                             APP_STATE.vanNhanSoLastSuccessDate, APP_STATE.vanNhanSoLastSuccessMinute)) {
     LOG_INF("VNS", "Sleep screen already current for %lu", static_cast<unsigned long>(currentDateKey));
     clearPendingProfile();
     state = SKIPPED;
@@ -301,7 +326,10 @@ void VanNhanSoUpdateActivity::startAutomaticUpdate() {
 void VanNhanSoUpdateActivity::checkAutomaticConnection() {
   const wl_status_t status = WiFi.status();
   if (status == WL_CONNECTED) {
-    if (resolveCurrentDate(false) && isCurrentCache()) {
+    const bool haveCurrentDate = resolveCurrentDate(false);
+    if (haveCurrentDate && vannhanso_update_policy::shouldSkipCurrentCache(
+                               trigger, isCurrentCache(), currentDateKey, currentMinute,
+                               APP_STATE.vanNhanSoLastSuccessDate, APP_STATE.vanNhanSoLastSuccessMinute)) {
       LOG_INF("VNS", "Sleep screen already current for %lu", static_cast<unsigned long>(currentDateKey));
       clearPendingProfile();
       state = SKIPPED;
@@ -324,6 +352,24 @@ void VanNhanSoUpdateActivity::checkAutomaticConnection() {
   }
 }
 
+bool VanNhanSoUpdateActivity::automaticCancellationRequested() {
+  if (ignoreTriggerPowerUntilRelease && !mappedInput.isPressed(MappedInputManager::Button::Power)) {
+    ignoreTriggerPowerUntilRelease = false;
+  }
+
+  int x = 0;
+  int y = 0;
+  const bool backPressed = mappedInput.wasPressed(MappedInputManager::Button::Back);
+  const bool anyButtonPressed = mappedInput.wasAnyPressed();
+  const bool powerButtonPressed = mappedInput.wasPressed(MappedInputManager::Button::Power);
+  const bool screenTapped = mappedInput.wasScreenTapped(x, y);
+  const bool shouldCancel = vannhanso_update_policy::shouldCancelAutomaticUpdate(
+      trigger, pendingProfileRequired, backPressed, anyButtonPressed, powerButtonPressed, screenTapped,
+      ignoreTriggerPowerUntilRelease);
+  if (shouldCancel && sleepAfterUpdate) sleepCancelledByUser = true;
+  return shouldCancel;
+}
+
 void VanNhanSoUpdateActivity::onWifiSelectionComplete(const bool connected) {
   if (!connected) {
     state = STATUS;
@@ -339,11 +385,7 @@ void VanNhanSoUpdateActivity::onWifiSelectionComplete(const bool connected) {
 
 void VanNhanSoUpdateActivity::loop() {
   if (state == AUTO_CONNECTING) {
-    int x = 0;
-    int y = 0;
-    const bool shouldCancel = pendingProfileRequired ? mappedInput.wasPressed(MappedInputManager::Button::Back)
-                                                     : mappedInput.wasAnyPressed() || mappedInput.wasScreenTapped(x, y);
-    if (shouldCancel) {
+    if (automaticCancellationRequested()) {
       LOG_INF("VNS", "Automatic update cancelled by user input");
       if (pendingProfileRequired) recordCancelled();
       finish();
@@ -355,8 +397,9 @@ void VanNhanSoUpdateActivity::loop() {
 
   if (state == DOWNLOADING) {
     requestUpdateAndWait();
-    // The X-Calendar-Date response header is authoritative for /today.bmp.
-    // Do not block the UI on an NTP round trip before downloading it.
+    // The manifest calendar_date and X-Calendar-Date response header are
+    // authoritative for /manifest/today. Do not block the UI on an NTP round
+    // trip before downloading it.
     resolveCurrentDate(false);
     downloadSleepScreen();
     if (automatic) finish();
@@ -390,11 +433,11 @@ bool VanNhanSoUpdateActivity::resolveCurrentDate(const bool allowNetworkSync) {
   (void)allowNetworkSync;
   haveDate = hostSystemDateTime(dateTime);
 #else
-  if (halClock.isAvailable() && SETTINGS.clockHasBeenSynced) {
-    haveDate = halClock.getDateTime(dateTime);
-  }
-  if (!haveDate) {
-    haveDate = halClock.getSystemDateTime(dateTime);
+  // A merely plausible ESP system date is not authoritative after a complete
+  // power loss. Only use clocks that have previously been synchronized; an
+  // authenticated HTTPS Date response below re-establishes that state.
+  if (SETTINGS.clockHasBeenSynced) {
+    haveDate = halClock.isAvailable() ? halClock.getDateTime(dateTime) : halClock.getSystemDateTime(dateTime);
   }
 
   if (!haveDate && allowNetworkSync && WiFi.status() == WL_CONNECTED) {
@@ -405,7 +448,11 @@ bool VanNhanSoUpdateActivity::resolveCurrentDate(const bool allowNetworkSync) {
         haveDate = halClock.getDateTime(dateTime);
       }
     } else {
-      haveDate = halClock.syncSystemTimeFromNTP(dateTime);
+      if (halClock.syncSystemTimeFromNTP(dateTime)) {
+        SETTINGS.clockHasBeenSynced = 1;
+        SETTINGS.saveToFile();
+        haveDate = true;
+      }
     }
   }
 #endif
@@ -463,7 +510,7 @@ bool VanNhanSoUpdateActivity::isCurrentCache() const {
 bool VanNhanSoUpdateActivity::isBackoffActive() const {
   return vannhanso_update_policy::isBackoffActive(
       currentProfileHash, APP_STATE.vanNhanSoFailureProfileHash,
-      APP_STATE.vanNhanSoUpdateResult == CrossPointState::VanNhanSoUpdateResult::FAILED, pendingProfileRequired,
+      APP_STATE.vanNhanSoUpdateResult == CrossPointState::VanNhanSoUpdateResult::FAILED,
       APP_STATE.vanNhanSoConsecutiveFailures, currentDateKey, currentMinute, APP_STATE.vanNhanSoLastAttemptDate,
       APP_STATE.vanNhanSoLastAttemptMinute);
 }
@@ -497,6 +544,7 @@ bool VanNhanSoUpdateActivity::readProfileMarker(char* profile, const size_t prof
 void VanNhanSoUpdateActivity::downloadSleepScreen() {
   const bool isX3 = renderer.getScreenWidth() >= 528;
   const char* baseUrl = isX3 ? VANNHANSO_X3_MANIFEST_URL : VANNHANSO_X4_MANIFEST_URL;
+  const uint32_t localDateBeforeRequest = currentDateKey;
   char url[REQUEST_URL_MAX_LENGTH];
   if (!vannhanso_profile::buildManifestUrl(baseUrl, url, sizeof(url))) {
     fail(CrossPointState::VanNhanSoUpdateError::METADATA);
@@ -506,7 +554,6 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
   downloadedBytes = 0;
   totalBytes = 0;
   cancelDownload = false;
-  const uint32_t expectedDateKey = currentDateKey;
   const uint32_t timeoutMs = automatic ? AUTOMATIC_DOWNLOAD_TIMEOUT_MS : MANUAL_DOWNLOAD_TIMEOUT_MS;
 
   const auto pollCancellation = [this](const size_t, const size_t) {
@@ -514,10 +561,7 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
     int x = 0;
     int y = 0;
     if (automatic) {
-      if (pendingProfileRequired ? mappedInput.wasPressed(MappedInputManager::Button::Back)
-                                 : mappedInput.wasAnyPressed() || mappedInput.wasScreenTapped(x, y)) {
-        cancelDownload = true;
-      }
+      cancelDownload = automaticCancellationRequested();
     } else if (mappedInput.wasPressed(MappedInputManager::Button::Back) || mappedInput.wasScreenTapped(x, y)) {
       cancelDownload = true;
     }
@@ -545,6 +589,7 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
   JsonDocument manifest;
   const DeserializationError jsonError = deserializeJson(manifest, manifestBody, manifestLength);
   const char* manifestDevice = manifest["device"] | "";
+  const char* manifestProfile = manifest["profile"] | "";
   const char* assetUrl = manifest["asset_url"] | "";
   const char* checksum = manifest["sha256"] | "";
   const char* calendarDate = manifest["calendar_date"] | "";
@@ -553,20 +598,24 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
   const int expectedBpp = manifest["bits_per_pixel"] | 0;
   const size_t expectedLength = manifest["content_length"] | static_cast<size_t>(0);
   const char* expectedDevice = isX3 ? "xteink-x3" : "xteink-x4";
+  char expectedProfile[17];
   if (manifestLength == 0 || jsonError || (manifest["version"] | 0) != 2 ||
       strcmp(manifestDevice, expectedDevice) != 0 || expectedWidth != renderer.getScreenWidth() ||
       expectedHeight != renderer.getScreenHeight() || expectedBpp != 2 || expectedLength == 0 ||
       expectedLength > 1024U * 1024U || !isSha256Hex(checksum) || !isTrustedAssetUrl(assetUrl) ||
-      strlen(assetUrl) >= REQUEST_URL_MAX_LENGTH) {
+      strlen(assetUrl) >= REQUEST_URL_MAX_LENGTH ||
+      !buildServerProfileSignature(expectedProfile, sizeof(expectedProfile)) ||
+      strcmp(manifestProfile, expectedProfile) != 0) {
     LOG_ERR("VNS", "Invalid v2 manifest: %s", jsonError ? jsonError.c_str() : "schema mismatch");
     fail(CrossPointState::VanNhanSoUpdateError::METADATA);
     return;
   }
 
   const uint32_t responseDateKey = parseIsoDateKey(calendarDate);
-  if (responseDateKey == 0 || (expectedDateKey != 0 && responseDateKey != expectedDateKey)) {
-    LOG_ERR("VNS", "Stale or invalid manifest date: expected=%lu received=%lu",
-            static_cast<unsigned long>(expectedDateKey), static_cast<unsigned long>(responseDateKey));
+  const uint32_t headerDateKey = parseIsoDateKey(manifestResponse.calendarDate);
+  if (responseDateKey == 0 || (!manifestResponse.calendarDate.empty() && headerDateKey != responseDateKey)) {
+    LOG_ERR("VNS", "Invalid or inconsistent manifest date: body=%lu header=%lu",
+            static_cast<unsigned long>(responseDateKey), static_cast<unsigned long>(headerDateKey));
     fail(CrossPointState::VanNhanSoUpdateError::METADATA);
     return;
   }
@@ -574,6 +623,73 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
   const std::string expectedChecksum(checksum);
   const std::string resolvedAssetUrl(assetUrl);
   const std::string serverDate = manifestResponse.serverDate;
+
+  Rtc::DateTime serverDateTime;
+  uint32_t serverVietnamDateKey = 0;
+  uint16_t serverVietnamMinute = UINT16_MAX;
+  const bool haveServerTime = parseHttpDate(serverDate, serverDateTime);
+  if (haveServerTime && (!vietnamDateTime(serverDateTime, serverVietnamDateKey, serverVietnamMinute) ||
+                         serverVietnamDateKey != responseDateKey)) {
+    LOG_ERR("VNS", "Response Date and X-Calendar-Date headers disagree");
+    fail(CrossPointState::VanNhanSoUpdateError::METADATA);
+    return;
+  }
+  // The manifest is authoritative for the daily asset. It also lets X4
+  // persist the data date after a full power loss, without waiting for NTP.
+  if (localDateBeforeRequest != 0 && localDateBeforeRequest != responseDateKey) {
+    LOG_INF("VNS", "Correcting local date from %lu to server date %lu",
+            static_cast<unsigned long>(localDateBeforeRequest), static_cast<unsigned long>(responseDateKey));
+  }
+  currentDateKey = responseDateKey;
+#if defined(SIMULATOR)
+  if (haveServerTime) {
+    currentMinute = serverVietnamMinute;
+  } else {
+    currentMinute = UINT16_MAX;
+    LOG_ERR("VNS", "Missing or invalid HTTPS Date response header; daily cache timing may be unavailable");
+  }
+#else
+  if (haveServerTime) {
+    currentMinute = serverVietnamMinute;
+    if (halClock.setDateTimeUtc(serverDateTime)) {
+      if (!SETTINGS.clockHasBeenSynced) {
+        SETTINGS.clockHasBeenSynced = 1;
+        SETTINGS.saveToFile();
+      }
+    } else {
+      LOG_ERR("VNS", "Could not persist the authenticated server time");
+    }
+  } else {
+    currentMinute = UINT16_MAX;
+    LOG_ERR("VNS", "Missing or invalid HTTPS Date response header; daily cache timing may be unavailable");
+  }
+#endif
+
+  // "When entering sleep" means checking the manifest on every sleep, not
+  // rewriting an identical immutable asset every time. Hash the active
+  // profile image and avoid the second HTTP request when the server checksum
+  // has not changed.
+  char currentImagePath[vannhanso_profile::PATH_MAX_LENGTH];
+  HalFile currentImage;
+  const bool unchanged = vannhanso_profile::buildImagePath(renderer.getScreenWidth(), renderer.getScreenHeight(),
+                                                           currentImagePath, sizeof(currentImagePath)) &&
+                         Storage.openFileForRead("VNS", currentImagePath, currentImage) &&
+                         currentImage.fileSize() == expectedLength;
+  if (currentImage) currentImage.close();
+  if (unchanged && validateChecksum(currentImagePath, expectedChecksum, /*logMismatch=*/false)) {
+    uint32_t storedDateKey = 0;
+    if ((!vannhanso_cache::readCurrentDate(renderer.getScreenWidth(), renderer.getScreenHeight(), storedDateKey) ||
+         storedDateKey != currentDateKey) &&
+        !vannhanso_cache::writeCurrentDate(renderer.getScreenWidth(), renderer.getScreenHeight(), currentDateKey)) {
+      fail(CrossPointState::VanNhanSoUpdateError::METADATA);
+      return;
+    }
+    LOG_INF("VNS", "Manifest checked; current profile image is unchanged");
+    recordSuccess();
+    state = SUCCESS;
+    requestUpdate();
+    return;
+  }
 
   // The image body is streamed directly to SD and never buffered in heap.
   HttpDownloader::ResponseInfo responseInfo;
@@ -595,10 +711,7 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
         int x = 0;
         int y = 0;
         if (automatic) {
-          if (pendingProfileRequired ? mappedInput.wasPressed(MappedInputManager::Button::Back)
-                                     : mappedInput.wasAnyPressed() || mappedInput.wasScreenTapped(x, y)) {
-            cancelDownload = true;
-          }
+          cancelDownload = automaticCancellationRequested();
         } else if (mappedInput.wasPressed(MappedInputManager::Button::Back) || mappedInput.wasScreenTapped(x, y)) {
           cancelDownload = true;
         }
@@ -627,7 +740,7 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
 
   state = VERIFYING;
   if (!automatic || pendingProfileRequired) requestUpdateAndWait();
-  if (!validateChecksum(expectedChecksum)) {
+  if (!validateChecksum(TEMP_PATH, expectedChecksum)) {
     Storage.remove(TEMP_PATH);
     fail(CrossPointState::VanNhanSoUpdateError::CHECKSUM_MISMATCH);
     return;
@@ -637,38 +750,6 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
     fail(CrossPointState::VanNhanSoUpdateError::INVALID_IMAGE);
     return;
   }
-
-  Rtc::DateTime serverDateTime;
-  uint32_t serverVietnamDateKey = 0;
-  uint16_t serverVietnamMinute = UINT16_MAX;
-  const bool haveServerTime = parseHttpDate(serverDate, serverDateTime);
-  if (haveServerTime && (!vietnamDateTime(serverDateTime, serverVietnamDateKey, serverVietnamMinute) ||
-                         serverVietnamDateKey != responseDateKey)) {
-    LOG_ERR("VNS", "Response Date and X-Calendar-Date headers disagree");
-    Storage.remove(TEMP_PATH);
-    fail(CrossPointState::VanNhanSoUpdateError::METADATA);
-    return;
-  }
-  // The manifest is authoritative for the daily asset. It also lets X4
-  // persist the data date after a full power loss, without waiting for NTP.
-  currentDateKey = responseDateKey;
-#if defined(SIMULATOR)
-  if (haveServerTime) {
-    currentMinute = serverVietnamMinute;
-  } else {
-    LOG_ERR("VNS", "Missing or invalid HTTPS Date response header; daily cache timing may be unavailable");
-  }
-#else
-  if (haveServerTime && halClock.setDateTimeUtc(serverDateTime)) {
-    currentMinute = serverVietnamMinute;
-    if (!SETTINGS.clockHasBeenSynced) {
-      SETTINGS.clockHasBeenSynced = 1;
-      SETTINGS.saveToFile();
-    }
-  } else if (!haveServerTime) {
-    LOG_ERR("VNS", "Missing or invalid HTTPS Date response header; daily cache timing may be unavailable");
-  }
-#endif
 
   state = INSTALLING;
   if (!automatic || pendingProfileRequired) requestUpdateAndWait();
@@ -772,9 +853,10 @@ void VanNhanSoUpdateActivity::failDownload(const HttpDownloader::DownloadError r
   }
 }
 
-bool VanNhanSoUpdateActivity::validateChecksum(const std::string& expectedChecksum) const {
+bool VanNhanSoUpdateActivity::validateChecksum(const char* path, const std::string& expectedChecksum,
+                                               const bool logMismatch) const {
   HalFile file;
-  if (!Storage.openFileForRead("VNS", TEMP_PATH, file)) return false;
+  if (!path || !Storage.openFileForRead("VNS", path, file)) return false;
 
   mbedtls_sha256_context context;
   mbedtls_sha256_init(&context);
@@ -812,7 +894,7 @@ bool VanNhanSoUpdateActivity::validateChecksum(const std::string& expectedChecks
     matches = matches && actualChecksum[i] == expected;
   }
   if (!matches) {
-    LOG_ERR("VNS", "Downloaded sleep-screen checksum mismatch");
+    if (logMismatch) LOG_ERR("VNS", "Sleep-screen checksum mismatch");
   } else {
     LOG_INF("VNS", "Verified sleep-screen SHA-256: %s", actualChecksum);
   }
