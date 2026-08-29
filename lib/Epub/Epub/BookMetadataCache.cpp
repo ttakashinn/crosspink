@@ -612,7 +612,10 @@ bool BookMetadataCache::load() {
   loaded = false;
   sourceMismatch = false;
   cumulativeSizes.clear();
-  bookFile.close();
+  if (bookFile.isOpen() && !bookFile.close()) {
+    LOG_ERR("BMC", "Could not close the previous metadata cache handle");
+    return false;
+  }
 
   const std::string finalPath = cachePath + bookBinFile;
   const std::string backupPath = cachePath + bookBinBackupFile;
