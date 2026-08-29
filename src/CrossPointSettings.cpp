@@ -90,11 +90,15 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
   doc["frontButtonRight"] = frontButtonRight;
   // Font family and size — both use dynamic getter/setters in SettingsList (the
   // option lists depend on the SD font registry), so the generic loop skips them.
-  doc["fontFamily"] = fontFamily;
-  doc["fontSize"] = fontPointSize;
+  doc["fontFamily"] = persistedReaderSettings_.active ? persistedReaderSettings_.fontFamily : fontFamily;
+  doc["fontSize"] = persistedReaderSettings_.active ? persistedReaderSettings_.fontPointSize : fontPointSize;
   // SD card font family name — not in SettingsList, save manually
-  if (sdFontFamilyName[0] != '\0') {
-    doc["sdFontFamilyName"] = sdFontFamilyName;
+  const char* persistedSdFont =
+      persistedReaderSettings_.active ? persistedReaderSettings_.sdFontFamilyName : sdFontFamilyName;
+  if (persistedSdFont[0] != '\0') {
+    doc["sdFontFamilyName"] = persistedSdFont;
+  } else {
+    doc.remove("sdFontFamilyName");
   }
   // Dictionary folder name — uses dynamic getter/setter in SettingsList, save manually
   if (dictionaryName[0] != '\0') {
@@ -104,7 +108,48 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
   // Language -- managed by LanguageSelectActivity, not in SettingsList.
   // Stored as ISO code string ("EN", "DE", ...) for stability across enum reorders.
   doc["language"] = (language < getLanguageCount()) ? LANGUAGE_CODES[language] : "EN";
+
+  // Generic SettingsList serialization above reads the live singleton. Replace
+  // only the reader-local fields with their global snapshot while a book
+  // overlay is active. Unrelated settings changed inside the reader remain
+  // durable in the same save.
+  if (persistedReaderSettings_.active) {
+    doc["lineSpacing"] = persistedReaderSettings_.lineSpacing;
+    doc["paragraphAlignment"] = persistedReaderSettings_.paragraphAlignment;
+    doc["orientation"] = persistedReaderSettings_.orientation;
+    doc["screenMargin"] = persistedReaderSettings_.screenMargin;
+    doc["embeddedStyle"] = persistedReaderSettings_.embeddedStyle;
+    doc["focusReadingEnabled"] = persistedReaderSettings_.focusReadingEnabled;
+    doc["hyphenationEnabled"] = persistedReaderSettings_.hyphenationEnabled;
+    doc["extraParagraphSpacing"] = persistedReaderSettings_.extraParagraphSpacing;
+    doc["textAntiAliasing"] = persistedReaderSettings_.textAntiAliasing;
+    doc["imageRendering"] = persistedReaderSettings_.imageRendering;
+  }
 }
+
+void CrossPointSettings::beginReaderPersistenceOverlay() {
+  // Reader activities are not nested. Keep the first snapshot if a failed
+  // transition happens to call prepare twice so a book overlay can never
+  // become its own global baseline.
+  if (persistedReaderSettings_.active) return;
+  persistedReaderSettings_.fontFamily = fontFamily;
+  persistedReaderSettings_.fontPointSize = fontPointSize;
+  persistedReaderSettings_.lineSpacing = lineSpacing;
+  persistedReaderSettings_.paragraphAlignment = paragraphAlignment;
+  persistedReaderSettings_.orientation = orientation;
+  persistedReaderSettings_.screenMargin = screenMargin;
+  persistedReaderSettings_.embeddedStyle = embeddedStyle;
+  persistedReaderSettings_.focusReadingEnabled = focusReadingEnabled;
+  persistedReaderSettings_.hyphenationEnabled = hyphenationEnabled;
+  persistedReaderSettings_.extraParagraphSpacing = extraParagraphSpacing;
+  persistedReaderSettings_.textAntiAliasing = textAntiAliasing;
+  persistedReaderSettings_.imageRendering = imageRendering;
+  copyToField(persistedReaderSettings_.sdFontFamilyName, sdFontFamilyName,
+              sizeof(persistedReaderSettings_.sdFontFamilyName));
+  persistedReaderSettings_.active = true;
+}
+
+void CrossPointSettings::endReaderPersistenceOverlay() { persistedReaderSettings_.active = false; }
 
 bool CrossPointSettings::fromJson(JsonVariantConst doc) {
   CrossPointSettings& s = *this;

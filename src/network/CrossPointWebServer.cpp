@@ -923,9 +923,8 @@ void CrossPointWebServer::handleRename() const {
     return;
   }
 
-  clearBookCache(itemPath.c_str());
-  const bool success = file.rename(newPath.c_str());
   file.close();
+  const bool success = moveBookWithCache(itemPath.c_str(), newPath.c_str());
 
   if (success) {
     LOG_DBG("WEB", "Renamed file: %s -> %s", itemPath.c_str(), newPath.c_str());
@@ -1016,9 +1015,8 @@ void CrossPointWebServer::handleMove() const {
     return;
   }
 
-  clearBookCache(itemPath.c_str());
-  const bool success = file.rename(newPath.c_str());
   file.close();
+  const bool success = moveBookWithCache(itemPath.c_str(), newPath.c_str());
 
   if (success) {
     LOG_DBG("WEB", "Moved file: %s -> %s", itemPath.c_str(), newPath.c_str());

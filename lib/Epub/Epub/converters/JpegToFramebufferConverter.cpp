@@ -507,7 +507,7 @@ bool JpegToFramebufferConverter::decodeToFramebuffer(const std::string& imagePat
   // Finalize the streamed cache file. Note: a flush failure mid-decode clears
   // ctx.caching (the partial file is dropped), so re-read the flag here.
   if (ctx.caching) {
-    ctx.cache.finalize();
+    if (!ctx.cache.finalize()) LOG_ERR("JPG", "Decoded image but failed to publish pixel cache");
   }
 
   return true;

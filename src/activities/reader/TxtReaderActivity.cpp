@@ -378,33 +378,36 @@ bool TxtReaderActivity::isAtEndOfBook() const { return initialized && currentPag
 
 void TxtReaderActivity::onReturnFromEndOfBook() { currentPage = totalPages > 0 ? totalPages - 1 : 0; }
 
-bool TxtReaderActivity::saveProgress() {
+bool TxtReaderActivity::saveProgress(const int page) {
   uint8_t data[4];
-  data[0] = currentPage & 0xFF;
-  data[1] = (currentPage >> 8) & 0xFF;
+  data[0] = page & 0xFF;
+  data[1] = (page >> 8) & 0xFF;
   data[2] = 0;
   data[3] = 0;
   if (!ProgressFile::writeAtomic(txt->getCachePath(), data, sizeof(data))) {
-    LOG_ERR("TRS", "Failed to save progress: page %d", currentPage);
+    LOG_ERR("TRS", "Failed to save progress: page %d", page);
     progressSaveDebouncer.markAttemptFailed(millis());
     return false;
   }
-  progressSaveDebouncer.seedPersisted(static_cast<uint32_t>(currentPage), static_cast<uint32_t>(totalPages), millis());
+  progressSaveDebouncer.seedPersisted(static_cast<uint32_t>(page), static_cast<uint32_t>(totalPages), millis());
   return true;
 }
 
 void TxtReaderActivity::queueProgressSave() {
   if (progressSaveDebouncer.observe(static_cast<uint32_t>(currentPage), static_cast<uint32_t>(totalPages), millis())) {
-    saveProgress();
+    saveProgress(currentPage);
   }
 }
 
 void TxtReaderActivity::flushReaderState() {
-  if (txt && progressSaveDebouncer.hasPending()) saveProgress();
+  if (txt && progressSaveDebouncer.hasPending()) {
+    saveProgress(static_cast<int>(progressSaveDebouncer.lastObservedPosition()));
+  }
 }
 
 void TxtReaderActivity::requestProgressSaveIfDue() {
-  if (progressSaveDebouncer.due(millis())) requestUpdate();
+  RenderLock lock(*this);
+  if (progressSaveDebouncer.due(millis())) flushReaderState();
 }
 
 void TxtReaderActivity::loadProgress() {

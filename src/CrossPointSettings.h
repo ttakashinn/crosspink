@@ -223,6 +223,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     VANNHANSO_WEATHER_CANTHO = 4,
     VANNHANSO_WEATHER_HUE = 5,
     VANNHANSO_WEATHER_DONGNAI = 6,
+    VANNHANSO_WEATHER_NAMDINH = 7,
     VANNHANSO_WEATHER_LOCATION_COUNT
   };
 
@@ -381,6 +382,15 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // offering a size nothing renders at. Both fields are persisted in one write.
   void clearSdFontFamily();
 
+  // A reader may temporarily apply book-specific typography directly to this
+  // singleton because the existing render/layout stack reads SETTINGS. While
+  // that overlay is active, saveToFile() must still serialize the real global
+  // reader defaults; otherwise an unrelated save (night mode, frontlight,
+  // clock sync, etc.) permanently promotes the current book's settings.
+  void beginReaderPersistenceOverlay();
+  void endReaderPersistenceOverlay();
+  bool readerPersistenceOverlayActive() const { return persistedReaderSettings_.active; }
+
   // Resolved status-bar composition. Consumers read the spec; only settings
   // editors read the raw fields.
   //
@@ -431,6 +441,24 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   float getReaderLineCompression() const;
   unsigned long getSleepTimeoutMs() const;
   int getRefreshFrequency() const;
+
+ private:
+  struct PersistedReaderSettings {
+    uint8_t fontFamily = NOTOSERIF;
+    uint8_t fontPointSize = DEFAULT_FONT_POINT_SIZE;
+    uint8_t lineSpacing = NORMAL;
+    uint8_t paragraphAlignment = JUSTIFIED;
+    uint8_t orientation = PORTRAIT;
+    uint8_t screenMargin = SCREEN_MARGIN_MIN;
+    uint8_t embeddedStyle = 1;
+    uint8_t focusReadingEnabled = 0;
+    uint8_t hyphenationEnabled = 0;
+    uint8_t extraParagraphSpacing = 1;
+    uint8_t textAntiAliasing = 1;
+    uint8_t imageRendering = IMAGES_DISPLAY;
+    char sdFontFamilyName[32] = "";
+    bool active = false;
+  } persistedReaderSettings_;
 };
 
 // Helper macro to access settings

@@ -11,6 +11,8 @@ namespace {
 const std::string kCombGrave = "\xCC\x80";     // U+0300 COMBINING GRAVE ACCENT
 const std::string kCombAcute = "\xCC\x81";     // U+0301 COMBINING ACUTE ACCENT
 const std::string kCombCirc = "\xCC\x82";      // U+0302 COMBINING CIRCUMFLEX ACCENT
+const std::string kCombHook = "\xCC\x89";      // U+0309 COMBINING HOOK ABOVE
+const std::string kCombHorn = "\xCC\x9B";      // U+031B COMBINING HORN
 const std::string kCombDotBelow = "\xCC\xA3";  // U+0323 COMBINING DOT BELOW
 
 }  // namespace
@@ -35,6 +37,15 @@ TEST(Utf8ComposeNfc, ComposesStackedVietnameseMarks) {
   EXPECT_EQ(utf8ComposeNfc("a" + kCombCirc + kCombAcute), "\xE1\xBA\xA5");
   // a + dot-below + circumflex (canonical order) -> ậ (U+1EAD)
   EXPECT_EQ(utf8ComposeNfc("a" + kCombDotBelow + kCombCirc), "\xE1\xBA\xAD");
+}
+
+TEST(Utf8ComposeNfc, RepairsCommonOutOfOrderVietnameseMarks) {
+  // Some EPUB generators put the tone before the vowel-shape mark. Unicode NFC
+  // preserves that malformed same-class order, but the reader can safely repair
+  // the bounded Vietnamese combinations to keep diacritics attached.
+  EXPECT_EQ(utf8ComposeNfc("a" + kCombAcute + kCombCirc), "\xE1\xBA\xA5");     // ấ
+  EXPECT_EQ(utf8ComposeNfc("o" + kCombHook + kCombHorn), "\xE1\xBB\x9F");      // ở
+  EXPECT_EQ(utf8ComposeNfc("u" + kCombDotBelow + kCombHorn), "\xE1\xBB\xB1");  // ự
 }
 
 // A combining mark with no composition for its base is left unchanged, and the

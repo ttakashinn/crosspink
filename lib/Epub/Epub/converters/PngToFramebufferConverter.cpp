@@ -479,7 +479,7 @@ bool PngToFramebufferConverter::decodeToFramebuffer(const std::string& imagePath
 
   // Finalize the streamed cache (caching may have been cleared on a flush error).
   if (ctx.caching) {
-    ctx.cache.finalize();
+    if (!ctx.cache.finalize()) LOG_ERR("PNG", "Decoded image but failed to publish pixel cache");
   }
 
   return true;

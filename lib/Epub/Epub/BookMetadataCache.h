@@ -47,11 +47,13 @@ class BookMetadataCache {
 
  private:
   std::string cachePath;
+  std::string sourcePath;
   uint32_t lutOffset;
   uint16_t spineCount;
   uint16_t tocCount;
   bool loaded;
   bool buildMode;
+  bool sourceMismatch = false;
 
   HalFile bookFile;
   // Temp file handles during build
@@ -97,8 +99,14 @@ class BookMetadataCache {
  public:
   BookMetadata coreMetadata;
 
-  explicit BookMetadataCache(std::string cachePath)
-      : cachePath(std::move(cachePath)), lutOffset(0), spineCount(0), tocCount(0), loaded(false), buildMode(false) {}
+  BookMetadataCache(std::string cachePath, std::string sourcePath)
+      : cachePath(std::move(cachePath)),
+        sourcePath(std::move(sourcePath)),
+        lutOffset(0),
+        spineCount(0),
+        tocCount(0),
+        loaded(false),
+        buildMode(false) {}
   ~BookMetadataCache() = default;
 
   // Building phase (stream to disk immediately)
@@ -125,4 +133,5 @@ class BookMetadataCache {
   int getSpineCount() const { return spineCount; }
   int getTocCount() const { return tocCount; }
   bool isLoaded() const { return loaded; }
+  bool hasSourceMismatch() const { return sourceMismatch; }
 };

@@ -762,9 +762,11 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
     // emits base-then-marks per UAX#9 L3). anchorFor pins position-sensitive
     // niqqud (dagesh, shin/sin dots, holam) to their spot on the base; other
     // marks stay centered, raised above the base or (kasra) at their
-    // font-native position. Fonts without their glyphs — the built-ins — miss
-    // the getGlyph lookup and skip them, as before.
+    // font-native position. getGlyph() substitutes U+FFFD when coverage is
+    // missing, so test direct coverage first or a tofu box would be overlaid
+    // on the preceding base glyph.
     if (utf8IsCombiningMark(cp) || BidiUtils::isTransparentMark(cp)) {
+      if (!font.hasCodepoint(cp, style)) continue;
       const EpdGlyph* combiningGlyph = font.getGlyph(cp, style);
       if (!combiningGlyph) continue;
       const auto anchor = combiningMark::anchorFor(cp);
@@ -2108,7 +2110,8 @@ int GfxRenderer::getKerning(const int fontId, const uint32_t leftCp, const uint3
   return fp4::toPixel(kernFP);  // snap 4.4 fixed-point to nearest pixel
 }
 
-int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, EpdFontFamily::Style style) const {
+int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, EpdFontFamily::Style style,
+                                 const uint32_t followingCp) const {
   // Match the font drawText would use for CJK-bearing strings (see resolveTextFontId).
   const int resolvedFontId = resolveTextFontId(fontId, text, style);
   // Measure the exact codepoint stream drawText renders: bidi-reordered and
@@ -2134,9 +2137,14 @@ int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, EpdFontFami
       return 0;
     }
     const auto& font = fontIt->second;
+    uint32_t lastCp = 0;
+    bool lastScaledSmallCap = false;
     while (uint32_t cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&text))) {
       // RTL vowel marks (niqqud/harakat) are zero-advance overlays in drawText — no width.
       if (BidiUtils::isTransparentMark(cp)) {
+        continue;
+      }
+      if (utf8IsCombiningMark(cp)) {
         continue;
       }
       const bool scaledSmallCap = resolveSmallCap(style, cp);
@@ -2150,6 +2158,15 @@ int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, EpdFontFami
       } else {
         widthFP += scaledSmallCap ? smallcaps::scaleAdvance(advFP) : advFP;
       }
+      lastCp = cp;
+      lastScaledSmallCap = scaledSmallCap;
+    }
+    if (followingCp != 0 && lastCp != 0) {
+      uint32_t adjustedFollowingCp = followingCp;
+      const bool followingScaledSmallCap = resolveSmallCap(style, adjustedFollowingCp);
+      int32_t kernFP = font.getKerning(lastCp, adjustedFollowingCp, style);
+      if (lastScaledSmallCap || followingScaledSmallCap) kernFP = smallcaps::scaleAdvance(kernFP);
+      widthFP += kernFP;
     }
     return fp4::toPixel(widthFP);
   }
@@ -2195,7 +2212,15 @@ int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, EpdFontFami
     prevCp = cp;
     prevScaledSmallCap = scaledSmallCap;
   }
-  widthPx += fp4::toPixel(prevAdvanceFP);  // final glyph's advance
+  if (followingCp != 0 && prevCp != 0) {
+    uint32_t adjustedFollowingCp = followingCp;
+    const bool followingScaledSmallCap = resolveSmallCap(style, adjustedFollowingCp);
+    int32_t kernFP = font.getKerning(prevCp, adjustedFollowingCp, style);
+    if (prevScaledSmallCap || followingScaledSmallCap) kernFP = smallcaps::scaleAdvance(kernFP);
+    widthPx += fp4::toPixel(prevAdvanceFP + kernFP);
+  } else {
+    widthPx += fp4::toPixel(prevAdvanceFP);  // final glyph's advance
+  }
   return widthPx;
 }
 
@@ -2268,9 +2293,10 @@ void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y
     // emits base-then-marks per UAX#9 L3). anchorFor pins position-sensitive
     // niqqud (dagesh, shin/sin dots, holam) to their spot on the base; other
     // marks stay centered, raised above the base or (kasra) at their
-    // font-native position. Fonts without their glyphs — the built-ins — miss
-    // the getGlyph lookup and skip them, as before.
+    // font-native position. Avoid getGlyph()'s U+FFFD substitution for a mark
+    // that the font does not actually contain.
     if (utf8IsCombiningMark(cp) || BidiUtils::isTransparentMark(cp)) {
+      if (!font.hasCodepoint(cp, style)) continue;
       const EpdGlyph* combiningGlyph = font.getGlyph(cp, style);
       if (!combiningGlyph) continue;
       const auto anchor = combiningMark::anchorFor(cp);

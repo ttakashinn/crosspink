@@ -238,7 +238,7 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                           {StrId::STR_VANNHANSO_WEATHER_HANOI, StrId::STR_VANNHANSO_WEATHER_HOCHIMINH,
                            StrId::STR_VANNHANSO_WEATHER_DANANG, StrId::STR_VANNHANSO_WEATHER_HAIPHONG,
                            StrId::STR_VANNHANSO_WEATHER_CANTHO, StrId::STR_VANNHANSO_WEATHER_HUE,
-                           StrId::STR_VANNHANSO_WEATHER_DONGNAI},
+                           StrId::STR_VANNHANSO_WEATHER_DONGNAI, StrId::STR_VANNHANSO_WEATHER_NAMDINH},
                           "vanNhanSoWeatherLocation", StrId::STR_CAT_DISPLAY),
         SettingInfo::Toggle(StrId::STR_VANNHANSO_FINANCE, &CrossPointSettings::vanNhanSoFinance, "vanNhanSoFinance",
                             StrId::STR_CAT_DISPLAY),

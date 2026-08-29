@@ -165,6 +165,18 @@ bool exactAnchorMatches(const std::vector<WordRef>& words, const ClippingCodec::
   return quoteMatchesAt(words, record.startWordIndex, record.text, tokenCount);
 }
 
+bool recordCouldResolveOnPage(const ClippingCodec::Record& record, const uint16_t pageIndex,
+                              const uint32_t pageVisibleOffset, const std::optional<uint32_t> nextPageVisibleOffset) {
+  if (record.pageHint == pageIndex && record.pageVisibleOffset == pageVisibleOffset) return true;
+  if (nextPageVisibleOffset.has_value()) {
+    return record.pageVisibleOffset >= pageVisibleOffset && record.pageVisibleOffset < *nextPageVisibleOffset;
+  }
+  // The final page has no following offset. Keep the old page hint as a safe
+  // fallback; searching neighbouring pages can paint the same quote multiple
+  // times when common text repeats.
+  return record.pageHint == pageIndex;
+}
+
 bool addLine(HighlightPlan& plan, const HighlightLine& candidate) {
   if (plan.count > 0) {
     auto& previous = plan.lines[plan.count - 1];
@@ -183,21 +195,16 @@ bool addLine(HighlightPlan& plan, const HighlightLine& candidate) {
 
 }  // namespace
 
-HighlightPlan buildHighlightPlan(GfxRenderer& renderer, const Page& page, const int fontId, const int marginLeft,
-                                 const int marginTop, const std::vector<ClippingCodec::Record>& records,
-                                 const uint16_t spineIndex, const uint16_t pageIndex,
-                                 const uint32_t pageVisibleOffset) {
-  HighlightPlan plan;
-  if (records.empty()) return plan;
-  const bool hasCurrentSpine = std::any_of(
-      records.begin(), records.end(), [spineIndex](const auto& record) { return record.spineIndex == spineIndex; });
-  if (!hasCurrentSpine) return plan;
-  std::vector<WordRef> words;
-  uint16_t rows = 0;
-  collectWords(page, renderer, fontId, marginLeft, marginTop, words, rows);
-  const int lineHeight = renderer.getLineHeight(fontId);
+size_t resolveClippings(const std::vector<WordRef>& words, const std::vector<ClippingCodec::Record>& records,
+                        const uint16_t spineIndex, const uint16_t pageIndex, const uint32_t pageVisibleOffset,
+                        const std::optional<uint32_t> nextPageVisibleOffset,
+                        std::array<ResolvedClipping, MAX_RESOLVED_CLIPPINGS>& resolved) {
+  size_t count = 0;
   for (const auto& record : records) {
-    if (record.spineIndex != spineIndex) continue;
+    if (record.spineIndex != spineIndex ||
+        !recordCouldResolveOnPage(record, pageIndex, pageVisibleOffset, nextPageVisibleOffset)) {
+      continue;
+    }
     uint16_t start = 0;
     uint16_t end = 0;
     const bool exactAnchor = record.pageHint == pageIndex && record.pageVisibleOffset == pageVisibleOffset &&
@@ -205,14 +212,42 @@ HighlightPlan buildHighlightPlan(GfxRenderer& renderer, const Page& page, const 
     if (exactAnchor) {
       start = record.startWordIndex;
       end = record.endWordIndex;
-    } else if (std::abs(static_cast<int>(pageIndex) - static_cast<int>(record.pageHint)) > 4 ||
-               !findQuote(words, record, start, end)) {
+    } else if (!findQuote(words, record, start, end)) {
       continue;
     }
+    if (count == resolved.size()) break;
+    resolved[count++] = {record.id, start, end};
+  }
+  return count;
+}
+
+HighlightPlan buildHighlightPlan(GfxRenderer& renderer, const Page& page, const int fontId, const int marginLeft,
+                                 const int marginTop, const int lineHeight,
+                                 const std::vector<ClippingCodec::Record>& records, const uint16_t spineIndex,
+                                 const uint16_t pageIndex, const uint32_t pageVisibleOffset,
+                                 const std::optional<uint32_t> nextPageVisibleOffset) {
+  HighlightPlan plan;
+  if (records.empty()) return plan;
+  const bool hasCandidate = std::any_of(records.begin(), records.end(), [&](const auto& record) {
+    return record.spineIndex == spineIndex &&
+           recordCouldResolveOnPage(record, pageIndex, pageVisibleOffset, nextPageVisibleOffset);
+  });
+  // This avoids page-word collection, a 2KB text batch and font measurement on
+  // the overwhelmingly common pages that contain no highlight anchor.
+  if (!hasCandidate) return plan;
+  std::vector<WordRef> words;
+  uint16_t rows = 0;
+  collectWords(page, renderer, fontId, marginLeft, marginTop, words, rows);
+  const int highlightHeight = std::max(1, lineHeight);
+  plan.resolvedCount =
+      resolveClippings(words, records, spineIndex, pageIndex, pageVisibleOffset, nextPageVisibleOffset, plan.resolved);
+  for (size_t resolvedIndex = 0; resolvedIndex < plan.resolvedCount; ++resolvedIndex) {
+    const uint16_t start = plan.resolved[resolvedIndex].startWordIndex;
+    const uint16_t end = plan.resolved[resolvedIndex].endWordIndex;
     for (uint16_t i = start; i <= end; ++i) {
       const auto& word = words[i];
       if (!addLine(plan, {word.x, static_cast<int16_t>(word.x + word.width - 1), word.y,
-                          static_cast<int16_t>(word.y + lineHeight - 1)})) {
+                          static_cast<int16_t>(word.y + highlightHeight - 1)})) {
         return plan;
       }
     }

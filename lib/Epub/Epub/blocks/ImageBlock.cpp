@@ -66,7 +66,7 @@ bool readValidCacheHeader(HalFile& cacheFile, const int expectedWidth, const int
 
   const size_t bytesPerRow = (cachedWidth + 3) / 4;
   const size_t expectedSize = pixel_cache_format::HEADER_SIZE + bytesPerRow * cachedHeight;
-  return cacheFile.size() >= expectedSize;
+  return cacheFile.size() == expectedSize;
 }
 
 // Pages are deserialized afresh on each visit. Keep a bounded, allocation-free

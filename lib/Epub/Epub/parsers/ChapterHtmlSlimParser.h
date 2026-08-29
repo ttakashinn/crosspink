@@ -35,13 +35,12 @@ class ChapterHtmlSlimParser {
   bool imagePopupFired = false;   // popupFn fired for the first image probe (single-shot)
   int depth = 0;
   int skipUntilDepth = INT_MAX;
-  int boldUntilDepth = INT_MAX;
-  int italicUntilDepth = INT_MAX;
   // buffer for building up words from characters, will auto break if longer than this
   // leave one char at end for null pointer
   char partWordBuffer[MAX_WORD_SIZE + 1] = {};
   int partWordBufferIndex = 0;
-  bool nextWordContinues = false;  // true when next flushed word attaches to previous (inline element boundary)
+  bool nextWordContinues = false;          // true when next flushed word attaches to previous (inline element boundary)
+  bool nextWordBreakWithoutSpace = false;  // U+200B: attached visually, but legal non-stretching line break
   std::unique_ptr<ParsedText> currentTextBlock = nullptr;
   // Ruby text state
   bool inRuby = false;
@@ -87,7 +86,9 @@ class ChapterHtmlSlimParser {
   std::vector<BlockStyle> blockStyleStack;   // accumulated block styles from open ancestor elements
   std::vector<CssStyle> blockCssStyleStack;  // inherited text styles from open block elements
   CssStyle currentCssStyle;
+  bool effectiveFontWeightDefined = false;
   bool effectiveBold = false;
+  bool effectiveFontStyleDefined = false;
   bool effectiveItalic = false;
   bool effectiveSmallCaps = false;
   CssTextDecoration effectiveTextDecoration = CssTextDecoration::None;
@@ -232,7 +233,7 @@ class ChapterHtmlSlimParser {
   void abortParse();   // tear down without flushing (error / abandon)
   bool failedForLowMemory() const { return lowMemoryFailure_; }
 
-  void addLineToPage(std::shared_ptr<TextBlock> line, uint32_t visibleOffset);
+  void addLineToPage(std::shared_ptr<TextBlock> line, uint32_t visibleOffset, int16_t xOffsetOverride = -1);
   const std::vector<std::pair<std::string, uint16_t>>& getAnchors() const { return anchorData; }
 
   // Byte progress of the in-flight parse, used to estimate a still-building section's total page

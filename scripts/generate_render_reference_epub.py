@@ -73,6 +73,8 @@ pre {
 .right { text-align: right; }
 .justify { text-align: justify; }
 .indent { text-indent: 1.5em; }
+.soft-flush-indent { text-indent: 1.5em; }
+.nested-inset { margin-left: 2em; margin-right: 2em; padding-left: 2em; padding-right: 2em; }
 .small { font-size: 0.82em; }
 .large { font-size: 1.25em; }
 .small-caps { font-variant-caps: small-caps; }
@@ -81,6 +83,16 @@ pre {
 .css-group-a, .css-group-b { font-weight: bold; }
 .descendant-test .target { font-style: italic; }
 .specificity-test p.target { font-weight: bold; text-align: center; }
+.inherit-bold { font-weight: bold; }
+.inherit-italic { font-style: italic; }
+.inherit-underline { text-decoration: underline; }
+.add-strike { text-decoration: line-through; }
+.normal-weight { font-weight: normal; }
+.normal-style { font-style: normal; }
+.stylesheet-important { font-weight: bold !important; }
+.specificity-test p.important-target { font-weight: normal; text-align: right; }
+.important-target { font-weight: bold !important; text-align: left !important; }
+.no-decoration { text-decoration: none; }
 [data-check="attribute"] { text-decoration: underline; }
 .first-child-test p:first-child { font-weight: bold; }
 .hidden-sentinel { display: none; }
@@ -248,11 +260,26 @@ def typography_chapter() -> str:
 
 
 def css_chapter() -> str:
+    soft_flush_flow = "".join(
+        f"<span>nhịp đọc tiếng Việt ổn định qua lần gom thứ {index}; </span>" for index in range(1, 181)
+    )
     return xhtml_document(
         "CSS cascade và selector",
-        """
+        f"""
 <h1>3. CSS cascade và selector</h1>
 <p class="instruction">Các dòng PASS mô tả output mong đợi. Dòng FAIL dùng `display:none` tuyệt đối không được xuất hiện.</p>
+
+<h2 id="inheritance-important">Kế thừa, kiểu mặc định và important</h2>
+<div class="inherit-bold"><div><p>PASS INHERIT BOLD: đoạn lồng qua hai block vẫn phải đậm.</p></div></div>
+<div class="inherit-italic"><section><p>PASS INHERIT ITALIC: đoạn lồng qua hai block vẫn phải nghiêng.</p></section></div>
+<div class="inherit-underline"><p><span class="add-strike">PASS DECORATION: dòng này phải vừa gạch chân vừa gạch bỏ.</span></p></div>
+<p><strong class="normal-weight">PASS B RESET: chữ này phải thường, không đậm.</strong></p>
+<p><em class="normal-style">PASS I RESET: chữ này phải đứng, không nghiêng.</em></p>
+<h3 class="normal-weight">PASS HEADING RESET: tiêu đề này phải có nét thường.</h3>
+<div class="specificity-test"><p class="important-target">PASS IMPORTANT: phải đậm, căn trái dù selector normal cụ thể hơn.</p></div>
+<p><span class="stylesheet-important" style="font-weight: normal">PASS STYLESHEET IMPORTANT: vẫn phải đậm.</span></p>
+<p><strong style="font-weight: normal !important">PASS INLINE IMPORTANT RESET: phải là chữ thường.</strong></p>
+<p><u class="no-decoration">PASS DECORATION RESET: không được có gạch chân riêng.</u></p>
 
 <h2 id="selector-matrix">Ma trận selector</h2>
 <p class="css-group-a">PASS GROUP A: dòng này phải đậm.</p>
@@ -263,9 +290,9 @@ def css_chapter() -> str:
 <div class="specificity-test">
   <p class="target">PASS SPECIFICITY: dòng này phải đậm và căn giữa.</p>
 </div>
-<p data-check="attribute">PASS ATTRIBUTE: dòng này phải được gạch chân nếu attribute selector được hỗ trợ.</p>
+<p data-check="attribute">PASS UNSUPPORTED ATTRIBUTE: dòng này phải giữ nét thường, không gạch chân.</p>
 <div class="first-child-test">
-  <p>PASS FIRST CHILD: đoạn đầu phải đậm.</p>
+  <p>PASS UNSUPPORTED FIRST CHILD: đoạn đầu phải giữ nét thường.</p>
   <p>Đoạn thứ hai phải là chữ thường.</p>
 </div>
 <p class="hidden-sentinel">FAIL DISPLAY NONE: NẾU THẤY DÒNG NÀY THÌ RENDER SAI.</p>
@@ -275,6 +302,10 @@ def css_chapter() -> str:
 <p class="right">Đoạn căn phải — mép phải phải thẳng.</p>
 <p class="justify">Đoạn căn đều: Mỗi dòng cần phân phối khoảng trắng hợp lý mà không tạo khe lớn bất thường giữa các từ tiếng Việt ngắn.</p>
 <p class="indent">Đoạn thụt đầu dòng: đây là nội dung kiểm tra text-indent và việc giữ indent sau khi đọc cache.</p>
+<div class="nested-inset"><div class="nested-inset"><p>PASS INSET LỒNG: vùng chữ vẫn nằm trong viewport và đủ rộng để đọc tiếng Việt.</p></div></div>
+
+<h2 id="soft-flush">Đoạn dài qua ranh giới soft flush</h2>
+<p class="soft-flush-indent">{soft_flush_flow}</p>
 """,
     )
 
@@ -309,6 +340,7 @@ def pagination_chapter() -> str:
 
 <h2 id="line-breaks">Ngắt dòng nguồn</h2>
 <p>Dòng một<br/>Dòng hai sau một thẻ br<br/><br/>Dòng bốn sau hai thẻ br.</p>
+<p class="mono">không​gian​số​dữ​liệu​tiếng​Việt​được​ngắt​dòng​tại​zero​width​space​mà​không​chèn​khoảng​trắng.</p>
 <p class="mono">https://example.invalid/duong-dan-rat-dai/kiem-tra-ngat-dong/tiếng-việt-không-tràn-khỏi-viewport-480-pixel</p>
 
 <h2 id="footnotes">Footnote và anchor</h2>
@@ -388,6 +420,7 @@ def bidi_chapter() -> str:
 <p class="instruction">Đây là phạm vi phụ. Tiếng Việt vẫn là baseline chính; các dòng sau phát hiện crash, đảo thứ tự hoặc fallback glyph bị mất.</p>
 
 <h2 id="mixed-direction">Mixed LTR/RTL</h2>
+<p class="rtl" lang="vi" dir="rtl">FOCUS RTL LATIN: alpha beta gamma delta; tiếng Việt vẫn phải rõ nét.</p>
 <p>Tiếng Việt trước — العربية ١٢٣ — Hebrew עברית 456 — tiếng Việt sau.</p>
 <p class="rtl" lang="ar" dir="rtl">العربية: هذا سطر قصير لاختبار اتجاه الكتابة من اليمين إلى اليسار.</p>
 <p class="rtl" lang="he" dir="rtl">עברית: זהו משפט קצר לבדיקת כיוון הכתיבה.</p>

@@ -71,6 +71,7 @@ struct ClippingSelectionResult {
   uint16_t startWordIndex = 0;
   uint16_t endWordIndex = 0;
   std::string text;
+  uint32_t clippingId = 0;
 };
 
 using ResultVariant = std::variant<std::monostate, WifiResult, KeyboardResult, MenuResult, ChapterResult, PercentResult,

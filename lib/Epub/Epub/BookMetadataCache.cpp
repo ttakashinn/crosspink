@@ -6,18 +6,108 @@
 #include <Utf8.h>
 #include <ZipFile.h>
 
+#include <array>
 #include <deque>
+#include <limits>
 
 #include "FsHelpers.h"
 
 namespace {
-constexpr uint8_t BOOK_CACHE_VERSION = 10;  // v10: ignore ambiguous guide text references
+constexpr uint8_t BOOK_CACHE_VERSION = 11;  // v11: source fingerprint + bounded validation
 constexpr char bookBinFile[] = "/book.bin";
+constexpr char bookBinTempFile[] = "/book.bin.tmp";
+constexpr char bookBinBackupFile[] = "/book.bin.bak";
 constexpr char tmpSpineBinFile[] = "/spine.bin.tmp";
 constexpr char tmpTocBinFile[] = "/toc.bin.tmp";
 // Buffer size for the buildBookBin streams. 3 buffers x 4KB, transient (freed on
 // return); 4KB = 8 SD sectors per transfer, enough to stop the sector-cache thrash.
 constexpr size_t BUILD_IO_BUFFER_SIZE = 4096;
+constexpr uint16_t MAX_SPINE_COUNT = 4096;
+constexpr uint16_t MAX_TOC_COUNT = 8192;
+constexpr size_t MAX_METADATA_TEXT = 1024;
+constexpr size_t MAX_HREF_TEXT = 4096;
+
+struct SourceFingerprint {
+  uint64_t fileSize = 0;
+  uint32_t centralDirectorySize = 0;
+  uint32_t centralDirectoryHash = 0;
+
+  bool operator==(const SourceFingerprint&) const = default;
+};
+
+uint16_t readLe16(const uint8_t* bytes) {
+  return static_cast<uint16_t>(bytes[0]) | (static_cast<uint16_t>(bytes[1]) << 8);
+}
+
+uint32_t readLe32(const uint8_t* bytes) {
+  return static_cast<uint32_t>(bytes[0]) | (static_cast<uint32_t>(bytes[1]) << 8) |
+         (static_cast<uint32_t>(bytes[2]) << 16) | (static_cast<uint32_t>(bytes[3]) << 24);
+}
+
+bool computeSourceFingerprint(const std::string& path, SourceFingerprint& fingerprint) {
+  HalFile file;
+  if (!Storage.openFileForRead("BMC", path, file)) return false;
+  const uint64_t fileSize = file.fileSize64();
+  if (fileSize < 22 || fileSize > UINT32_MAX) return false;
+
+  // EOCD is within the final 65,557 bytes (22-byte record + 65,535-byte ZIP
+  // comment). Scan backwards in fixed blocks to avoid a tail-sized allocation.
+  constexpr uint64_t MAX_EOCD_SEARCH = 22U + UINT16_MAX;
+  constexpr size_t SEARCH_BLOCK = 512;
+  const uint64_t searchStart = fileSize > MAX_EOCD_SEARCH ? fileSize - MAX_EOCD_SEARCH : 0;
+  uint64_t searchEnd = fileSize;
+  uint64_t eocdOffset = UINT64_MAX;
+  uint32_t centralSize = 0;
+  uint32_t centralOffset = 0;
+  std::array<uint8_t, SEARCH_BLOCK> block{};
+  std::array<uint8_t, 22> eocd{};
+  while (searchEnd > searchStart) {
+    const uint64_t blockStart = searchEnd - searchStart > SEARCH_BLOCK ? searchEnd - SEARCH_BLOCK : searchStart;
+    const size_t count = static_cast<size_t>(searchEnd - blockStart);
+    if (!file.seek64(blockStart) || file.read(block.data(), count) != static_cast<int>(count)) return false;
+    for (int i = static_cast<int>(count) - 4; i >= 0; --i) {
+      if (block[static_cast<size_t>(i)] == 0x50 && block[static_cast<size_t>(i) + 1] == 0x4B &&
+          block[static_cast<size_t>(i) + 2] == 0x05 && block[static_cast<size_t>(i) + 3] == 0x06) {
+        const uint64_t candidate = blockStart + static_cast<uint64_t>(i);
+        if (candidate + eocd.size() > fileSize || !file.seek64(candidate) ||
+            file.read(eocd.data(), eocd.size()) != static_cast<int>(eocd.size())) {
+          continue;
+        }
+        const uint16_t commentLength = readLe16(eocd.data() + 20);
+        const uint32_t candidateCentralSize = readLe32(eocd.data() + 12);
+        const uint32_t candidateCentralOffset = readLe32(eocd.data() + 16);
+        if (readLe16(eocd.data() + 4) != 0 || readLe16(eocd.data() + 6) != 0 || candidateCentralSize == UINT32_MAX ||
+            candidateCentralOffset == UINT32_MAX || candidate + eocd.size() + commentLength != fileSize ||
+            static_cast<uint64_t>(candidateCentralOffset) + candidateCentralSize > candidate) {
+          continue;
+        }
+        eocdOffset = candidate;
+        centralSize = candidateCentralSize;
+        centralOffset = candidateCentralOffset;
+        break;
+      }
+    }
+    if (eocdOffset != UINT64_MAX || blockStart == searchStart) break;
+    searchEnd = blockStart + 3;  // overlap the four-byte signature
+  }
+  if (eocdOffset == UINT64_MAX) return false;
+
+  uint32_t hash = 2166136261U;
+  uint32_t remaining = centralSize;
+  if (!file.seek64(centralOffset)) return false;
+  while (remaining > 0) {
+    const size_t count = std::min<size_t>(block.size(), remaining);
+    if (file.read(block.data(), count) != static_cast<int>(count)) return false;
+    for (size_t i = 0; i < count; ++i) {
+      hash ^= block[i];
+      hash *= 16777619U;
+    }
+    remaining -= static_cast<uint32_t>(count);
+  }
+  if (!file.close()) return false;
+  fingerprint = {fileSize, centralSize, hash};
+  return true;
+}
 
 // Entry (de)serializers, templated so they run over HalFile and the Buffered*
 // wrappers alike (two instantiations each -- a few hundred bytes of flash, in
@@ -60,6 +150,18 @@ BookMetadataCache::TocEntry readTocEntryFrom(F& file) {
   serialization::readPod(file, entry.level);
   serialization::readPod(file, entry.spineIndex);
   return entry;
+}
+
+bool tryReadSpineEntry(HalFile& file, BookMetadataCache::SpineEntry& entry) {
+  return serialization::tryReadString(file, entry.href, MAX_HREF_TEXT) &&
+         serialization::tryReadPod(file, entry.cumulativeSize) && serialization::tryReadPod(file, entry.tocIndex);
+}
+
+bool tryReadTocEntry(HalFile& file, BookMetadataCache::TocEntry& entry) {
+  return serialization::tryReadString(file, entry.title, MAX_METADATA_TEXT) &&
+         serialization::tryReadString(file, entry.href, MAX_HREF_TEXT) &&
+         serialization::tryReadString(file, entry.anchor, MAX_HREF_TEXT) &&
+         serialization::tryReadPod(file, entry.level) && serialization::tryReadPod(file, entry.spineIndex);
 }
 }  // namespace
 
@@ -165,8 +267,23 @@ bool BookMetadataCache::endWrite() {
 }
 
 bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMetadata& metadata) {
+  if (spineCount > MAX_SPINE_COUNT || tocCount > MAX_TOC_COUNT || metadata.title.size() > MAX_METADATA_TEXT ||
+      metadata.author.size() > MAX_METADATA_TEXT || metadata.language.size() > MAX_METADATA_TEXT ||
+      metadata.coverItemHref.size() > MAX_HREF_TEXT || metadata.textReferenceHref.size() > MAX_HREF_TEXT) {
+    LOG_ERR("BMC", "Refusing oversized book metadata cache");
+    return false;
+  }
+
+  SourceFingerprint sourceFingerprint;
+  if (!computeSourceFingerprint(epubPath, sourceFingerprint)) {
+    LOG_ERR("BMC", "Could not fingerprint EPUB source");
+    return false;
+  }
+
   // Open all three files, writing to meta, reading from spine and toc
-  if (!Storage.openFileForWrite("BMC", cachePath + bookBinFile, bookFile)) {
+  const std::string tempBookPath = cachePath + bookBinTempFile;
+  Storage.remove(tempBookPath.c_str());
+  if (!Storage.openFileForWrite("BMC", tempBookPath, bookFile)) {
     return false;
   }
 
@@ -191,19 +308,33 @@ bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMeta
   serialization::BufferedFileReader spineIn(spineFile, BUILD_IO_BUFFER_SIZE);
   serialization::BufferedFileReader tocIn(tocFile, BUILD_IO_BUFFER_SIZE);
 
-  constexpr uint32_t headerASize =
-      sizeof(BOOK_CACHE_VERSION) + /* LUT Offset */ sizeof(uint32_t) + sizeof(spineCount) + sizeof(tocCount);
-  const uint32_t metadataSize = metadata.title.size() + metadata.author.size() + metadata.language.size() +
+  constexpr uint32_t headerASize = sizeof(BOOK_CACHE_VERSION) + /* LUT Offset */ sizeof(uint32_t) + sizeof(spineCount) +
+                                   sizeof(tocCount) + sizeof(sourceFingerprint.fileSize) +
+                                   sizeof(sourceFingerprint.centralDirectorySize) +
+                                   sizeof(sourceFingerprint.centralDirectoryHash);
+  const uint64_t metadataSize = metadata.title.size() + metadata.author.size() + metadata.language.size() +
                                 metadata.coverItemHref.size() + metadata.textReferenceHref.size() +
-                                sizeof(uint32_t) * 5;
-  const uint32_t lutSize = sizeof(uint32_t) * spineCount + sizeof(uint32_t) * tocCount;
-  const uint32_t lutOffset = headerASize + metadataSize;
+                                sizeof(uint32_t) * 5ULL;
+  const uint64_t lutSize64 = sizeof(uint32_t) * (static_cast<uint64_t>(spineCount) + tocCount);
+  if (headerASize + metadataSize + lutSize64 > UINT32_MAX) {
+    LOG_ERR("BMC", "Book metadata cache offsets exceed 32-bit format");
+    bookFile.close();
+    spineFile.close();
+    tocFile.close();
+    Storage.remove(tempBookPath.c_str());
+    return false;
+  }
+  const uint32_t lutSize = static_cast<uint32_t>(lutSize64);
+  const uint32_t lutOffset = static_cast<uint32_t>(headerASize + metadataSize);
 
   // Header A
   serialization::writePod(bookOut, BOOK_CACHE_VERSION);
   serialization::writePod(bookOut, lutOffset);
   serialization::writePod(bookOut, spineCount);
   serialization::writePod(bookOut, tocCount);
+  serialization::writePod(bookOut, sourceFingerprint.fileSize);
+  serialization::writePod(bookOut, sourceFingerprint.centralDirectorySize);
+  serialization::writePod(bookOut, sourceFingerprint.centralDirectoryHash);
   // Metadata
   serialization::writeString(bookOut, metadata.title);
   serialization::writeString(bookOut, metadata.author);
@@ -350,17 +481,36 @@ bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMeta
   const bool written = bookOut.flush();
 
   // Explicit close() required: member variables persist beyond function scope
-  bookFile.close();
+  const bool closed = bookFile.close();
   spineFile.close();
   tocFile.close();
 
-  if (!written) {
-    // A short write (card full/removed) would leave a truncated book.bin that
-    // still passes the version check on load; remove it so the next open rebuilds.
-    LOG_ERR("BMC", "Failed writing book.bin, removing truncated file");
-    Storage.remove((cachePath + bookBinFile).c_str());
+  if (!written || !closed) {
+    LOG_ERR("BMC", "Failed writing temporary book.bin");
+    Storage.remove(tempBookPath.c_str());
     return false;
   }
+
+  const std::string finalBookPath = cachePath + bookBinFile;
+  const std::string backupBookPath = cachePath + bookBinBackupFile;
+  const bool hadFinal = Storage.exists(finalBookPath.c_str());
+  if (hadFinal) {
+    Storage.remove(backupBookPath.c_str());
+    if (!Storage.rename(finalBookPath.c_str(), backupBookPath.c_str())) {
+      LOG_ERR("BMC", "Could not back up existing book.bin");
+      Storage.remove(tempBookPath.c_str());
+      return false;
+    }
+  }
+  if (!Storage.rename(tempBookPath.c_str(), finalBookPath.c_str())) {
+    LOG_ERR("BMC", "Could not publish temporary book.bin");
+    if (hadFinal && !Storage.rename(backupBookPath.c_str(), finalBookPath.c_str())) {
+      LOG_ERR("BMC", "Could not restore previous book.bin");
+    }
+    Storage.remove(tempBookPath.c_str());
+    return false;
+  }
+  Storage.remove(backupBookPath.c_str());
 
   LOG_DBG("BMC", "Successfully built book.bin");
   return true;
@@ -375,6 +525,7 @@ bool BookMetadataCache::cleanupTmpFiles() const {
   if (Storage.exists(tocBinFile.c_str())) {
     Storage.remove(tocBinFile.c_str());
   }
+  Storage.remove((cachePath + bookBinTempFile).c_str());
   return true;
 }
 
@@ -458,39 +609,104 @@ void BookMetadataCache::createTocEntry(const std::string& title, const std::stri
 /* ============= READING / LOADING FUNCTIONS ================ */
 
 bool BookMetadataCache::load() {
-  if (!Storage.openFileForRead("BMC", cachePath + bookBinFile, bookFile)) {
-    return false;
+  loaded = false;
+  sourceMismatch = false;
+  cumulativeSizes.clear();
+  bookFile.close();
+
+  const std::string finalPath = cachePath + bookBinFile;
+  const std::string backupPath = cachePath + bookBinBackupFile;
+  if (!Storage.openFileForRead("BMC", finalPath, bookFile)) {
+    // A power loss between final->backup and tmp->final leaves a valid backup
+    // and no canonical file. Restore that state before deciding to rebuild.
+    if (!Storage.exists(backupPath.c_str()) || !Storage.rename(backupPath.c_str(), finalPath.c_str()) ||
+        !Storage.openFileForRead("BMC", finalPath, bookFile)) {
+      return false;
+    }
   }
 
-  uint8_t version;
-  serialization::readPod(bookFile, version);
+  const auto fail = [&]() {
+    bookFile.close();
+    cumulativeSizes.clear();
+    loaded = false;
+    return false;
+  };
+
+  uint8_t version = 0;
+  SourceFingerprint cachedFingerprint;
+  if (!serialization::tryReadPod(bookFile, version)) return fail();
   if (version != BOOK_CACHE_VERSION) {
     LOG_DBG("BMC", "Cache version mismatch: expected %d, got %d", BOOK_CACHE_VERSION, version);
-    // Explicit close() required: member variable persists beyond function scope
-    bookFile.close();
-    return false;
+    return fail();
+  }
+  if (!serialization::tryReadPod(bookFile, lutOffset) || !serialization::tryReadPod(bookFile, spineCount) ||
+      !serialization::tryReadPod(bookFile, tocCount) ||
+      !serialization::tryReadPod(bookFile, cachedFingerprint.fileSize) ||
+      !serialization::tryReadPod(bookFile, cachedFingerprint.centralDirectorySize) ||
+      !serialization::tryReadPod(bookFile, cachedFingerprint.centralDirectoryHash) || spineCount > MAX_SPINE_COUNT ||
+      tocCount > MAX_TOC_COUNT || !serialization::tryReadString(bookFile, coreMetadata.title, MAX_METADATA_TEXT) ||
+      !serialization::tryReadString(bookFile, coreMetadata.author, MAX_METADATA_TEXT) ||
+      !serialization::tryReadString(bookFile, coreMetadata.language, MAX_METADATA_TEXT) ||
+      !serialization::tryReadString(bookFile, coreMetadata.coverItemHref, MAX_HREF_TEXT) ||
+      !serialization::tryReadString(bookFile, coreMetadata.textReferenceHref, MAX_HREF_TEXT)) {
+    LOG_ERR("BMC", "Invalid book metadata cache header");
+    return fail();
   }
 
-  serialization::readPod(bookFile, lutOffset);
-  serialization::readPod(bookFile, spineCount);
-  serialization::readPod(bookFile, tocCount);
+  SourceFingerprint actualFingerprint;
+  if (!computeSourceFingerprint(sourcePath, actualFingerprint)) {
+    LOG_ERR("BMC", "Could not fingerprint EPUB while loading cache");
+    return fail();
+  }
+  if (!(actualFingerprint == cachedFingerprint)) {
+    LOG_INF("BMC", "EPUB source changed at the same path; invalidating cache");
+    sourceMismatch = true;
+    return fail();
+  }
 
-  serialization::readString(bookFile, coreMetadata.title);
-  serialization::readString(bookFile, coreMetadata.author);
-  serialization::readString(bookFile, coreMetadata.language);
-  serialization::readString(bookFile, coreMetadata.coverItemHref);
-  serialization::readString(bookFile, coreMetadata.textReferenceHref);
+  const uint64_t fileSize = bookFile.fileSize64();
+  const uint64_t lutCount = static_cast<uint64_t>(spineCount) + tocCount;
+  const uint64_t lutBytes = lutCount * sizeof(uint32_t);
+  const uint64_t dataStart = static_cast<uint64_t>(lutOffset) + lutBytes;
+  if (bookFile.position() != lutOffset || dataStart > fileSize || !bookFile.seek(lutOffset)) {
+    LOG_ERR("BMC", "Invalid book metadata cache offsets");
+    return fail();
+  }
 
-  // Cache cumulative spine sizes in RAM. The progress bar (every render) and percent
-  // jumps otherwise pay 2 seeks + a heap-allocating SpineEntry read per access. Spine
-  // entries are stored contiguously in index order immediately after the LUTs, so read
-  // them in a single sequential pass.
-  cumulativeSizes.clear();
+  uint32_t previousOffset = 0;
+  for (uint64_t i = 0; i < lutCount; ++i) {
+    uint32_t offset = 0;
+    if (!serialization::tryReadPod(bookFile, offset) || offset < dataStart || offset >= fileSize ||
+        (i == 0 ? offset != dataStart : offset <= previousOffset)) {
+      LOG_ERR("BMC", "Invalid book metadata cache LUT");
+      return fail();
+    }
+    previousOffset = offset;
+  }
+
+  if (!bookFile.seek(static_cast<size_t>(dataStart))) return fail();
   cumulativeSizes.reserve(spineCount);
-  const uint32_t lutSize = (static_cast<uint32_t>(spineCount) + tocCount) * sizeof(uint32_t);
-  bookFile.seek(lutOffset + lutSize);
-  for (uint16_t i = 0; i < spineCount; i++) {
-    cumulativeSizes.push_back(readSpineEntry(bookFile).cumulativeSize);
+  uint32_t previousCumulativeSize = 0;
+  for (uint16_t i = 0; i < spineCount; ++i) {
+    SpineEntry entry;
+    if (!tryReadSpineEntry(bookFile, entry) || entry.tocIndex < -1 || entry.tocIndex >= tocCount ||
+        entry.cumulativeSize < previousCumulativeSize) {
+      LOG_ERR("BMC", "Invalid spine entry in book metadata cache");
+      return fail();
+    }
+    previousCumulativeSize = entry.cumulativeSize;
+    cumulativeSizes.push_back(entry.cumulativeSize);
+  }
+  for (uint16_t i = 0; i < tocCount; ++i) {
+    TocEntry entry;
+    if (!tryReadTocEntry(bookFile, entry) || entry.spineIndex < -1 || entry.spineIndex >= spineCount) {
+      LOG_ERR("BMC", "Invalid TOC entry in book metadata cache");
+      return fail();
+    }
+  }
+  if (bookFile.position() != fileSize) {
+    LOG_ERR("BMC", "Book metadata cache has trailing or missing data");
+    return fail();
   }
 
   loaded = true;
@@ -517,11 +733,16 @@ BookMetadataCache::SpineEntry BookMetadataCache::getSpineEntry(const int index) 
   }
 
   // Seek to spine LUT item, read from LUT and get out data
-  bookFile.seek(lutOffset + sizeof(uint32_t) * index);
-  uint32_t spineEntryPos;
-  serialization::readPod(bookFile, spineEntryPos);
-  bookFile.seek(spineEntryPos);
-  return readSpineEntry(bookFile);
+  const uint64_t fileSize = bookFile.fileSize64();
+  const size_t lutPosition = lutOffset + sizeof(uint32_t) * static_cast<size_t>(index);
+  uint32_t spineEntryPos = 0;
+  SpineEntry entry;
+  if (!bookFile.seek(lutPosition) || !serialization::tryReadPod(bookFile, spineEntryPos) || spineEntryPos >= fileSize ||
+      !bookFile.seek(spineEntryPos) || !tryReadSpineEntry(bookFile, entry)) {
+    LOG_ERR("BMC", "Failed reading spine entry %d", index);
+    return {};
+  }
+  return entry;
 }
 
 BookMetadataCache::TocEntry BookMetadataCache::getTocEntry(const int index) {
@@ -536,11 +757,17 @@ BookMetadataCache::TocEntry BookMetadataCache::getTocEntry(const int index) {
   }
 
   // Seek to TOC LUT item, read from LUT and get out data
-  bookFile.seek(lutOffset + sizeof(uint32_t) * spineCount + sizeof(uint32_t) * index);
-  uint32_t tocEntryPos;
-  serialization::readPod(bookFile, tocEntryPos);
-  bookFile.seek(tocEntryPos);
-  return readTocEntry(bookFile);
+  const uint64_t fileSize = bookFile.fileSize64();
+  const size_t lutPosition =
+      lutOffset + sizeof(uint32_t) * static_cast<size_t>(spineCount) + sizeof(uint32_t) * static_cast<size_t>(index);
+  uint32_t tocEntryPos = 0;
+  TocEntry entry;
+  if (!bookFile.seek(lutPosition) || !serialization::tryReadPod(bookFile, tocEntryPos) || tocEntryPos >= fileSize ||
+      !bookFile.seek(tocEntryPos) || !tryReadTocEntry(bookFile, entry)) {
+    LOG_ERR("BMC", "Failed reading TOC entry %d", index);
+    return {};
+  }
+  return entry;
 }
 
 BookMetadataCache::SpineEntry BookMetadataCache::readSpineEntry(HalFile& file) const {

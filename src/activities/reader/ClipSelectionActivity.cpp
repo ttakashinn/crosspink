@@ -8,14 +8,16 @@
 #include <climits>
 #include <cstdlib>
 
-#include "CrossPointSettings.h"
 #include "components/UITheme.h"
 
 void ClipSelectionActivity::onEnter() {
   Activity::onEnter();
-  fontId_ = SETTINGS.getReaderFontId();
-  lineHeight_ = renderer.getLineHeight(fontId_);
+  lineHeight_ = std::max(1, lineHeight_);
   ClippingPageTools::collectWords(*page_, renderer, fontId_, marginLeft_, marginTop_, words_, rowCount_);
+  if (records_) {
+    resolvedCount_ = ClippingPageTools::resolveClippings(words_, *records_, spineIndex_, pageIndex_, pageVisibleOffset_,
+                                                         nextPageVisibleOffset_, resolved_);
+  }
   if (!words_.empty()) {
     const int middle = closestInRow(rowCount_ / 2, renderer.getScreenWidth() / 2);
     if (middle >= 0) cursor_ = middle;
@@ -72,6 +74,12 @@ void ClipSelectionActivity::confirmSelection() {
     selectionTooLong_ = true;
     requestUpdate();
     return;
+  }
+  for (size_t i = 0; i < resolvedCount_; ++i) {
+    if (resolved_[i].startWordIndex == selected.startWordIndex && resolved_[i].endWordIndex == selected.endWordIndex) {
+      selected.clippingId = resolved_[i].id;
+      break;
+    }
   }
   setResult(ActivityResult{std::move(selected)});
   finish();

@@ -30,10 +30,11 @@ const StrId fontNames[] = {StrId::STR_VANNHANSO_FONT_STANDARD, StrId::STR_VANNHA
 const StrId vocabularyNames[] = {StrId::STR_VANNHANSO_VOCAB_B1, StrId::STR_VANNHANSO_VOCAB_B2,
                                  StrId::STR_VANNHANSO_VOCAB_C1, StrId::STR_VANNHANSO_VOCAB_C2,
                                  StrId::STR_VANNHANSO_VOCAB_MIXED};
-const StrId weatherNames[] = {StrId::STR_VANNHANSO_WEATHER_HANOI,  StrId::STR_VANNHANSO_WEATHER_HOCHIMINH,
-                              StrId::STR_VANNHANSO_WEATHER_DANANG, StrId::STR_VANNHANSO_WEATHER_HAIPHONG,
-                              StrId::STR_VANNHANSO_WEATHER_CANTHO, StrId::STR_VANNHANSO_WEATHER_HUE,
-                              StrId::STR_VANNHANSO_WEATHER_DONGNAI};
+const StrId weatherNames[] = {StrId::STR_VANNHANSO_WEATHER_HANOI,   StrId::STR_VANNHANSO_WEATHER_HOCHIMINH,
+                              StrId::STR_VANNHANSO_WEATHER_DANANG,  StrId::STR_VANNHANSO_WEATHER_HAIPHONG,
+                              StrId::STR_VANNHANSO_WEATHER_CANTHO,  StrId::STR_VANNHANSO_WEATHER_HUE,
+                              StrId::STR_VANNHANSO_WEATHER_DONGNAI, StrId::STR_VANNHANSO_WEATHER_NAMDINH};
+static_assert(std::size(weatherNames) == CrossPointSettings::VANNHANSO_WEATHER_LOCATION_COUNT);
 }  // namespace
 
 VanNhanSoSettingsActivity::VanNhanSoSettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)

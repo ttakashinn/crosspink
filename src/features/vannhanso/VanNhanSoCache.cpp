@@ -17,6 +17,7 @@ namespace vannhanso_cache {
 namespace {
 constexpr const char* INDEX_PATH = "/.crosspoint/vannhanso-cache/index.txt";
 constexpr const char* INDEX_TEMP_PATH = "/.crosspoint/vannhanso-cache/index.tmp";
+constexpr const char* INDEX_BACKUP_PATH = "/.crosspoint/vannhanso-cache/index.bak";
 constexpr size_t MAX_PROFILE_CACHES = 8;
 
 bool safeCacheToken(const std::string& token) {
@@ -28,7 +29,7 @@ bool safeCacheToken(const std::string& token) {
 
 void removeProfileFiles(const std::string& token) {
   if (!safeCacheToken(token)) return;
-  for (const char* extension : {"bmp", "bak", "date"}) {
+  for (const char* extension : {"bmp", "bak", "date", "date.bak"}) {
     const std::string path = std::string(vannhanso_profile::CACHE_DIRECTORY) + "/" + token + "." + extension;
     Storage.remove(path.c_str());
   }
@@ -41,7 +42,12 @@ void touchProfileIndex(const int screenWidth, const int screenHeight) {
                static_cast<unsigned long>(vannhanso_profile::identityHash(screenWidth, screenHeight)));
   if (tokenLength <= 0 || static_cast<size_t>(tokenLength) >= sizeof(token)) return;
 
+  if (!Storage.exists(INDEX_PATH) && Storage.exists(INDEX_BACKUP_PATH)) {
+    Storage.rename(INDEX_BACKUP_PATH, INDEX_PATH);
+  }
+
   std::vector<std::string> entries;
+  std::vector<std::string> evicted;
   char body[512] = {};
   const size_t length = Storage.readFileToBuffer(INDEX_PATH, body, sizeof(body));
   size_t start = 0;
@@ -55,7 +61,7 @@ void touchProfileIndex(const int screenWidth, const int screenHeight) {
   }
   entries.emplace_back(token);
   while (entries.size() > MAX_PROFILE_CACHES) {
-    removeProfileFiles(entries.front());
+    evicted.push_back(entries.front());
     entries.erase(entries.begin());
   }
 
@@ -67,13 +73,30 @@ void touchProfileIndex(const int screenWidth, const int screenHeight) {
     writeOk = writeOk && file.write(reinterpret_cast<const uint8_t*>(entry.data()), entry.size()) == entry.size() &&
               file.write(reinterpret_cast<const uint8_t*>("\n"), 1) == 1;
   }
-  file.close();
+  if (!file.close()) writeOk = false;
   if (!writeOk) {
     Storage.remove(INDEX_TEMP_PATH);
     return;
   }
-  Storage.remove(INDEX_PATH);
-  if (!Storage.rename(INDEX_TEMP_PATH, INDEX_PATH)) Storage.remove(INDEX_TEMP_PATH);
+  const bool hadIndex = Storage.exists(INDEX_PATH);
+  if (hadIndex) {
+    Storage.remove(INDEX_BACKUP_PATH);
+    if (!Storage.rename(INDEX_PATH, INDEX_BACKUP_PATH)) {
+      Storage.remove(INDEX_TEMP_PATH);
+      return;
+    }
+  }
+  if (!Storage.rename(INDEX_TEMP_PATH, INDEX_PATH)) {
+    Storage.remove(INDEX_TEMP_PATH);
+    if (hadIndex && !Storage.rename(INDEX_BACKUP_PATH, INDEX_PATH)) {
+      LOG_ERR("VNS", "Could not restore profile cache index");
+    }
+    return;
+  }
+  Storage.remove(INDEX_BACKUP_PATH);
+  // Delete evicted assets only after the durable index no longer references
+  // them. A failed index write therefore cannot orphan the active LRU state.
+  for (const auto& evictedToken : evicted) removeProfileFiles(evictedToken);
 }
 
 void recoverCacheState(const char* cachePath, const char* backupPath, const int screenWidth, const int screenHeight) {
@@ -197,6 +220,10 @@ const char* findRenderableImage(const int screenWidth, const int screenHeight) {
 bool readCurrentDate(const int screenWidth, const int screenHeight, uint32_t& dateKey) {
   char path[vannhanso_profile::PATH_MAX_LENGTH];
   if (!vannhanso_profile::buildDatePath(screenWidth, screenHeight, path, sizeof(path))) return false;
+  char backupPath[vannhanso_profile::PATH_MAX_LENGTH];
+  const int backupWritten = snprintf(backupPath, sizeof(backupPath), "%s.bak", path);
+  if (backupWritten <= 0 || static_cast<size_t>(backupWritten) >= sizeof(backupPath)) return false;
+  if (!Storage.exists(path) && Storage.exists(backupPath)) Storage.rename(backupPath, path);
   HalFile file;
   if (!Storage.openFileForRead("VNS", path, file)) return false;
   char value[9] = {};
@@ -220,9 +247,12 @@ bool writeCurrentDate(const int screenWidth, const int screenHeight, const uint3
   }
   char path[vannhanso_profile::PATH_MAX_LENGTH];
   char tempPath[vannhanso_profile::PATH_MAX_LENGTH];
+  char backupPath[vannhanso_profile::PATH_MAX_LENGTH];
   if (!vannhanso_profile::buildDatePath(screenWidth, screenHeight, path, sizeof(path))) return false;
   const int written = snprintf(tempPath, sizeof(tempPath), "%s.tmp", path);
   if (written <= 0 || static_cast<size_t>(written) >= sizeof(tempPath)) return false;
+  const int backupWritten = snprintf(backupPath, sizeof(backupPath), "%s.bak", path);
+  if (backupWritten <= 0 || static_cast<size_t>(backupWritten) >= sizeof(backupPath)) return false;
   char value[9];
   snprintf(value, sizeof(value), "%08lu", static_cast<unsigned long>(dateKey));
   Storage.remove(tempPath);
@@ -233,12 +263,26 @@ bool writeCurrentDate(const int screenWidth, const int screenHeight, const uint3
     Storage.remove(tempPath);
     return false;
   }
-  file.close();
-  Storage.remove(path);
-  if (!Storage.rename(tempPath, path)) {
+  if (!file.close()) {
     Storage.remove(tempPath);
     return false;
   }
+  const bool hadDate = Storage.exists(path);
+  if (hadDate) {
+    Storage.remove(backupPath);
+    if (!Storage.rename(path, backupPath)) {
+      Storage.remove(tempPath);
+      return false;
+    }
+  }
+  if (!Storage.rename(tempPath, path)) {
+    Storage.remove(tempPath);
+    if (hadDate && !Storage.rename(backupPath, path)) {
+      LOG_ERR("VNS", "Could not restore current-date marker");
+    }
+    return false;
+  }
+  Storage.remove(backupPath);
   return true;
 }
 

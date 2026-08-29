@@ -1,9 +1,15 @@
 #pragma once
 #include <HalStorage.h>
 
+#include <algorithm>
 #include <iostream>
 
 namespace serialization {
+template <typename T>
+bool tryReadPod(HalFile& file, T& value) {
+  return file.read(reinterpret_cast<uint8_t*>(&value), sizeof(T)) == static_cast<int>(sizeof(T));
+}
+
 template <typename T>
 void writePod(std::ostream& os, const T& value) {
   os.write(reinterpret_cast<const char*>(&value), sizeof(T));
@@ -48,5 +54,20 @@ inline void readString(HalFile& file, std::string& s) {
   readPod(file, len);
   s.resize(len);
   file.read(&s[0], len);
+}
+
+inline bool tryReadString(HalFile& file, std::string& s, const size_t maxLength) {
+  uint32_t len = 0;
+  if (!tryReadPod(file, len) || len > maxLength || len > static_cast<uint32_t>(std::max(file.available(), 0))) {
+    s.clear();
+    return false;
+  }
+  s.resize(len);
+  if (len == 0) return true;
+  if (file.read(s.data(), len) != static_cast<int>(len)) {
+    s.clear();
+    return false;
+  }
+  return true;
 }
 }  // namespace serialization

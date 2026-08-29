@@ -30,11 +30,11 @@ bool buildPath(const int screenWidth, const int screenHeight, const char* extens
 }  // namespace
 
 bool buildQuery(char* output, const size_t outputSize) {
-  static constexpr const char* LAYOUTS[] = {"minimal", "full"};
   static constexpr const char* FONT_SIZES[] = {"standard", "large"};
   static constexpr const char* VOCABULARY_LEVELS[] = {"b1", "b2", "c1", "c2", "mixed"};
-  static constexpr const char* WEATHER_LOCATIONS[] = {"hanoi",  "hochiminh", "danang", "haiphong",
-                                                      "cantho", "hue",       "dongnai"};
+  static constexpr const char* WEATHER_LOCATIONS[] = {"hanoi",  "hochiminh", "danang",  "haiphong",
+                                                      "cantho", "hue",       "dongnai", "namdinh"};
+  static_assert(std::size(WEATHER_LOCATIONS) == CrossPointSettings::VANNHANSO_WEATHER_LOCATION_COUNT);
 
   const bool minimal = SETTINGS.vanNhanSoLayout == CrossPointSettings::VANNHANSO_LAYOUT_MINIMAL;
   const int written =

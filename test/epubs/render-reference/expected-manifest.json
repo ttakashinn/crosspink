@@ -21,9 +21,31 @@
     {
       "id": "vi-tone-matrix",
       "href": "text/01-tieng-viet.xhtml#tone-matrix",
+      "page_offset": 1,
+      "full_build": true,
       "covers": [
-        "all Vietnamese vowels and tone marks",
+        "Vietnamese a/ă/â/e/ê/i/o tone matrices",
+        "uppercase and lowercase precomposed glyphs"
+      ]
+    },
+    {
+      "id": "vi-tone-matrix-end",
+      "href": "text/01-tieng-viet.xhtml#tone-matrix",
+      "page_offset": 2,
+      "full_build": true,
+      "covers": [
+        "Vietnamese ô/ơ/u/ư/y tone matrices",
         "uppercase and lowercase Đ/đ"
+      ]
+    },
+    {
+      "id": "vi-composition-order",
+      "href": "text/01-tieng-viet.xhtml#tone-matrix",
+      "page_offset": 3,
+      "full_build": true,
+      "covers": [
+        "canonical and malformed Vietnamese combining-mark order",
+        "Vietnamese punctuation and hyphenated compound words"
       ]
     },
     {
@@ -50,14 +72,76 @@
       ]
     },
     {
+      "id": "css-inheritance-important",
+      "href": "text/03-css.xhtml#inheritance-important",
+      "covers": [
+        "font weight and style inheritance across nested blocks",
+        "text decoration propagation",
+        "semantic element defaults overridden by author CSS",
+        "important priority across specificity and inline declarations"
+      ]
+    },
+    {
+      "id": "css-inheritance-important-continuation",
+      "href": "text/03-css.xhtml#inheritance-important",
+      "page_offset": 1,
+      "full_build": true,
+      "covers": [
+        "semantic bold italic and heading reset",
+        "stylesheet important versus inline normal",
+        "inline important semantic reset"
+      ]
+    },
+    {
       "id": "css-cascade",
       "href": "text/03-css.xhtml#selector-matrix",
       "covers": [
         "grouped selectors",
         "descendant selectors",
         "specificity",
-        "attribute selectors",
+        "unsupported attribute and pseudo selectors are ignored without contaminating adjacent rules",
         "display none"
+      ]
+    },
+    {
+      "id": "css-layout-spacing",
+      "href": "text/03-css.xhtml#alignment-spacing",
+      "full_build": true,
+      "covers": [
+        "center and right alignment",
+        "user alignment override versus book-style profile"
+      ]
+    },
+    {
+      "id": "css-layout-spacing-continuation",
+      "href": "text/03-css.xhtml#alignment-spacing",
+      "page_offset": 1,
+      "full_build": true,
+      "covers": [
+        "justified alignment",
+        "first-line text indent",
+        "nested semantic block margins and padding",
+        "viewport-safe readable width under accumulated horizontal insets"
+      ]
+    },
+    {
+      "id": "css-soft-flush-start",
+      "href": "text/03-css.xhtml#soft-flush",
+      "full_build": true,
+      "covers": [
+        "positive CSS text-indent appears on the first logical line",
+        "Vietnamese paragraph before its first parser soft flush"
+      ]
+    },
+    {
+      "id": "css-soft-flush-continuation",
+      "href": "text/03-css.xhtml#soft-flush",
+      "page_offset": 3,
+      "full_build": true,
+      "covers": [
+        "single Vietnamese paragraph split across parser soft flushes",
+        "text-indent applies only to the first logical line",
+        "pagination continuity across CSS-heavy inline spans"
       ]
     },
     {
@@ -69,6 +153,16 @@
         "long words",
         "internal footnotes",
         "visible text offsets"
+      ]
+    },
+    {
+      "id": "unicode-line-breaks",
+      "href": "text/04-phan-trang.xhtml#line-breaks",
+      "covers": [
+        "HTML br line breaks",
+        "consecutive br scene spacing",
+        "zero width space break opportunities",
+        "long Vietnamese identifiers constrained to the viewport"
       ]
     },
     {
@@ -253,6 +347,7 @@
       "href": "text/07-bidi-fallback.xhtml#mixed-direction",
       "covers": [
         "mixed LTR and RTL",
+        "RTL focus split with supported Latin and Vietnamese glyphs",
         "Arabic",
         "Hebrew",
         "CJK fallback"
@@ -339,6 +434,23 @@
       "sd_font_fixture": "test/fonts/CrossPointTest_14.cpfont"
     },
     {
+      "id": "x4-book-style",
+      "environment": "simulator_x4",
+      "viewport": {
+        "width": 480,
+        "height": 800
+      },
+      "orientation": "portrait",
+      "text_antialiasing": true,
+      "embedded_styles": true,
+      "font_family": "notoserif",
+      "font_point_size": 14,
+      "line_spacing": "normal",
+      "paragraph_alignment": "book",
+      "extra_paragraph_spacing": false,
+      "screen_margin": 5
+    },
+    {
       "id": "x4-safe-fallback",
       "environment": "simulator_x4",
       "viewport": {
@@ -354,6 +466,23 @@
       "paragraph_alignment": "justified",
       "screen_margin": 5,
       "force_build_low_memory": true
+    },
+    {
+      "id": "x4-focus-reading",
+      "environment": "simulator_x4",
+      "viewport": {
+        "width": 480,
+        "height": 800
+      },
+      "orientation": "portrait",
+      "text_antialiasing": true,
+      "embedded_styles": true,
+      "font_family": "notoserif",
+      "font_point_size": 14,
+      "line_spacing": "normal",
+      "paragraph_alignment": "justified",
+      "screen_margin": 5,
+      "focus_reading": true
     }
   ],
   "suites": {
@@ -384,12 +513,31 @@
         "stress-cold-warm"
       ]
     },
+    "css": {
+      "profiles": [
+        "x4-book-style"
+      ],
+      "checkpoints": [
+        "css-inheritance-important",
+        "css-inheritance-important-continuation",
+        "css-cascade",
+        "css-layout-spacing",
+        "css-layout-spacing-continuation",
+        "css-soft-flush-start",
+        "css-soft-flush-continuation"
+      ],
+      "cache_states": [
+        "cold"
+      ]
+    },
     "font": {
       "profiles": [
         "x4-sd-font"
       ],
       "checkpoints": [
         "vi-nfc-nfd",
+        "vi-tone-matrix",
+        "vi-tone-matrix-end",
         "typography",
         "vi-small-caps",
         "stress-cold-warm"
@@ -413,6 +561,18 @@
       ],
       "warm_cache_checkpoints": [
         "stress-cold-warm"
+      ]
+    },
+    "focus": {
+      "profiles": [
+        "x4-focus-reading"
+      ],
+      "checkpoints": [
+        "typography",
+        "bidi-fallback"
+      ],
+      "cache_states": [
+        "cold"
       ]
     }
   },

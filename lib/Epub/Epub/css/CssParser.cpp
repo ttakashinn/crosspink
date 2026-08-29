@@ -1,6 +1,5 @@
 #include "CssParser.h"
 
-#include <Arduino.h>
 #include <Logging.h>
 #include <Memory.h>
 
@@ -39,19 +38,19 @@ struct StackBuffer {
 // Buffer size for reading CSS files
 constexpr size_t READ_BUFFER_SIZE = 512;
 
-// Flat rule-store caps. The index is 12KB at MAX_RULES, selector text is
+// Flat rule-store caps. The index is at most 18KB at MAX_RULES, selector text is
 // bounded to 32KB, and deduplicated style bodies are bounded to about 26KB.
 constexpr size_t MAX_RULES = 1500;
 constexpr size_t SELECTOR_POOL_CAP = 32 * 1024;
 constexpr size_t MAX_UNIQUE_STYLES = 256;
-
-// Minimum free heap required to apply CSS during rendering
-// If below this threshold, we skip CSS to avoid display artifacts.
-constexpr size_t MIN_FREE_HEAP_FOR_CSS = 48 * 1024;
+constexpr size_t MAX_PROPERTY_ORDER_OVERRIDES = 512;
+constexpr uint8_t CSS_PROPERTY_COUNT = 21;
 
 // Maximum length for a single selector string
 // Prevents parsing of extremely long or malformed selectors
 constexpr size_t MAX_SELECTOR_LENGTH = 256;
+constexpr size_t RULE_CASCADE_FIXED_WIRE_BYTES = sizeof(uint16_t) * 2;
+constexpr size_t PROPERTY_ORDER_WIRE_BYTES = sizeof(uint8_t) + sizeof(uint16_t);
 
 // Check if character is CSS whitespace
 constexpr bool isCssWhitespace(const char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f'; }
@@ -60,6 +59,16 @@ constexpr std::string_view trimCssWhitespace(std::string_view s) {
   while (!s.empty() && isCssWhitespace(s.front())) s.remove_prefix(1);
   while (!s.empty() && isCssWhitespace(s.back())) s.remove_suffix(1);
   return s;
+}
+
+uint16_t selectorSpecificity(const std::string_view selector) {
+  const uint16_t classWeight = selector.find('.') == std::string_view::npos ? 0 : 256;
+  const uint16_t elementWeight = !selector.empty() && selector.front() != '.' ? 1 : 0;
+  return static_cast<uint16_t>(classWeight + elementWeight);
+}
+
+uint16_t descendantSpecificity(const std::string_view ancestor, const std::string_view subject) {
+  return static_cast<uint16_t>(selectorSpecificity(ancestor) + selectorSpecificity(subject));
 }
 
 constexpr char asciiToLower(const char c) { return (c >= 'A' && c <= 'Z') ? static_cast<char>(c + 32) : c; }
@@ -114,8 +123,9 @@ size_t collectEdgeValueTokens(std::string_view s, std::string_view (&out)[4]) {
   return count;
 }
 
-std::string_view stripTrailingImportant(std::string_view value) {
-  constexpr std::string_view IMPORTANT = "!important";
+std::string_view stripTrailingImportant(std::string_view value, bool* importantOut = nullptr) {
+  constexpr std::string_view IMPORTANT = "important";
+  if (importantOut) *importantOut = false;
 
   while (!value.empty() && isCssWhitespace(value.back())) {
     value.remove_suffix(1);
@@ -130,11 +140,13 @@ std::string_view stripTrailingImportant(std::string_view value) {
     return value;
   }
 
-  value.remove_suffix(IMPORTANT.size());
-  while (!value.empty() && isCssWhitespace(value.back())) {
-    value.remove_suffix(1);
-  }
-  return value;
+  std::string_view prefix = value.substr(0, suffixPos);
+  while (!prefix.empty() && isCssWhitespace(prefix.back())) prefix.remove_suffix(1);
+  if (prefix.empty() || prefix.back() != '!') return value;
+  prefix.remove_suffix(1);
+  while (!prefix.empty() && isCssWhitespace(prefix.back())) prefix.remove_suffix(1);
+  if (importantOut) *importantOut = true;
+  return prefix;
 }
 
 constexpr std::array STYLE_LENGTH_FIELDS = {
@@ -144,8 +156,149 @@ constexpr std::array STYLE_LENGTH_FIELDS = {
 };
 constexpr size_t STYLE_LENGTH_FIELD_COUNT = STYLE_LENGTH_FIELDS.size();
 constexpr size_t STYLE_WIRE_BYTES =
-    6 + STYLE_LENGTH_FIELD_COUNT * (sizeof(decltype(CssLength::value)) + 1) + 4 + sizeof(uint32_t);
+    6 + STYLE_LENGTH_FIELD_COUNT * (sizeof(decltype(CssLength::value)) + 1) + 4 + sizeof(uint32_t) * 2;
 constexpr uint32_t CSS_DEFINED_BITS_MASK = (1u << 21) - 1;
+
+bool styleDefinesProperty(const CssStyle& style, const uint8_t property) {
+  switch (property) {
+    case 0:
+      return style.hasTextAlign();
+    case 1:
+      return style.hasFontStyle();
+    case 2:
+      return style.hasFontWeight();
+    case 3:
+      return style.hasTextDecoration();
+    case 4:
+      return style.hasTextIndent();
+    case 5:
+      return style.hasMarginTop();
+    case 6:
+      return style.hasMarginBottom();
+    case 7:
+      return style.hasMarginLeft();
+    case 8:
+      return style.hasMarginRight();
+    case 9:
+      return style.hasPaddingTop();
+    case 10:
+      return style.hasPaddingBottom();
+    case 11:
+      return style.hasPaddingLeft();
+    case 12:
+      return style.hasPaddingRight();
+    case 13:
+      return style.hasImageHeight();
+    case 14:
+      return style.hasImageWidth();
+    case 15:
+      return style.hasDisplay();
+    case 16:
+      return style.hasDirection();
+    case 17:
+      return style.hasVerticalAlign();
+    case 18:
+      return style.hasPageBreakBefore();
+    case 19:
+      return style.hasPageBreakAfter();
+    case 20:
+      return style.hasFontVariantCaps();
+    default:
+      return false;
+  }
+}
+
+void copyStyleProperty(CssStyle& destination, const CssStyle& source, const uint8_t property) {
+  switch (property) {
+    case 0:
+      destination.textAlign = source.textAlign;
+      destination.defined.textAlign = 1;
+      break;
+    case 1:
+      destination.fontStyle = source.fontStyle;
+      destination.defined.fontStyle = 1;
+      break;
+    case 2:
+      destination.fontWeight = source.fontWeight;
+      destination.defined.fontWeight = 1;
+      break;
+    case 3:
+      destination.textDecoration = source.textDecoration;
+      destination.defined.textDecoration = 1;
+      break;
+    case 4:
+      destination.textIndent = source.textIndent;
+      destination.defined.textIndent = 1;
+      break;
+    case 5:
+      destination.marginTop = source.marginTop;
+      destination.defined.marginTop = 1;
+      break;
+    case 6:
+      destination.marginBottom = source.marginBottom;
+      destination.defined.marginBottom = 1;
+      break;
+    case 7:
+      destination.marginLeft = source.marginLeft;
+      destination.defined.marginLeft = 1;
+      break;
+    case 8:
+      destination.marginRight = source.marginRight;
+      destination.defined.marginRight = 1;
+      break;
+    case 9:
+      destination.paddingTop = source.paddingTop;
+      destination.defined.paddingTop = 1;
+      break;
+    case 10:
+      destination.paddingBottom = source.paddingBottom;
+      destination.defined.paddingBottom = 1;
+      break;
+    case 11:
+      destination.paddingLeft = source.paddingLeft;
+      destination.defined.paddingLeft = 1;
+      break;
+    case 12:
+      destination.paddingRight = source.paddingRight;
+      destination.defined.paddingRight = 1;
+      break;
+    case 13:
+      destination.imageHeight = source.imageHeight;
+      destination.defined.imageHeight = 1;
+      break;
+    case 14:
+      destination.imageWidth = source.imageWidth;
+      destination.defined.imageWidth = 1;
+      break;
+    case 15:
+      destination.display = source.display;
+      destination.defined.display = 1;
+      break;
+    case 16:
+      destination.direction = source.direction;
+      destination.defined.direction = 1;
+      break;
+    case 17:
+      destination.verticalAlign = source.verticalAlign;
+      destination.defined.verticalAlign = 1;
+      break;
+    case 18:
+      destination.pageBreakBefore = source.pageBreakBefore;
+      destination.defined.pageBreakBefore = 1;
+      break;
+    case 19:
+      destination.pageBreakAfter = source.pageBreakAfter;
+      destination.defined.pageBreakAfter = 1;
+      break;
+    case 20:
+      destination.fontVariantCaps = source.fontVariantCaps;
+      destination.defined.fontVariantCaps = 1;
+      break;
+    default:
+      break;
+  }
+  destination.setImportant(property, source.isImportant(property));
+}
 
 void encodeStyleWire(const CssStyle& style, uint8_t (&out)[STYLE_WIRE_BYTES]) {
   size_t offset = 0;
@@ -192,6 +345,8 @@ void encodeStyleWire(const CssStyle& style, uint8_t (&out)[STYLE_WIRE_BYTES]) {
   if (style.defined.pageBreakAfter) definedBits |= 1 << 19;
   if (style.defined.fontVariantCaps) definedBits |= 1 << 20;
   memcpy(out + offset, &definedBits, sizeof(definedBits));
+  offset += sizeof(definedBits);
+  memcpy(out + offset, &style.importantBits, sizeof(style.importantBits));
 }
 
 bool decodeStyleWire(const uint8_t (&in)[STYLE_WIRE_BYTES], CssStyle& style) {
@@ -267,6 +422,9 @@ bool decodeStyleWire(const uint8_t (&in)[STYLE_WIRE_BYTES], CssStyle& style) {
   style.defined.pageBreakBefore = (definedBits & 1 << 18) != 0;
   style.defined.pageBreakAfter = (definedBits & 1 << 19) != 0;
   style.defined.fontVariantCaps = (definedBits & 1 << 20) != 0;
+  offset += sizeof(definedBits);
+  memcpy(&style.importantBits, in + offset, sizeof(style.importantBits));
+  if ((style.importantBits & ~CSS_DEFINED_BITS_MASK) != 0 || (style.importantBits & ~definedBits) != 0) return false;
   return true;
 }
 
@@ -305,11 +463,11 @@ size_t CssParser::lowerBound(const std::string_view p0, const std::string_view p
   return low;
 }
 
-const CssStyle* CssParser::findStyle(const std::string_view p0, const std::string_view p1,
-                                     const std::string_view p2) const {
+const CssParser::SelectorEntry* CssParser::findEntry(const std::string_view p0, const std::string_view p1,
+                                                     const std::string_view p2) const {
   bool exact = false;
   const size_t index = lowerBound(p0, p1, p2, exact);
-  return exact ? &stylePool_[entries_[index].styleIndex] : nullptr;
+  return exact ? &entries_[index] : nullptr;
 }
 
 std::string_view CssParser::selectorAt(const size_t index) const {
@@ -401,6 +559,100 @@ CssParser::PoolResult CssParser::ensureStyleCapacity(const size_t needed) {
   return PoolResult::Ready;
 }
 
+CssParser::PoolResult CssParser::ensurePropertyOrderOverrideCapacity(const size_t needed) {
+  if (needed <= propertyOrderOverrideCapacity_) return PoolResult::Ready;
+  if (needed > MAX_PROPERTY_ORDER_OVERRIDES) return PoolResult::Limit;
+
+  size_t capacity = propertyOrderOverrideCapacity_ ? propertyOrderOverrideCapacity_ * 2u : 32u;
+  while (capacity < needed) capacity *= 2u;
+  capacity = std::min(capacity, MAX_PROPERTY_ORDER_OVERRIDES);
+  auto grown = makeUniqueNoThrow<PropertyOrderOverride[]>(capacity);
+  if (!grown) {
+    LOG_ERR("CSS", "OOM: property cascade metadata (%zu entries)", capacity);
+    return PoolResult::OutOfMemory;
+  }
+  if (propertyOrderOverrideCount_ > 0) {
+    memcpy(grown.get(), propertyOrderOverrides_.get(),
+           static_cast<size_t>(propertyOrderOverrideCount_) * sizeof(PropertyOrderOverride));
+  }
+  propertyOrderOverrides_ = std::move(grown);
+  propertyOrderOverrideCapacity_ = static_cast<uint16_t>(capacity);
+  return PoolResult::Ready;
+}
+
+CssParser::PoolResult CssParser::recordPropertyOrders(const uint32_t selectorOffset, const bool descendant,
+                                                      const CssStyle& style, const uint16_t sourceOrder,
+                                                      const CssStyle* existing) {
+  const auto declarationWins = [&](const uint8_t property) {
+    return !existing || !styleDefinesProperty(*existing, property) || style.isImportant(property) ||
+           !existing->isImportant(property);
+  };
+  size_t missing = 0;
+  for (uint8_t property = 0; property < CSS_PROPERTY_COUNT; ++property) {
+    if (!styleDefinesProperty(style, property) || !declarationWins(property)) continue;
+    bool found = false;
+    for (uint16_t i = 0; i < propertyOrderOverrideCount_; ++i) {
+      const PropertyOrderOverride& entry = propertyOrderOverrides_[i];
+      if (entry.selectorOffset == selectorOffset && entry.descendant == descendant && entry.property == property) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) ++missing;
+  }
+
+  const PoolResult capacityResult =
+      ensurePropertyOrderOverrideCapacity(static_cast<size_t>(propertyOrderOverrideCount_) + missing);
+  if (capacityResult != PoolResult::Ready) return capacityResult;
+
+  for (uint8_t property = 0; property < CSS_PROPERTY_COUNT; ++property) {
+    if (!styleDefinesProperty(style, property) || !declarationWins(property)) continue;
+    bool found = false;
+    for (uint16_t i = 0; i < propertyOrderOverrideCount_; ++i) {
+      PropertyOrderOverride& entry = propertyOrderOverrides_[i];
+      if (entry.selectorOffset == selectorOffset && entry.descendant == descendant && entry.property == property) {
+        entry.sourceOrder = sourceOrder;
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      propertyOrderOverrides_[propertyOrderOverrideCount_++] = {selectorOffset, sourceOrder, property,
+                                                                static_cast<uint8_t>(descendant)};
+    }
+  }
+  return PoolResult::Ready;
+}
+
+CssParser::PoolResult CssParser::recordPropertyOrder(const uint32_t selectorOffset, const bool descendant,
+                                                     const uint8_t property, const uint16_t sourceOrder) {
+  if (property >= CSS_PROPERTY_COUNT) return PoolResult::Limit;
+  for (uint16_t i = 0; i < propertyOrderOverrideCount_; ++i) {
+    PropertyOrderOverride& entry = propertyOrderOverrides_[i];
+    if (entry.selectorOffset == selectorOffset && entry.descendant == descendant && entry.property == property) {
+      entry.sourceOrder = sourceOrder;
+      return PoolResult::Ready;
+    }
+  }
+  const PoolResult capacityResult =
+      ensurePropertyOrderOverrideCapacity(static_cast<size_t>(propertyOrderOverrideCount_) + 1);
+  if (capacityResult != PoolResult::Ready) return capacityResult;
+  propertyOrderOverrides_[propertyOrderOverrideCount_++] = {selectorOffset, sourceOrder, property,
+                                                            static_cast<uint8_t>(descendant)};
+  return PoolResult::Ready;
+}
+
+uint16_t CssParser::propertySourceOrder(const uint32_t selectorOffset, const bool descendant, const uint8_t property,
+                                        const uint16_t fallback) const {
+  for (uint16_t i = 0; i < propertyOrderOverrideCount_; ++i) {
+    const PropertyOrderOverride& entry = propertyOrderOverrides_[i];
+    if (entry.selectorOffset == selectorOffset && entry.descendant == descendant && entry.property == property) {
+      return entry.sourceOrder;
+    }
+  }
+  return fallback;
+}
+
 CssParser::PoolResult CssParser::internStyle(const CssStyle& style, uint16_t& indexOut) {
   uint8_t wire[STYLE_WIRE_BYTES];
   encodeStyleWire(style, wire);
@@ -420,7 +672,8 @@ CssParser::PoolResult CssParser::internStyle(const CssStyle& style, uint16_t& in
   return PoolResult::Ready;
 }
 
-CssParser::RuleInsertResult CssParser::insertOrMerge(const std::string_view selector, const CssStyle& style) {
+CssParser::RuleInsertResult CssParser::insertOrMerge(const std::string_view selector, const CssStyle& style,
+                                                     const uint16_t sourceOrder) {
   bool exact = false;
   const size_t position = lowerBound(selector, {}, {}, exact);
   if (exact) {
@@ -438,16 +691,21 @@ CssParser::RuleInsertResult CssParser::insertOrMerge(const std::string_view sele
     for (uint16_t i = 0; !styleIsShared && i < descendantEntryCount_; ++i) {
       styleIsShared = descendantEntries_[i].styleIndex == currentStyleIndex;
     }
-    if (!styleIsShared) {
-      stylePool_[currentStyleIndex] = merged;
-      return RuleInsertResult::Merged;
+    uint16_t styleIndex = currentStyleIndex;
+    if (styleIsShared) {
+      const PoolResult styleResult = internStyle(merged, styleIndex);
+      if (styleResult == PoolResult::Limit) return RuleInsertResult::Limit;
+      if (styleResult == PoolResult::OutOfMemory) return RuleInsertResult::OutOfMemory;
     }
-
-    uint16_t styleIndex = 0;
-    const PoolResult result = internStyle(merged, styleIndex);
-    if (result == PoolResult::Limit) return RuleInsertResult::Limit;
-    if (result == PoolResult::OutOfMemory) return RuleInsertResult::OutOfMemory;
-    entries_[position].styleIndex = styleIndex;
+    const PoolResult cascadeResult =
+        recordPropertyOrders(entries_[position].offset, false, style, sourceOrder, &stylePool_[currentStyleIndex]);
+    if (cascadeResult == PoolResult::Limit) return RuleInsertResult::Limit;
+    if (cascadeResult == PoolResult::OutOfMemory) return RuleInsertResult::OutOfMemory;
+    if (styleIsShared) {
+      entries_[position].styleIndex = styleIndex;
+    } else {
+      stylePool_[currentStyleIndex] = merged;
+    }
     return RuleInsertResult::Merged;
   }
 
@@ -473,17 +731,19 @@ CssParser::RuleInsertResult CssParser::insertOrMerge(const std::string_view sele
 
   SelectorEntry* entries = entries_.get();
   memmove(entries + position + 1, entries + position, (entryCount_ - position) * sizeof(SelectorEntry));
-  entries[position] = {selectorOffset, styleIndex, static_cast<uint16_t>(selector.size())};
+  entries[position] = {selectorOffset, styleIndex, static_cast<uint16_t>(selector.size()),
+                       selectorSpecificity(selector), sourceOrder};
   ++entryCount_;
   return RuleInsertResult::Inserted;
 }
 
 CssParser::RuleInsertResult CssParser::insertOrMergeDescendant(const std::string_view ancestor,
-                                                               const std::string_view subject, const CssStyle& style) {
+                                                               const std::string_view subject, const CssStyle& style,
+                                                               const uint16_t sourceOrder) {
   for (uint16_t i = 0; i < descendantEntryCount_; ++i) {
     const DescendantEntry& entry = descendantEntries_[i];
-    const SelectorEntry ancestorEntry = {entry.ancestorOffset, entry.styleIndex, entry.ancestorLength};
-    const SelectorEntry subjectEntry = {entry.subjectOffset, entry.styleIndex, entry.subjectLength};
+    const SelectorEntry ancestorEntry = {entry.ancestorOffset, entry.styleIndex, entry.ancestorLength, 0, 0};
+    const SelectorEntry subjectEntry = {entry.subjectOffset, entry.styleIndex, entry.subjectLength, 0, 0};
     if (compareEntryToPieces(ancestorEntry, ancestor, {}, {}) != 0 ||
         compareEntryToPieces(subjectEntry, subject, {}, {}) != 0) {
       continue;
@@ -505,16 +765,21 @@ CssParser::RuleInsertResult CssParser::insertOrMergeDescendant(const std::string
         styleIsShared = true;
       }
     }
-    if (!styleIsShared) {
-      stylePool_[currentStyleIndex] = merged;
-      return RuleInsertResult::Merged;
+    uint16_t styleIndex = currentStyleIndex;
+    if (styleIsShared) {
+      const PoolResult styleResult = internStyle(merged, styleIndex);
+      if (styleResult == PoolResult::Limit) return RuleInsertResult::Limit;
+      if (styleResult == PoolResult::OutOfMemory) return RuleInsertResult::OutOfMemory;
     }
-
-    uint16_t styleIndex = 0;
-    const PoolResult styleResult = internStyle(merged, styleIndex);
-    if (styleResult == PoolResult::Limit) return RuleInsertResult::Limit;
-    if (styleResult == PoolResult::OutOfMemory) return RuleInsertResult::OutOfMemory;
-    descendantEntries_[i].styleIndex = styleIndex;
+    const PoolResult cascadeResult =
+        recordPropertyOrders(entry.ancestorOffset, true, style, sourceOrder, &stylePool_[currentStyleIndex]);
+    if (cascadeResult == PoolResult::Limit) return RuleInsertResult::Limit;
+    if (cascadeResult == PoolResult::OutOfMemory) return RuleInsertResult::OutOfMemory;
+    if (styleIsShared) {
+      descendantEntries_[i].styleIndex = styleIndex;
+    } else {
+      stylePool_[currentStyleIndex] = merged;
+    }
     return RuleInsertResult::Merged;
   }
 
@@ -540,9 +805,13 @@ CssParser::RuleInsertResult CssParser::insertOrMergeDescendant(const std::string
   for (const char c : subject) *destination++ = asciiToLower(c);
   selectorPoolSize_ = static_cast<uint32_t>(requiredSelectorBytes);
 
-  descendantEntries_[descendantEntryCount_++] = {ancestorOffset, subjectOffset, styleIndex,
+  descendantEntries_[descendantEntryCount_++] = {ancestorOffset,
+                                                 subjectOffset,
+                                                 styleIndex,
                                                  static_cast<uint16_t>(ancestor.size()),
-                                                 static_cast<uint16_t>(subject.size())};
+                                                 static_cast<uint16_t>(subject.size()),
+                                                 descendantSpecificity(ancestor, subject),
+                                                 sourceOrder};
   return RuleInsertResult::Inserted;
 }
 
@@ -649,8 +918,13 @@ bool CssParser::tryInterpretLength(std::string_view val, CssLength& out) {
     unit = CssUnit::Rem;
   } else if (iequalsAscii(unitPart, "pt")) {
     unit = CssUnit::Points;
+  } else if (iequalsAscii(unitPart, "px")) {
+    unit = CssUnit::Pixels;
   } else if (unitPart == "%") {
     unit = CssUnit::Percent;
+  } else if (!unitPart.empty() || numericValue != 0.0f) {
+    out = CssLength{};
+    return false;
   }
 
   out = CssLength{numericValue, unit};
@@ -664,123 +938,175 @@ void CssParser::parseDeclarationIntoStyle(std::string_view decl, CssStyle& style
   if (colonPos == std::string_view::npos || colonPos == 0) return;
 
   const std::string_view name = trimCssWhitespace(decl.substr(0, colonPos));
-  const std::string_view value = trimCssWhitespace(decl.substr(colonPos + 1));
+  bool important = false;
+  const std::string_view value =
+      trimCssWhitespace(stripTrailingImportant(trimCssWhitespace(decl.substr(colonPos + 1)), &important));
 
   if (name.empty() || value.empty()) return;
 
+  CssStyle parsed;
+  const auto tryMarginLength = [](const std::string_view token, CssLength& length) {
+    if (iequalsAscii(trimCssWhitespace(token), "auto")) {
+      length = CssLength{};
+      return true;
+    }
+    return CssParser::tryInterpretLength(token, length);
+  };
+
   if (iequalsAscii(name, "text-align")) {
-    style.textAlign = interpretAlignment(value);
-    style.defined.textAlign = 1;
+    if (iequalsAscii(value, "left") || iequalsAscii(value, "right") || iequalsAscii(value, "center") ||
+        iequalsAscii(value, "justify") || iequalsAscii(value, "start") || iequalsAscii(value, "end")) {
+      parsed.textAlign = interpretAlignment(value);
+      parsed.defined.textAlign = 1;
+    }
   } else if (iequalsAscii(name, "font-style")) {
-    style.fontStyle = interpretFontStyle(value);
-    style.defined.fontStyle = 1;
+    if (iequalsAscii(value, "normal") || iequalsAscii(value, "italic") || iequalsAscii(value, "oblique")) {
+      parsed.fontStyle = interpretFontStyle(value);
+      parsed.defined.fontStyle = 1;
+    }
   } else if (iequalsAscii(name, "font-weight")) {
-    style.fontWeight = interpretFontWeight(value);
-    style.defined.fontWeight = 1;
+    long numericWeight = 0;
+    if (iequalsAscii(value, "normal") || iequalsAscii(value, "bold") || iequalsAscii(value, "bolder") ||
+        iequalsAscii(value, "lighter") ||
+        (tryParseNumber(value, numericWeight) && numericWeight >= 1 && numericWeight <= 1000)) {
+      parsed.fontWeight = interpretFontWeight(value);
+      parsed.defined.fontWeight = 1;
+    }
   } else if (iequalsAscii(name, "font-variant") || iequalsAscii(name, "font-variant-caps")) {
-    style.fontVariantCaps = interpretFontVariantCaps(value);
-    style.defined.fontVariantCaps = 1;
+    bool supported = false;
+    forEachDelimitedToken(value, isCssWhitespace, [&](const std::string_view token) {
+      supported = supported || iequalsAscii(token, "small-caps") || iequalsAscii(token, "normal");
+    });
+    if (supported) {
+      parsed.fontVariantCaps = interpretFontVariantCaps(value);
+      parsed.defined.fontVariantCaps = 1;
+    }
   } else if (iequalsAscii(name, "text-decoration") || iequalsAscii(name, "text-decoration-line")) {
-    style.textDecoration = interpretDecoration(value);
-    style.defined.textDecoration = 1;
+    bool supported = false;
+    forEachDelimitedToken(value, isCssWhitespace, [&](const std::string_view token) {
+      supported = supported || iequalsAscii(token, "none") || iequalsAscii(token, "underline") ||
+                  iequalsAscii(token, "line-through");
+    });
+    if (supported) {
+      parsed.textDecoration = interpretDecoration(value);
+      parsed.defined.textDecoration = 1;
+    }
   } else if (iequalsAscii(name, "text-indent")) {
-    style.textIndent = interpretLength(value);
-    style.defined.textIndent = 1;
+    if (tryInterpretLength(value, parsed.textIndent)) parsed.defined.textIndent = 1;
   } else if (iequalsAscii(name, "margin-top")) {
-    style.marginTop = interpretLength(value);
-    style.defined.marginTop = 1;
+    if (tryMarginLength(value, parsed.marginTop)) parsed.defined.marginTop = 1;
   } else if (iequalsAscii(name, "margin-bottom")) {
-    style.marginBottom = interpretLength(value);
-    style.defined.marginBottom = 1;
+    if (tryMarginLength(value, parsed.marginBottom)) parsed.defined.marginBottom = 1;
   } else if (iequalsAscii(name, "margin-left")) {
-    style.marginLeft = interpretLength(value);
-    style.defined.marginLeft = 1;
+    if (tryMarginLength(value, parsed.marginLeft)) parsed.defined.marginLeft = 1;
   } else if (iequalsAscii(name, "margin-right")) {
-    style.marginRight = interpretLength(value);
-    style.defined.marginRight = 1;
+    if (tryMarginLength(value, parsed.marginRight)) parsed.defined.marginRight = 1;
   } else if (iequalsAscii(name, "margin")) {
     std::string_view margins[4];
     const size_t count = collectEdgeValueTokens(value, margins);
-    if (count > 0) {
-      style.marginTop = interpretLength(margins[0]);
-      style.marginRight = count >= 2 ? interpretLength(margins[1]) : style.marginTop;
-      style.marginBottom = count >= 3 ? interpretLength(margins[2]) : style.marginTop;
-      style.marginLeft = count >= 4 ? interpretLength(margins[3]) : style.marginRight;
-      style.defined.marginTop = style.defined.marginRight = style.defined.marginBottom = style.defined.marginLeft = 1;
+    CssLength values[4];
+    bool valid = count > 0;
+    for (size_t i = 0; i < count; ++i) valid = valid && tryMarginLength(margins[i], values[i]);
+    if (valid) {
+      parsed.marginTop = values[0];
+      parsed.marginRight = count >= 2 ? values[1] : parsed.marginTop;
+      parsed.marginBottom = count >= 3 ? values[2] : parsed.marginTop;
+      parsed.marginLeft = count >= 4 ? values[3] : parsed.marginRight;
+      parsed.defined.marginTop = parsed.defined.marginRight = parsed.defined.marginBottom = parsed.defined.marginLeft =
+          1;
     }
   } else if (iequalsAscii(name, "padding-top")) {
-    style.paddingTop = interpretLength(value);
-    style.defined.paddingTop = 1;
+    if (tryInterpretLength(value, parsed.paddingTop)) parsed.defined.paddingTop = 1;
   } else if (iequalsAscii(name, "padding-bottom")) {
-    style.paddingBottom = interpretLength(value);
-    style.defined.paddingBottom = 1;
+    if (tryInterpretLength(value, parsed.paddingBottom)) parsed.defined.paddingBottom = 1;
   } else if (iequalsAscii(name, "padding-left")) {
-    style.paddingLeft = interpretLength(value);
-    style.defined.paddingLeft = 1;
+    if (tryInterpretLength(value, parsed.paddingLeft)) parsed.defined.paddingLeft = 1;
   } else if (iequalsAscii(name, "padding-right")) {
-    style.paddingRight = interpretLength(value);
-    style.defined.paddingRight = 1;
+    if (tryInterpretLength(value, parsed.paddingRight)) parsed.defined.paddingRight = 1;
   } else if (iequalsAscii(name, "padding")) {
     std::string_view paddings[4];
     const size_t count = collectEdgeValueTokens(value, paddings);
-    if (count > 0) {
-      style.paddingTop = interpretLength(paddings[0]);
-      style.paddingRight = count >= 2 ? interpretLength(paddings[1]) : style.paddingTop;
-      style.paddingBottom = count >= 3 ? interpretLength(paddings[2]) : style.paddingTop;
-      style.paddingLeft = count >= 4 ? interpretLength(paddings[3]) : style.paddingRight;
-      style.defined.paddingTop = style.defined.paddingRight = style.defined.paddingBottom = style.defined.paddingLeft =
-          1;
+    CssLength values[4];
+    bool valid = count > 0;
+    for (size_t i = 0; i < count; ++i) valid = valid && tryInterpretLength(paddings[i], values[i]);
+    if (valid) {
+      parsed.paddingTop = values[0];
+      parsed.paddingRight = count >= 2 ? values[1] : parsed.paddingTop;
+      parsed.paddingBottom = count >= 3 ? values[2] : parsed.paddingTop;
+      parsed.paddingLeft = count >= 4 ? values[3] : parsed.paddingRight;
+      parsed.defined.paddingTop = parsed.defined.paddingRight = parsed.defined.paddingBottom =
+          parsed.defined.paddingLeft = 1;
     }
   } else if (iequalsAscii(name, "height")) {
     CssLength len;
     if (tryInterpretLength(value, len)) {
-      style.imageHeight = len;
-      style.defined.imageHeight = 1;
+      parsed.imageHeight = len;
+      parsed.defined.imageHeight = 1;
     }
   } else if (iequalsAscii(name, "width")) {
     CssLength len;
     if (tryInterpretLength(value, len)) {
-      style.imageWidth = len;
-      style.defined.imageWidth = 1;
+      parsed.imageWidth = len;
+      parsed.defined.imageWidth = 1;
     }
   } else if (iequalsAscii(name, "display")) {
-    const std::string_view displayValue = stripTrailingImportant(value);
-    style.display = iequalsAscii(displayValue, "none") ? CssDisplay::None : CssDisplay::Block;
-    style.defined.display = 1;
+    if (iequalsAscii(value, "none")) {
+      parsed.display = CssDisplay::None;
+      parsed.defined.display = 1;
+    } else if (iequalsAscii(value, "block") || iequalsAscii(value, "inline") || iequalsAscii(value, "inline-block") ||
+               iequalsAscii(value, "list-item") || iequalsAscii(value, "table") || iequalsAscii(value, "table-row") ||
+               iequalsAscii(value, "table-cell")) {
+      parsed.display = CssDisplay::Block;
+      parsed.defined.display = 1;
+    }
   } else if (iequalsAscii(name, "page-break-before") || iequalsAscii(name, "break-before")) {
-    const std::string_view breakValue = stripTrailingImportant(value);
-    style.pageBreakBefore = iequalsAscii(breakValue, "always") || iequalsAscii(breakValue, "page") ||
-                                    iequalsAscii(breakValue, "left") || iequalsAscii(breakValue, "right") ||
-                                    iequalsAscii(breakValue, "recto") || iequalsAscii(breakValue, "verso")
-                                ? CssPageBreak::Always
-                                : CssPageBreak::Auto;
-    style.defined.pageBreakBefore = 1;
+    if (iequalsAscii(value, "always") || iequalsAscii(value, "page") || iequalsAscii(value, "left") ||
+        iequalsAscii(value, "right") || iequalsAscii(value, "recto") || iequalsAscii(value, "verso") ||
+        iequalsAscii(value, "auto") || iequalsAscii(value, "avoid") || iequalsAscii(value, "avoid-page")) {
+      parsed.pageBreakBefore =
+          iequalsAscii(value, "auto") || iequalsAscii(value, "avoid") || iequalsAscii(value, "avoid-page")
+              ? CssPageBreak::Auto
+              : CssPageBreak::Always;
+      parsed.defined.pageBreakBefore = 1;
+    }
   } else if (iequalsAscii(name, "page-break-after") || iequalsAscii(name, "break-after")) {
-    const std::string_view breakValue = stripTrailingImportant(value);
-    style.pageBreakAfter = iequalsAscii(breakValue, "always") || iequalsAscii(breakValue, "page") ||
-                                   iequalsAscii(breakValue, "left") || iequalsAscii(breakValue, "right") ||
-                                   iequalsAscii(breakValue, "recto") || iequalsAscii(breakValue, "verso")
-                               ? CssPageBreak::Always
-                               : CssPageBreak::Auto;
-    style.defined.pageBreakAfter = 1;
+    if (iequalsAscii(value, "always") || iequalsAscii(value, "page") || iequalsAscii(value, "left") ||
+        iequalsAscii(value, "right") || iequalsAscii(value, "recto") || iequalsAscii(value, "verso") ||
+        iequalsAscii(value, "auto") || iequalsAscii(value, "avoid") || iequalsAscii(value, "avoid-page")) {
+      parsed.pageBreakAfter =
+          iequalsAscii(value, "auto") || iequalsAscii(value, "avoid") || iequalsAscii(value, "avoid-page")
+              ? CssPageBreak::Auto
+              : CssPageBreak::Always;
+      parsed.defined.pageBreakAfter = 1;
+    }
   } else if (iequalsAscii(name, "direction")) {
-    const std::string_view directionValue = stripTrailingImportant(value);
-    if (iequalsAscii(directionValue, "rtl")) {
-      style.direction = CssTextDirection::Rtl;
-      style.defined.direction = 1;
-    } else if (iequalsAscii(directionValue, "ltr")) {
-      style.direction = CssTextDirection::Ltr;
-      style.defined.direction = 1;
+    if (iequalsAscii(value, "rtl")) {
+      parsed.direction = CssTextDirection::Rtl;
+      parsed.defined.direction = 1;
+    } else if (iequalsAscii(value, "ltr")) {
+      parsed.direction = CssTextDirection::Ltr;
+      parsed.defined.direction = 1;
     }
   } else if (iequalsAscii(name, "vertical-align")) {
     if (iequalsAscii(value, "super")) {
-      style.verticalAlign = CssVerticalAlign::Super;
-      style.defined.verticalAlign = 1;
+      parsed.verticalAlign = CssVerticalAlign::Super;
+      parsed.defined.verticalAlign = 1;
     } else if (iequalsAscii(value, "sub")) {
-      style.verticalAlign = CssVerticalAlign::Sub;
-      style.defined.verticalAlign = 1;
+      parsed.verticalAlign = CssVerticalAlign::Sub;
+      parsed.defined.verticalAlign = 1;
+    } else if (iequalsAscii(value, "baseline")) {
+      parsed.verticalAlign = CssVerticalAlign::Baseline;
+      parsed.defined.verticalAlign = 1;
     }
   }
+
+  if (!parsed.defined.anySet()) return;
+  if (important) {
+    for (uint8_t property = 0; property < CSS_PROPERTY_COUNT; ++property) {
+      if (styleDefinesProperty(parsed, property)) parsed.setImportant(property, true);
+    }
+  }
+  style.applyOver(parsed);
 }
 
 CssStyle CssParser::parseDeclarations(std::string_view declBlock) {
@@ -806,6 +1132,12 @@ void CssParser::processRuleBlockWithStyle(std::string_view selectorGroup, const 
   if (!style.defined.anySet()) {
     return;
   }
+
+  // Every selector in a comma-separated group belongs to the same CSS rule
+  // and therefore has the same source order. Saturation is deterministic and
+  // only reachable after far more rule blocks than the bounded store retains.
+  const uint16_t sourceOrder = nextSourceOrder_;
+  if (nextSourceOrder_ < UINT16_MAX) ++nextSourceOrder_;
 
   // Walk comma-separated selectors in place. The bounded store reports every
   // capacity or allocation failure without crossing a throwing STL boundary.
@@ -855,8 +1187,8 @@ void CssParser::processRuleBlockWithStyle(std::string_view selectorGroup, const 
           bool existing = false;
           for (uint16_t i = 0; i < descendantEntryCount_ && !existing; ++i) {
             const DescendantEntry& entry = descendantEntries_[i];
-            const SelectorEntry ancestorEntry = {entry.ancestorOffset, entry.styleIndex, entry.ancestorLength};
-            const SelectorEntry subjectEntry = {entry.subjectOffset, entry.styleIndex, entry.subjectLength};
+            const SelectorEntry ancestorEntry = {entry.ancestorOffset, entry.styleIndex, entry.ancestorLength, 0, 0};
+            const SelectorEntry subjectEntry = {entry.subjectOffset, entry.styleIndex, entry.subjectLength, 0, 0};
             existing = compareEntryToPieces(ancestorEntry, parts[0], {}, {}) == 0 &&
                        compareEntryToPieces(subjectEntry, parts[1], {}, {}) == 0;
           }
@@ -877,16 +1209,16 @@ void CssParser::processRuleBlockWithStyle(std::string_view selectorGroup, const 
             bool exact = false;
             for (uint16_t i = 0; i < descendantEntryCount_ && !exact; ++i) {
               const DescendantEntry& entry = descendantEntries_[i];
-              const SelectorEntry ancestorEntry = {entry.ancestorOffset, entry.styleIndex, entry.ancestorLength};
-              const SelectorEntry subjectEntry = {entry.subjectOffset, entry.styleIndex, entry.subjectLength};
+              const SelectorEntry ancestorEntry = {entry.ancestorOffset, entry.styleIndex, entry.ancestorLength, 0, 0};
+              const SelectorEntry subjectEntry = {entry.subjectOffset, entry.styleIndex, entry.subjectLength, 0, 0};
               exact = compareEntryToPieces(ancestorEntry, parts[0], {}, {}) == 0 &&
                       compareEntryToPieces(subjectEntry, parts[1], {}, {}) == 0;
             }
             if (!exact) return;
           }
         }
-        const RuleInsertResult result =
-            descendant ? insertOrMergeDescendant(parts[0], parts[1], style) : insertOrMerge(parts[0], style);
+        const RuleInsertResult result = descendant ? insertOrMergeDescendant(parts[0], parts[1], style, sourceOrder)
+                                                   : insertOrMerge(parts[0], style, sourceOrder);
         if (result == RuleInsertResult::Limit) {
           LOG_ERR("CSS", "CSS rule store limit reached at %zu rules", ruleCount());
           ruleGrowthStopped_ = true;
@@ -1096,52 +1428,59 @@ CssParser::DescendantMask CssParser::matchingAncestorMask(const std::string_view
 
 CssStyle CssParser::resolveStyle(const std::string_view tagName, const std::string_view classAttr,
                                  const DescendantMask activeAncestors) const {
-  static bool lowHeapWarningLogged = false;
-  if (ESP.getFreeHeap() < MIN_FREE_HEAP_FOR_CSS) {
-    if (!lowHeapWarningLogged) {
-      lowHeapWarningLogged = true;
-      LOG_DBG("CSS", "Warning: low heap (%u bytes) below MIN_FREE_HEAP_FOR_CSS (%u), returning empty style",
-              ESP.getFreeHeap(), static_cast<unsigned>(MIN_FREE_HEAP_FOR_CSS));
-    }
-    return CssStyle{};
-  }
-
+  struct PropertyWinner {
+    uint16_t specificity;
+    uint16_t sourceOrder;
+    bool important;
+    bool set;
+  };
+  std::array<PropertyWinner, CSS_PROPERTY_COUNT> winners{};
   CssStyle result;
+  const auto applyRule = [&](const uint16_t styleIndex, const uint32_t selectorOffset, const bool descendant,
+                             const uint16_t specificity, const uint16_t baseSourceOrder) {
+    const CssStyle& style = stylePool_[styleIndex];
+    for (uint8_t property = 0; property < CSS_PROPERTY_COUNT; ++property) {
+      if (!styleDefinesProperty(style, property)) continue;
+      const uint16_t sourceOrder = propertySourceOrder(selectorOffset, descendant, property, baseSourceOrder);
+      PropertyWinner& winner = winners[property];
+      const bool important = style.isImportant(property);
+      if (!winner.set || important > winner.important ||
+          (important == winner.important &&
+           (specificity > winner.specificity ||
+            (specificity == winner.specificity && sourceOrder >= winner.sourceOrder)))) {
+        copyStyleProperty(result, style, property);
+        winner = {specificity, sourceOrder, important, true};
+      }
+    }
+  };
 
-  // 1. Apply element-level style (lowest priority).
-  if (const CssStyle* style = findStyle(tagName)) {
-    result.applyOver(*style);
+  if (const SelectorEntry* entry = findEntry(tagName)) {
+    applyRule(entry->styleIndex, entry->offset, false, entry->specificity, entry->sourceOrder);
   }
 
-  // 2. Descendant selectors have more specificity than a bare element. The
-  // parser passes a cumulative bit mask, so matching does not retain tag/class
-  // strings for every open HTML node.
+  // The parser passes a cumulative bit mask, so matching descendants does not
+  // retain tag/class strings for every open HTML node.
   if (activeAncestors != 0) {
     for (uint16_t i = 0; i < descendantEntryCount_; ++i) {
       if ((activeAncestors & (DescendantMask{1} << i)) != 0 &&
           selectorMatchesElement(descendantSubjectAt(i), tagName, classAttr)) {
-        result.applyOver(stylePool_[descendantEntries_[i].styleIndex]);
+        const DescendantEntry& entry = descendantEntries_[i];
+        applyRule(entry.styleIndex, entry.ancestorOffset, true, entry.specificity, entry.sourceOrder);
       }
     }
   }
 
-  if (classAttr.empty()) return result;
-
-  // TODO: Support combinations of classes (e.g. style on .class1.class2)
-  // 3. Apply class styles (medium priority).
-  forEachDelimitedToken(classAttr, isCssWhitespace, [&](std::string_view cls) {
-    if (const CssStyle* style = findStyle(".", cls)) {
-      result.applyOver(*style);
-    }
-  });
-
-  // TODO: Support combinations of classes (e.g. style on p.class1.class2)
-  // 4. Apply element.class styles (higher priority).
-  forEachDelimitedToken(classAttr, isCssWhitespace, [&](std::string_view cls) {
-    if (const CssStyle* style = findStyle(tagName, ".", cls)) {
-      result.applyOver(*style);
-    }
-  });
+  if (!classAttr.empty()) {
+    // TODO: Support combinations of classes (e.g. .class1.class2).
+    forEachDelimitedToken(classAttr, isCssWhitespace, [&](std::string_view cls) {
+      if (const SelectorEntry* entry = findEntry(".", cls)) {
+        applyRule(entry->styleIndex, entry->offset, false, entry->specificity, entry->sourceOrder);
+      }
+      if (const SelectorEntry* entry = findEntry(tagName, ".", cls)) {
+        applyRule(entry->styleIndex, entry->offset, false, entry->specificity, entry->sourceOrder);
+      }
+    });
+  }
 
   return result;
 }
@@ -1221,6 +1560,7 @@ CssParser::CacheStatus CssParser::inspectCache() const {
     return static_cast<size_t>(file.available()) >= byteCount && file.seekCur(byteCount);
   };
   size_t selectorBytes = 0;
+  size_t propertyOrderOverrides = 0;
   for (uint16_t i = 0; i < ruleCount; ++i) {
     uint16_t selectorLen = 0;
     if (file.read(&selectorLen, sizeof(selectorLen)) != sizeof(selectorLen) || selectorLen == 0 ||
@@ -1228,7 +1568,18 @@ CssParser::CacheStatus CssParser::inspectCache() const {
       return CacheStatus::Invalid;
     }
     selectorBytes += selectorLen;
-    if (selectorBytes > SELECTOR_POOL_CAP || !skipBytes(static_cast<size_t>(selectorLen) + STYLE_WIRE_BYTES)) {
+    if (selectorBytes > SELECTOR_POOL_CAP ||
+        !skipBytes(static_cast<size_t>(selectorLen) + STYLE_WIRE_BYTES + RULE_CASCADE_FIXED_WIRE_BYTES)) {
+      return CacheStatus::Invalid;
+    }
+    uint8_t overrideCount = 0;
+    if (file.read(&overrideCount, sizeof(overrideCount)) != sizeof(overrideCount) ||
+        overrideCount > CSS_PROPERTY_COUNT) {
+      return CacheStatus::Invalid;
+    }
+    propertyOrderOverrides += overrideCount;
+    if (propertyOrderOverrides > MAX_PROPERTY_ORDER_OVERRIDES ||
+        !skipBytes(static_cast<size_t>(overrideCount) * PROPERTY_ORDER_WIRE_BYTES)) {
       return CacheStatus::Invalid;
     }
   }
@@ -1263,6 +1614,23 @@ bool CssParser::saveToCache(const bool complete) const {
     }
   };
   const auto writeByte = [&writeBytes](const uint8_t value) { writeBytes(&value, sizeof(value)); };
+  const auto writeCascade = [this, &writeBytes, &writeByte](const uint32_t selectorOffset, const bool descendant,
+                                                            const uint16_t specificity, const uint16_t sourceOrder) {
+    writeBytes(&specificity, sizeof(specificity));
+    writeBytes(&sourceOrder, sizeof(sourceOrder));
+    uint8_t overrideCount = 0;
+    for (uint16_t i = 0; i < propertyOrderOverrideCount_; ++i) {
+      const PropertyOrderOverride& entry = propertyOrderOverrides_[i];
+      if (entry.selectorOffset == selectorOffset && entry.descendant == descendant) ++overrideCount;
+    }
+    writeByte(overrideCount);
+    for (uint16_t i = 0; i < propertyOrderOverrideCount_; ++i) {
+      const PropertyOrderOverride& entry = propertyOrderOverrides_[i];
+      if (entry.selectorOffset != selectorOffset || entry.descendant != descendant) continue;
+      writeByte(entry.property);
+      writeBytes(&entry.sourceOrder, sizeof(entry.sourceOrder));
+    }
+  };
 
   writeByte(CssParser::CSS_CACHE_VERSION);
 
@@ -1285,6 +1653,7 @@ bool CssParser::saveToCache(const bool complete) const {
     uint8_t styleWire[STYLE_WIRE_BYTES];
     encodeStyleWire(stylePool_[entries_[i].styleIndex], styleWire);
     writeBytes(styleWire, sizeof(styleWire));
+    writeCascade(entries_[i].offset, false, entries_[i].specificity, entries_[i].sourceOrder);
     if (!writeOk) break;
   }
 
@@ -1303,6 +1672,8 @@ bool CssParser::saveToCache(const bool complete) const {
     uint8_t styleWire[STYLE_WIRE_BYTES];
     encodeStyleWire(stylePool_[descendantEntries_[i].styleIndex], styleWire);
     writeBytes(styleWire, sizeof(styleWire));
+    writeCascade(descendantEntries_[i].ancestorOffset, true, descendantEntries_[i].specificity,
+                 descendantEntries_[i].sourceOrder);
   }
 
   if (!writeOk || !file.close()) {
@@ -1431,6 +1802,36 @@ CssParser::CacheLoadResult CssParser::loadFromCache() {
       return CacheLoadResult::Invalid;
     }
 
+    uint16_t cachedSpecificity = 0;
+    uint16_t sourceOrder = 0;
+    if (file.read(&cachedSpecificity, sizeof(cachedSpecificity)) != sizeof(cachedSpecificity) ||
+        file.read(&sourceOrder, sizeof(sourceOrder)) != sizeof(sourceOrder)) {
+      clear();
+      return CacheLoadResult::Invalid;
+    }
+    uint8_t overrideCount = 0;
+    std::array<uint8_t, CSS_PROPERTY_COUNT> overrideProperties{};
+    std::array<uint16_t, CSS_PROPERTY_COUNT> overrideOrders{};
+    std::array<bool, CSS_PROPERTY_COUNT> seenOverride{};
+    if (file.read(&overrideCount, sizeof(overrideCount)) != sizeof(overrideCount) ||
+        overrideCount > CSS_PROPERTY_COUNT) {
+      clear();
+      return CacheLoadResult::Invalid;
+    }
+    for (uint8_t overrideIndex = 0; overrideIndex < overrideCount; ++overrideIndex) {
+      uint8_t property = 0;
+      uint16_t order = 0;
+      if (file.read(&property, sizeof(property)) != sizeof(property) ||
+          file.read(&order, sizeof(order)) != sizeof(order) || property >= CSS_PROPERTY_COUNT ||
+          seenOverride[property] || order < sourceOrder || !styleDefinesProperty(style, property)) {
+        clear();
+        return CacheLoadResult::Invalid;
+      }
+      seenOverride[property] = true;
+      overrideProperties[overrideIndex] = property;
+      overrideOrders[overrideIndex] = order;
+    }
+
     const std::string_view selector(selectorBuffer.get(), selectorLen);
     std::string_view parts[3];
     size_t partCount = 0;
@@ -1442,8 +1843,15 @@ CssParser::CacheLoadResult CssParser::loadFromCache() {
       clear();
       return CacheLoadResult::Invalid;
     }
-    const RuleInsertResult insertResult =
-        partCount == 2 ? insertOrMergeDescendant(parts[0], parts[1], style) : insertOrMerge(parts[0], style);
+    const uint16_t expectedSpecificity =
+        partCount == 2 ? descendantSpecificity(parts[0], parts[1]) : selectorSpecificity(parts[0]);
+    if (cachedSpecificity != expectedSpecificity) {
+      clear();
+      return CacheLoadResult::Invalid;
+    }
+    const RuleInsertResult insertResult = partCount == 2
+                                              ? insertOrMergeDescendant(parts[0], parts[1], style, sourceOrder)
+                                              : insertOrMerge(parts[0], style, sourceOrder);
     if (insertResult == RuleInsertResult::OutOfMemory) {
       clear();
       return CacheLoadResult::LowMemory;
@@ -1457,6 +1865,32 @@ CssParser::CacheLoadResult CssParser::loadFromCache() {
       clear();
       return CacheLoadResult::Invalid;
     }
+    const bool descendant = partCount == 2;
+    uint32_t selectorOffset = 0;
+    if (descendant) {
+      selectorOffset = descendantEntries_[descendantEntryCount_ - 1].ancestorOffset;
+    } else {
+      const SelectorEntry* inserted = findEntry(parts[0]);
+      if (!inserted) {
+        clear();
+        return CacheLoadResult::Invalid;
+      }
+      selectorOffset = inserted->offset;
+    }
+    for (uint8_t overrideIndex = 0; overrideIndex < overrideCount; ++overrideIndex) {
+      const PoolResult overrideResult = recordPropertyOrder(
+          selectorOffset, descendant, overrideProperties[overrideIndex], overrideOrders[overrideIndex]);
+      if (overrideResult != PoolResult::Ready) {
+        clear();
+        return overrideResult == PoolResult::OutOfMemory ? CacheLoadResult::LowMemory : CacheLoadResult::Invalid;
+      }
+      const uint16_t overrideOrder = overrideOrders[overrideIndex];
+      nextSourceOrder_ = overrideOrder == UINT16_MAX
+                             ? UINT16_MAX
+                             : std::max(nextSourceOrder_, static_cast<uint16_t>(overrideOrder + 1));
+    }
+    nextSourceOrder_ =
+        sourceOrder == UINT16_MAX ? UINT16_MAX : std::max(nextSourceOrder_, static_cast<uint16_t>(sourceOrder + 1));
   }
 
   if (file.available() != 0) {

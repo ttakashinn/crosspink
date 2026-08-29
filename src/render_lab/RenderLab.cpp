@@ -63,6 +63,9 @@ struct State {
   uint16_t maxImageSourceHeight = 0;
   uint16_t maxImageDisplayWidth = 0;
   uint16_t maxImageDisplayHeight = 0;
+  uint16_t focusLtrSplitCount = 0;
+  uint16_t focusRtlSplitCount = 0;
+  uint16_t focusZeroOffsetCount = 0;
 };
 
 State state;
@@ -222,12 +225,23 @@ void configureSettings(CrossPointSettings& settings) {
   settings.fontFamily = CrossPointSettings::NOTOSERIF;
   settings.fontPointSize = static_cast<uint8_t>(envInt("CROSSPOINT_RENDER_LAB_FONT_SIZE", 14));
   settings.lineSpacing = CrossPointSettings::NORMAL;
-  settings.paragraphAlignment = CrossPointSettings::JUSTIFIED;
+  const char* paragraphAlignment = envOr("CROSSPOINT_RENDER_LAB_PARAGRAPH_ALIGNMENT", "justified");
+  if (std::strcmp(paragraphAlignment, "left") == 0) {
+    settings.paragraphAlignment = CrossPointSettings::LEFT_ALIGN;
+  } else if (std::strcmp(paragraphAlignment, "center") == 0) {
+    settings.paragraphAlignment = CrossPointSettings::CENTER_ALIGN;
+  } else if (std::strcmp(paragraphAlignment, "right") == 0) {
+    settings.paragraphAlignment = CrossPointSettings::RIGHT_ALIGN;
+  } else if (std::strcmp(paragraphAlignment, "book") == 0) {
+    settings.paragraphAlignment = CrossPointSettings::BOOK_STYLE;
+  } else {
+    settings.paragraphAlignment = CrossPointSettings::JUSTIFIED;
+  }
   settings.screenMargin = static_cast<uint8_t>(envInt("CROSSPOINT_RENDER_LAB_SCREEN_MARGIN", 5));
-  settings.extraParagraphSpacing = 1;
+  settings.extraParagraphSpacing = envBool("CROSSPOINT_RENDER_LAB_EXTRA_PARAGRAPH_SPACING", true) ? 1 : 0;
   settings.hyphenationEnabled = 0;
   settings.imageRendering = CrossPointSettings::IMAGES_DISPLAY;
-  settings.focusReadingEnabled = 0;
+  settings.focusReadingEnabled = envBool("CROSSPOINT_RENDER_LAB_FOCUS_READING", false) ? 1 : 0;
   settings.screenInverted = 0;
   settings.fadingFix = 0;
   settings.statusBarClock = CrossPointSettings::STATUS_BAR_CLOCK_HIDE;
@@ -248,6 +262,12 @@ void recordAnchorResolution(const char*, const bool resolved) {
 
 void recordSectionCacheHit(const bool hit) {
   if (enabled()) state.sectionCacheHit = hit;
+}
+
+void recordFocusSplit(const bool rtl, const uint16_t runOffset) {
+  if (!enabled()) return;
+  rtl ? state.focusRtlSplitCount++ : state.focusLtrSplitCount++;
+  if (runOffset == 0) state.focusZeroOffsetCount++;
 }
 
 void recordTableStarted() {
@@ -377,6 +397,15 @@ void recordTimings(const unsigned long prewarmMs, const unsigned long bwRenderMs
   result["text_antialiasing"] = envBool("CROSSPOINT_RENDER_LAB_TEXT_AA", true);
   result["embedded_styles"] =
       renderMode == EpubRenderMode::Safe ? false : envBool("CROSSPOINT_RENDER_LAB_EMBEDDED_STYLES", true);
+  result["paragraph_alignment"] = envOr("CROSSPOINT_RENDER_LAB_PARAGRAPH_ALIGNMENT", "justified");
+  result["extra_paragraph_spacing"] = envBool("CROSSPOINT_RENDER_LAB_EXTRA_PARAGRAPH_SPACING", true);
+  result["focus_reading"] = envBool("CROSSPOINT_RENDER_LAB_FOCUS_READING", false);
+  if (state.focusLtrSplitCount > 0 || state.focusRtlSplitCount > 0) {
+    JsonObject focusLayout = result["focus_layout"].to<JsonObject>();
+    focusLayout["ltr_splits"] = state.focusLtrSplitCount;
+    focusLayout["rtl_splits"] = state.focusRtlSplitCount;
+    focusLayout["zero_offsets"] = state.focusZeroOffsetCount;
+  }
   if (renderMode == EpubRenderMode::Safe) result["render_mode"] = epubRenderModeName(renderMode);
   if (envBool("CROSSPOINT_RENDER_LAB_FORCE_BUILD_LOW_MEMORY", false)) {
     result["section_cache_hit"] = state.sectionCacheHit;

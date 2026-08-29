@@ -162,7 +162,12 @@ struct PixelCache {
         return false;
       }
     }
-    file.close();
+    file.flush();
+    if (!file.close()) {
+      LOG_ERR("IMG", "Failed to finalize cache file: %s", cachePathStr.c_str());
+      abort();
+      return false;
+    }
     LOG_DBG("IMG", "Cache written: %s (%dx%d, %u bytes)", cachePathStr.c_str(), width, height,
             static_cast<unsigned>(pixel_cache_format::HEADER_SIZE + bytesPerRow * height));
     ok = false;  // file handed off; nothing left to clean up

@@ -127,8 +127,14 @@ def load_and_validate_manifest() -> dict[str, Any]:
         require_keys(profile["viewport"], ("width", "height"), f"viewport của {profile['id']}")
         if profile["orientation"] != "portrait":
             raise RenderLabError(f"Giai đoạn 1 chỉ khóa orientation=portrait: {profile['id']}")
+        if profile["paragraph_alignment"] not in {"justified", "left", "center", "right", "book"}:
+            raise RenderLabError(f"Profile {profile['id']} có paragraph_alignment không hợp lệ")
         if "force_build_low_memory" in profile and not isinstance(profile["force_build_low_memory"], bool):
             raise RenderLabError(f"Profile {profile['id']} có force_build_low_memory không hợp lệ")
+        if "focus_reading" in profile and not isinstance(profile["focus_reading"], bool):
+            raise RenderLabError(f"Profile {profile['id']} có focus_reading không hợp lệ")
+        if "extra_paragraph_spacing" in profile and not isinstance(profile["extra_paragraph_spacing"], bool):
+            raise RenderLabError(f"Profile {profile['id']} có extra_paragraph_spacing không hợp lệ")
         sd_font_fixture = profile.get("sd_font_fixture")
         sd_font_family = profile.get("sd_font_family")
         if (sd_font_fixture is None) != (sd_font_family is None):
@@ -314,7 +320,12 @@ def render_process(case: RenderCase, sd_root: Path, output_dir: Path, cache_stat
             "CROSSPOINT_RENDER_LAB_TEXT_AA": "1" if profile["text_antialiasing"] else "0",
             "CROSSPOINT_RENDER_LAB_EMBEDDED_STYLES": "1" if profile["embedded_styles"] else "0",
             "CROSSPOINT_RENDER_LAB_FONT_SIZE": str(profile["font_point_size"]),
+            "CROSSPOINT_RENDER_LAB_PARAGRAPH_ALIGNMENT": profile["paragraph_alignment"],
             "CROSSPOINT_RENDER_LAB_SCREEN_MARGIN": str(profile["screen_margin"]),
+            "CROSSPOINT_RENDER_LAB_FOCUS_READING": "1" if profile.get("focus_reading", False) else "0",
+            "CROSSPOINT_RENDER_LAB_EXTRA_PARAGRAPH_SPACING": (
+                "1" if profile.get("extra_paragraph_spacing", True) else "0"
+            ),
             "CROSSPOINT_RENDER_LAB_SD_FONT_FAMILY": profile.get("sd_font_family", ""),
             "CROSSPOINT_RENDER_LAB_FORCE_BUILD_LOW_MEMORY": (
                 "1" if profile.get("force_build_low_memory", False) else "0"
@@ -483,7 +494,7 @@ def parse_args() -> argparse.Namespace:
     subparsers.add_parser("validate", help="Kiểm tra fixture, schema và simulator pin")
 
     verify = subparsers.add_parser("verify", help="Build simulator và so sánh golden")
-    verify.add_argument("--suite", choices=("smoke", "full", "font", "safe"), default="smoke")
+    verify.add_argument("--suite", choices=("smoke", "full", "css", "font", "safe", "focus"), default="smoke")
     verify.add_argument("--accept", action="store_true", help="Ghi output đã review thành golden mới")
     verify.add_argument("--runs", type=int, default=2, help="Số lần chạy độc lập để kiểm tra tính tất định")
     verify.add_argument("--no-build", action="store_true", help="Dùng simulator binary đã build")

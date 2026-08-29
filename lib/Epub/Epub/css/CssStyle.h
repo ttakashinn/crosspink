@@ -1,6 +1,9 @@
 #pragma once
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
+#include <limits>
 
 // Matches order of PARAGRAPH_ALIGNMENT in CrossPointSettings
 enum class CssTextAlign : uint8_t { Justify = 0, Left = 1, Center = 2, Right = 3, None = 4 };
@@ -42,7 +45,10 @@ struct CssLength {
 
   // Resolve to int16_t pixels (for BlockStyle fields)
   [[nodiscard]] int16_t toPixelsInt16(const float emSize, const float containerWidth = 0) const {
-    return static_cast<int16_t>(toPixels(emSize, containerWidth));
+    const float pixels = toPixels(emSize, containerWidth);
+    if (!std::isfinite(pixels)) return 0;
+    return static_cast<int16_t>(std::clamp(pixels, static_cast<float>(std::numeric_limits<int16_t>::min()),
+                                           static_cast<float>(std::numeric_limits<int16_t>::max())));
   }
 };
 
@@ -170,93 +176,127 @@ struct CssStyle {
   CssPageBreak pageBreakAfter = CssPageBreak::Auto;
 
   CssPropertyFlags defined;  // Tracks which properties were explicitly set
+  // Same property indices as the CSS cache (0..20). Keeping importance in one
+  // mask adds only 4 bytes per interned style while making the cascade correct.
+  uint32_t importantBits = 0;
+
+  [[nodiscard]] bool isImportant(const uint8_t property) const {
+    return property < 32 && (importantBits & (uint32_t{1} << property)) != 0;
+  }
+
+  void setImportant(const uint8_t property, const bool important) {
+    if (property >= 32) return;
+    const uint32_t bit = uint32_t{1} << property;
+    importantBits = important ? importantBits | bit : importantBits & ~bit;
+  }
 
   // Apply properties from another style, only overwriting if the other style
   // has that property explicitly defined
   void applyOver(const CssStyle& base) {
-    if (base.hasTextAlign()) {
+    if (base.hasTextAlign() && (base.isImportant(0) || !isImportant(0))) {
       textAlign = base.textAlign;
       defined.textAlign = 1;
+      setImportant(0, base.isImportant(0));
     }
-    if (base.hasFontStyle()) {
+    if (base.hasFontStyle() && (base.isImportant(1) || !isImportant(1))) {
       fontStyle = base.fontStyle;
       defined.fontStyle = 1;
+      setImportant(1, base.isImportant(1));
     }
-    if (base.hasFontWeight()) {
+    if (base.hasFontWeight() && (base.isImportant(2) || !isImportant(2))) {
       fontWeight = base.fontWeight;
       defined.fontWeight = 1;
+      setImportant(2, base.isImportant(2));
     }
-    if (base.hasFontVariantCaps()) {
+    if (base.hasFontVariantCaps() && (base.isImportant(20) || !isImportant(20))) {
       fontVariantCaps = base.fontVariantCaps;
       defined.fontVariantCaps = 1;
+      setImportant(20, base.isImportant(20));
     }
-    if (base.hasTextDecoration()) {
+    if (base.hasTextDecoration() && (base.isImportant(3) || !isImportant(3))) {
       textDecoration = base.textDecoration;
       defined.textDecoration = 1;
+      setImportant(3, base.isImportant(3));
     }
-    if (base.hasTextIndent()) {
+    if (base.hasTextIndent() && (base.isImportant(4) || !isImportant(4))) {
       textIndent = base.textIndent;
       defined.textIndent = 1;
+      setImportant(4, base.isImportant(4));
     }
-    if (base.hasMarginTop()) {
+    if (base.hasMarginTop() && (base.isImportant(5) || !isImportant(5))) {
       marginTop = base.marginTop;
       defined.marginTop = 1;
+      setImportant(5, base.isImportant(5));
     }
-    if (base.hasMarginBottom()) {
+    if (base.hasMarginBottom() && (base.isImportant(6) || !isImportant(6))) {
       marginBottom = base.marginBottom;
       defined.marginBottom = 1;
+      setImportant(6, base.isImportant(6));
     }
-    if (base.hasMarginLeft()) {
+    if (base.hasMarginLeft() && (base.isImportant(7) || !isImportant(7))) {
       marginLeft = base.marginLeft;
       defined.marginLeft = 1;
+      setImportant(7, base.isImportant(7));
     }
-    if (base.hasMarginRight()) {
+    if (base.hasMarginRight() && (base.isImportant(8) || !isImportant(8))) {
       marginRight = base.marginRight;
       defined.marginRight = 1;
+      setImportant(8, base.isImportant(8));
     }
-    if (base.hasPaddingTop()) {
+    if (base.hasPaddingTop() && (base.isImportant(9) || !isImportant(9))) {
       paddingTop = base.paddingTop;
       defined.paddingTop = 1;
+      setImportant(9, base.isImportant(9));
     }
-    if (base.hasPaddingBottom()) {
+    if (base.hasPaddingBottom() && (base.isImportant(10) || !isImportant(10))) {
       paddingBottom = base.paddingBottom;
       defined.paddingBottom = 1;
+      setImportant(10, base.isImportant(10));
     }
-    if (base.hasPaddingLeft()) {
+    if (base.hasPaddingLeft() && (base.isImportant(11) || !isImportant(11))) {
       paddingLeft = base.paddingLeft;
       defined.paddingLeft = 1;
+      setImportant(11, base.isImportant(11));
     }
-    if (base.hasPaddingRight()) {
+    if (base.hasPaddingRight() && (base.isImportant(12) || !isImportant(12))) {
       paddingRight = base.paddingRight;
       defined.paddingRight = 1;
+      setImportant(12, base.isImportant(12));
     }
-    if (base.hasImageHeight()) {
+    if (base.hasImageHeight() && (base.isImportant(13) || !isImportant(13))) {
       imageHeight = base.imageHeight;
       defined.imageHeight = 1;
+      setImportant(13, base.isImportant(13));
     }
-    if (base.hasImageWidth()) {
+    if (base.hasImageWidth() && (base.isImportant(14) || !isImportant(14))) {
       imageWidth = base.imageWidth;
       defined.imageWidth = 1;
+      setImportant(14, base.isImportant(14));
     }
-    if (base.hasDisplay()) {
+    if (base.hasDisplay() && (base.isImportant(15) || !isImportant(15))) {
       display = base.display;
       defined.display = 1;
+      setImportant(15, base.isImportant(15));
     }
-    if (base.hasDirection()) {
+    if (base.hasDirection() && (base.isImportant(16) || !isImportant(16))) {
       direction = base.direction;
       defined.direction = 1;
+      setImportant(16, base.isImportant(16));
     }
-    if (base.hasVerticalAlign()) {
+    if (base.hasVerticalAlign() && (base.isImportant(17) || !isImportant(17))) {
       verticalAlign = base.verticalAlign;
       defined.verticalAlign = 1;
+      setImportant(17, base.isImportant(17));
     }
-    if (base.hasPageBreakBefore()) {
+    if (base.hasPageBreakBefore() && (base.isImportant(18) || !isImportant(18))) {
       pageBreakBefore = base.pageBreakBefore;
       defined.pageBreakBefore = 1;
+      setImportant(18, base.isImportant(18));
     }
-    if (base.hasPageBreakAfter()) {
+    if (base.hasPageBreakAfter() && (base.isImportant(19) || !isImportant(19))) {
       pageBreakAfter = base.pageBreakAfter;
       defined.pageBreakAfter = 1;
+      setImportant(19, base.isImportant(19));
     }
   }
 
@@ -298,5 +338,6 @@ struct CssStyle {
     pageBreakBefore = CssPageBreak::Auto;
     pageBreakAfter = CssPageBreak::Auto;
     defined.clearAll();
+    importantBits = 0;
   }
 };

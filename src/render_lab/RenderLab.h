@@ -19,6 +19,7 @@ bool requiresFullBuild();
 void configureSettings(CrossPointSettings& settings);
 void recordAnchorResolution(const char* anchor, bool resolved);
 void recordSectionCacheHit(bool hit);
+void recordFocusSplit(bool rtl, uint16_t runOffset);
 void recordTableStarted();
 void recordTableRowStarted(uint16_t pageIndex);
 void recordTableCellStarted();

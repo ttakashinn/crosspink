@@ -39,7 +39,7 @@ class TxtReaderActivity final : public ReaderActivity {
   void buildPageIndex(GfxRenderer& renderer);
   bool loadPageIndexCache();
   void savePageIndexCache() const;
-  bool saveProgress();
+  bool saveProgress(int page);
   void queueProgressSave();
   void flushReaderState() override;
   void requestProgressSaveIfDue() override;

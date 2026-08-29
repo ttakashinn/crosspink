@@ -24,7 +24,7 @@ class XtcReaderActivity final : public ReaderActivity {
   void openChapterSelection();
   void renderStatusBarOverlay(GfxRenderer& renderer, StatusBarOverlayPosition position) const;
   StatusBarInfo getStatusBarInfo() const;
-  bool saveProgress();
+  bool saveProgress(uint32_t page);
   void queueProgressSave();
   void flushReaderState() override;
   void requestProgressSaveIfDue() override;

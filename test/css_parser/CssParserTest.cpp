@@ -130,6 +130,128 @@ TEST_F(CssParserTest, ResolvesBoundedTwoPartDescendantSelectors) {
   EXPECT_FALSE(parser.resolveStyle("p", "target").hasFontWeight());
 }
 
+TEST_F(CssParserTest, CascadeUsesSpecificityBeforeSourceOrder) {
+  CssParser parser(cachePath());
+  ASSERT_EQ(loadCss(parser,
+                    ".chapter .target { text-align: center; }\n"
+                    ".target { text-align: right; }\n"),
+            CssParser::ParseResult::Complete);
+
+  const auto chapterMask = parser.matchingAncestorMask("section", "chapter");
+  ASSERT_NE(chapterMask, 0u);
+  EXPECT_EQ(parser.resolveStyle("p", "target", chapterMask).textAlign, CssTextAlign::Center);
+}
+
+TEST_F(CssParserTest, EqualSpecificityUsesStylesheetOrderNotClassAttributeOrder) {
+  CssParser parser(cachePath());
+  ASSERT_EQ(loadCss(parser,
+                    ".first { text-align: center; font-style: italic; }\n"
+                    ".second { text-align: right; font-style: normal; }\n"),
+            CssParser::ParseResult::Complete);
+
+  for (const char* classes : {"first second", "second first"}) {
+    const CssStyle style = parser.resolveStyle("p", classes);
+    EXPECT_EQ(style.textAlign, CssTextAlign::Right) << classes;
+    EXPECT_EQ(style.fontStyle, CssFontStyle::Normal) << classes;
+  }
+}
+
+TEST_F(CssParserTest, MergedSelectorPreservesPerPropertySourceOrderAcrossCacheRoundTrip) {
+  CssParser writer(cachePath());
+  ASSERT_EQ(loadCss(writer,
+                    ".a { font-weight: bold; }\n"
+                    ".b { font-weight: normal; }\n"
+                    ".a { margin-top: 2em; }\n"),
+            CssParser::ParseResult::Complete);
+
+  const auto expectCascade = [](const CssParser& parser) {
+    for (const char* classes : {"a b", "b a"}) {
+      const CssStyle style = parser.resolveStyle("p", classes);
+      EXPECT_EQ(style.fontWeight, CssFontWeight::Normal) << classes;
+      ASSERT_TRUE(style.hasMarginTop()) << classes;
+      EXPECT_FLOAT_EQ(style.marginTop.value, 2.0f) << classes;
+    }
+  };
+  expectCascade(writer);
+
+  ASSERT_TRUE(writer.saveToCache(true));
+  CssParser reader(cachePath());
+  ASSERT_EQ(reader.loadFromCache(), CssParser::CacheLoadResult::Complete);
+  expectCascade(reader);
+}
+
+TEST_F(CssParserTest, ImportantBeatsSpecificityAndSurvivesCacheRoundTrip) {
+  CssParser writer(cachePath());
+  ASSERT_EQ(loadCss(writer,
+                    ".target { font-weight: bold !important; text-align: center ! important; }\n"
+                    "p.target { font-weight: normal; text-align: right; }\n"),
+            CssParser::ParseResult::Complete);
+
+  const auto expectImportant = [](const CssParser& parser) {
+    const CssStyle style = parser.resolveStyle("p", "target");
+    EXPECT_EQ(style.fontWeight, CssFontWeight::Bold);
+    EXPECT_EQ(style.textAlign, CssTextAlign::Center);
+    EXPECT_TRUE(style.isImportant(2));
+    EXPECT_TRUE(style.isImportant(0));
+  };
+  expectImportant(writer);
+
+  ASSERT_TRUE(writer.saveToCache(true));
+  CssParser reader(cachePath());
+  ASSERT_EQ(reader.loadFromCache(), CssParser::CacheLoadResult::Complete);
+  expectImportant(reader);
+}
+
+TEST_F(CssParserTest, LaterNormalDuplicateCannotAdvanceAnImportantDeclaration) {
+  CssParser parser(cachePath());
+  ASSERT_EQ(loadCss(parser,
+                    ".a { font-weight: bold !important; }\n"
+                    ".b { font-weight: normal !important; }\n"
+                    ".a { font-weight: normal; margin-top: 2em; }\n"),
+            CssParser::ParseResult::Complete);
+
+  for (const char* classes : {"a b", "b a"}) {
+    const CssStyle style = parser.resolveStyle("p", classes);
+    EXPECT_EQ(style.fontWeight, CssFontWeight::Normal) << classes;
+    ASSERT_TRUE(style.hasMarginTop()) << classes;
+    EXPECT_FLOAT_EQ(style.marginTop.value, 2.0f) << classes;
+  }
+}
+
+TEST_F(CssParserTest, ImportantAppliesAcrossStylesheetAndInlineLayers) {
+  CssParser parser(cachePath());
+  ASSERT_EQ(loadCss(parser, ".target { font-style: italic !important; }\n"), CssParser::ParseResult::Complete);
+
+  CssStyle combined = parser.resolveStyle("span", "target");
+  combined.applyOver(CssParser::parseInlineStyle("font-style: normal"));
+  EXPECT_EQ(combined.fontStyle, CssFontStyle::Italic);
+
+  combined.applyOver(CssParser::parseInlineStyle("font-style: normal !important"));
+  EXPECT_EQ(combined.fontStyle, CssFontStyle::Normal);
+}
+
+TEST_F(CssParserTest, InvalidValuesAndUnknownUnitsDoNotEraseEarlierValidDeclarations) {
+  CssParser parser(cachePath());
+  ASSERT_EQ(loadCss(parser,
+                    ".a { margin-top: 2em; margin-top: 8ch; font-weight: bold; font-weight: heavy; "
+                    "display: none; display: mystery; padding: 1em bogus; }\n"
+                    ".auto-margin { margin: 1em auto 2em; }\n"),
+            CssParser::ParseResult::Complete);
+
+  const CssStyle style = parser.resolveStyle("p", "a");
+  ASSERT_TRUE(style.hasMarginTop());
+  EXPECT_FLOAT_EQ(style.marginTop.value, 2.0f);
+  EXPECT_EQ(style.fontWeight, CssFontWeight::Bold);
+  EXPECT_EQ(style.display, CssDisplay::None);
+  EXPECT_FALSE(style.hasPaddingTop());
+
+  const CssStyle autoMargin = parser.resolveStyle("p", "auto-margin");
+  EXPECT_FLOAT_EQ(autoMargin.marginTop.value, 1.0f);
+  EXPECT_FLOAT_EQ(autoMargin.marginRight.value, 0.0f);
+  EXPECT_FLOAT_EQ(autoMargin.marginBottom.value, 2.0f);
+  EXPECT_FLOAT_EQ(autoMargin.marginLeft.value, 0.0f);
+}
+
 TEST_F(CssParserTest, RejectsUnsupportedDescendantSyntax) {
   CssParser parser(cachePath());
   ASSERT_EQ(loadCss(parser,

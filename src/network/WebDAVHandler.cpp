@@ -534,7 +534,14 @@ void WebDAVHandler::handleMove(WebServer& s) {
   }
 
   if (dstExists) {
-    Storage.remove(dstPath.c_str());
+    if (!Storage.remove(dstPath.c_str())) {
+      s.send(500, "text/plain", "Failed to remove destination");
+      return;
+    }
+    // The overwritten book no longer owns its path-keyed cache. Remove it only
+    // after deleting the destination succeeds, so a failed overwrite never
+    // discards recoverable reading state.
+    clearBookCache(dstPath.c_str());
   }
 
   HalFile file = Storage.open(srcPath.c_str());
@@ -543,9 +550,8 @@ void WebDAVHandler::handleMove(WebServer& s) {
     return;
   }
 
-  clearBookCache(srcPath.c_str());
-  bool success = file.rename(dstPath.c_str());
   file.close();
+  bool success = moveBookWithCache(srcPath.c_str(), dstPath.c_str());
 
   if (success) {
     s.send(dstExists ? 204 : 201);

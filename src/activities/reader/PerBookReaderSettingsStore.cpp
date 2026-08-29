@@ -61,11 +61,14 @@ LoadStatus load(const std::string& cachePath, PerBookReaderSettings& settings) {
       std::pair{pathFor(cachePath, ".bak"), LoadStatus::LOADED_BACKUP},
       std::pair{pathFor(cachePath, ".tmp"), LoadStatus::LOADED_TEMP},
   };
+  std::array<PerBookReaderSettings, 3> decoded{};
+  std::array<ReadStatus, 3> statuses{};
   bool anyInvalid = false;
-  for (const auto& [path, loaded] : candidates) {
-    switch (read(path, settings)) {
+  for (size_t i = 0; i < candidates.size(); ++i) {
+    statuses[i] = read(candidates[i].first, decoded[i]);
+    switch (statuses[i]) {
       case ReadStatus::OK:
-        return loaded;
+        break;
       case ReadStatus::NEWER_VERSION:
         return LoadStatus::NEWER_VERSION;
       case ReadStatus::IO_ERROR:
@@ -75,6 +78,15 @@ LoadStatus load(const std::string& cachePath, PerBookReaderSettings& settings) {
         break;
       case ReadStatus::MISSING:
         break;
+    }
+  }
+  // Inspect every recoverable generation before selecting one. Otherwise an
+  // older canonical file could hide a newer backup/temp format that save()
+  // would later refuse to overwrite.
+  for (size_t i = 0; i < candidates.size(); ++i) {
+    if (statuses[i] == ReadStatus::OK) {
+      settings = decoded[i];
+      return candidates[i].second;
     }
   }
   return anyInvalid ? LoadStatus::INVALID : LoadStatus::MISSING;

@@ -9,6 +9,9 @@
 #include <cstring>
 
 #include "../../../../src/fontIds.h"
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+#include "render_lab/RenderLab.h"
+#endif
 
 size_t TextBlock::arenaSize(const uint16_t wordCount, const bool hasFocus, const uint16_t textBytes) {
   // Layout documented in TextBlock.h: 16-bit arrays first, then 8-bit arrays, then text.
@@ -26,7 +29,7 @@ void TextBlock::bindArenaPointers() {
   xposArr = reinterpret_cast<const int16_t*>(base + wc * 2);
   size_t off = wc * 4;
   if (focusPresent) {
-    focusSuffixXArr = reinterpret_cast<const uint16_t*>(base + off);
+    focusRunOffsetArr = reinterpret_cast<const uint16_t*>(base + off);
     off += wc * 2;
   }
   stylesArr = base + off;
@@ -40,7 +43,7 @@ void TextBlock::bindArenaPointers() {
 
 TextBlock::TextBlock(const std::vector<std::string>& words, const std::vector<int16_t>& wordXpos,
                      const std::vector<EpdFontFamily::Style>& wordStyles, const std::vector<uint8_t>& focusBoundary,
-                     const std::vector<uint16_t>& focusSuffixX, const BlockStyle& blockStyle,
+                     const std::vector<uint16_t>& focusRunOffset, const BlockStyle& blockStyle,
                      std::vector<std::string> rubyTexts)
     : blockStyle(blockStyle), rubyTexts(std::move(rubyTexts)) {
   // Same invariant as deserialize(): a block never holds an all-empty rubyTexts, so a
@@ -55,11 +58,11 @@ TextBlock::TextBlock(const std::vector<std::string>& words, const std::vector<in
   // When present, they must be sized in lockstep with words[].
   const bool hasFocus = !focusBoundary.empty();
   if (words.size() != wordXpos.size() || words.size() != wordStyles.size() || words.size() > 10000 ||
-      (hasFocus && (words.size() != focusBoundary.size() || words.size() != focusSuffixX.size()))) {
+      (hasFocus && (words.size() != focusBoundary.size() || words.size() != focusRunOffset.size()))) {
     LOG_ERR("TXB", "Construction failed: size mismatch (words=%u, xpos=%u, styles=%u, boundary=%u, suffixX=%u)",
             static_cast<uint32_t>(words.size()), static_cast<uint32_t>(wordXpos.size()),
             static_cast<uint32_t>(wordStyles.size()), static_cast<uint32_t>(focusBoundary.size()),
-            static_cast<uint32_t>(focusSuffixX.size()));
+            static_cast<uint32_t>(focusRunOffset.size()));
     isValid = false;
     return;
   }
@@ -110,10 +113,10 @@ TextBlock::TextBlock(const std::vector<std::string>& words, const std::vector<in
     text[off++] = '\0';
   }
   if (focusPresent) {
-    auto* suffixX = const_cast<uint16_t*>(focusSuffixXArr);
+    auto* runOffset = const_cast<uint16_t*>(focusRunOffsetArr);
     auto* boundary = const_cast<uint8_t*>(focusBoundaryArr);
     for (uint16_t i = 0; i < numWords; i++) {
-      suffixX[i] = focusSuffixX[i];
+      runOffset[i] = focusRunOffset[i];
       boundary[i] = focusBoundary[i];
     }
   }
@@ -222,6 +225,7 @@ void TextBlock::render(const GfxRenderer& renderer, const int fontId, const int 
     }
 
     const int drawX = wordX;
+    int focusedWordWidth = -1;
 
     if (boundary > 0) {
       // Focus split: draw bold prefix, then the regular suffix at a pre-computed x offset.
@@ -237,9 +241,19 @@ void TextBlock::render(const GfxRenderer& renderer, const int fontId, const int 
           std::min<size_t>({static_cast<size_t>(boundary), static_cast<size_t>(wordTextLen(i)), sizeof(boldBuf) - 1});
       memcpy(boldBuf, word, boldLen);
       boldBuf[boldLen] = '\0';
-      renderer.drawText(fontId, drawX, wordY, boldBuf, true, boldStyle, baseDir);
-      const int suffixX = drawX + focusSuffixXArr[i];
-      renderer.drawText(fontId, suffixX, wordY, word + boldLen, true, currentStyle, baseDir);
+      const int secondRunX = drawX + focusRunOffsetArr[i];
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+      render_lab::recordFocusSplit(baseDir == BidiUtils::BidiBaseDir::RTL, focusRunOffsetArr[i]);
+#endif
+      if (baseDir == BidiUtils::BidiBaseDir::RTL) {
+        renderer.drawText(fontId, drawX, wordY, word + boldLen, true, currentStyle, baseDir);
+        renderer.drawText(fontId, secondRunX, wordY, boldBuf, true, boldStyle, baseDir);
+        focusedWordWidth = focusRunOffsetArr[i] + renderer.getTextAdvanceX(fontId, boldBuf, boldStyle);
+      } else {
+        renderer.drawText(fontId, drawX, wordY, boldBuf, true, boldStyle, baseDir);
+        renderer.drawText(fontId, secondRunX, wordY, word + boldLen, true, currentStyle, baseDir);
+        focusedWordWidth = focusRunOffsetArr[i] + renderer.getTextAdvanceX(fontId, word + boldLen, currentStyle);
+      }
     } else {
       renderer.drawText(fontId, drawX, wordY, word, true, currentStyle, baseDir);
     }
@@ -258,9 +272,10 @@ void TextBlock::render(const GfxRenderer& renderer, const int fontId, const int 
 
     if (EpdFontFamily::hasTextDecoration(currentStyle)) {
       int lineStartX = drawX;
-      int lineWidth = renderer.getTextWidth(fontId, word, currentStyle, baseDir);
+      int lineWidth =
+          focusedWordWidth >= 0 ? focusedWordWidth : renderer.getTextWidth(fontId, word, currentStyle, baseDir);
 
-      if ((currentStyle & (EpdFontFamily::SUP | EpdFontFamily::SUB)) != 0) {
+      if (focusedWordWidth < 0 && (currentStyle & (EpdFontFamily::SUP | EpdFontFamily::SUB)) != 0) {
         lineWidth = (lineWidth + 1) / 2;
       }
 

@@ -17,7 +17,7 @@ void utf8TruncateChars(std::string& str, size_t numChars);
 // base letter followed by combining diacritical mark(s) into a single codepoint.
 // Needed because the device fonts have no combining-mark positioning, so text
 // stored in NFD (e.g. some EPUB chapter titles) otherwise renders broken.
-std::string utf8ComposeNfc(const std::string& in);
+std::string utf8ComposeNfc(std::string in);
 
 // Truncate a raw char buffer to the last complete UTF-8 codepoint boundary.
 // Returns the new length (<= len). If the buffer ends mid-sequence, the

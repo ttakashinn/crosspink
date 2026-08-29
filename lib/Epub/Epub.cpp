@@ -78,7 +78,7 @@ bool Epub::parseContentOpf(BookMetadataCache::BookMetadata& bookMetadata, const 
   // Grab data from opfParser into epub. Normalize titles to NFC so NFD (combining
   // mark) text renders correctly — the device fonts have no mark positioning.
   bookMetadata.title = utf8ComposeNfc(opfParser.title);
-  bookMetadata.author = opfParser.author;
+  bookMetadata.author = utf8ComposeNfc(opfParser.author);
   bookMetadata.language = opfParser.language;
   bookMetadata.coverItemHref = opfParser.coverItemHref;
 
@@ -417,7 +417,7 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss) {
   LOG_DBG("EBP", "Loading ePub: %s", filepath.c_str());
 
   // Initialize spine/TOC cache
-  bookMetadataCache.reset(new BookMetadataCache(cachePath));
+  bookMetadataCache.reset(new BookMetadataCache(cachePath, filepath));
   // Always create CssParser - needed for inline style parsing even without CSS files
   cssParser.reset(new CssParser(cachePath));
 
@@ -450,7 +450,7 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss) {
           cssParseResult = parseCssFiles(cacheStatus);
         }
         bookMetadataCache.reset();
-        bookMetadataCache.reset(new BookMetadataCache(cachePath));
+        bookMetadataCache.reset(new BookMetadataCache(cachePath, filepath));
         if (!bookMetadataCache->load()) {
           LOG_ERR("EBP", "Failed to reload cache after CSS rebuild");
           return false;
@@ -471,6 +471,21 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss) {
     cssParser->clear();
     LOG_DBG("EBP", "Loaded ePub: %s", filepath.c_str());
     return true;
+  }
+
+  const bool sourceMismatch = bookMetadataCache->hasSourceMismatch();
+
+  // A host may replace an EPUB while keeping the same path (USB Mass Storage,
+  // WebDAV overwrite, etc.). Generated pages and durable reader state belong to
+  // the old content in that case and must not be mixed with the new ZIP.
+  if (sourceMismatch && buildIfMissing) {
+    LOG_INF("EBP", "EPUB source fingerprint changed; invalidating path cache");
+    bookMetadataCache.reset();
+    cssParser.reset();
+    clearCache();
+    setupCacheDir();
+    bookMetadataCache.reset(new BookMetadataCache(cachePath, filepath));
+    cssParser.reset(new CssParser(cachePath));
   }
 
   // If we didn't load from cache above and we aren't allowed to build, fail now
@@ -568,7 +583,7 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss) {
   }
 
   // Reload the cache from disk so it's in the correct state
-  bookMetadataCache.reset(new BookMetadataCache(cachePath));
+  bookMetadataCache.reset(new BookMetadataCache(cachePath, filepath));
   if (!bookMetadataCache->load()) {
     LOG_ERR("EBP", "Failed to reload cache after writing");
     return false;

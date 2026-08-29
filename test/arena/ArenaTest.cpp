@@ -54,6 +54,25 @@ TEST(ArenaVector, GrowsWithinBudgetAndPreservesValues) {
   EXPECT_EQ(values.back(), 54U);
 }
 
+TEST(ArenaVector, ResizeAndInsertPreserveOrder) {
+  Arena arena;
+  ASSERT_TRUE(arena.init(64, 512));
+  ArenaVector<uint16_t> values(arena);
+
+  ASSERT_TRUE(values.resize(3));
+  EXPECT_EQ(values[0], 0);
+  values[0] = 10;
+  values[1] = 30;
+  values[2] = 40;
+  ASSERT_TRUE(values.insert(1, 20));
+
+  ASSERT_EQ(values.size(), 4u);
+  EXPECT_EQ(values[0], 10);
+  EXPECT_EQ(values[1], 20);
+  EXPECT_EQ(values[2], 30);
+  EXPECT_EQ(values[3], 40);
+}
+
 TEST(Arena, ArrayCountOverflowIsRejected) {
   Arena arena;
   ASSERT_TRUE(arena.init(128, 128));

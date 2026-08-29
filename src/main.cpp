@@ -583,6 +583,9 @@ void setup() {
   }
 
 #if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3
+  // 1.6.0rc made showBootScreen/isPersistedSleepWake one-shot presentation
+  // state. The daily update deliberately keys off a verified user power start
+  // instead: using the presentation flag would skip a genuine cold start.
   const bool eligibleForFirstBootVanNhanSoUpdate = !isSilentReboot && !recoveryFirmwareMode &&
                                                    !HalSystem::isRebootFromPanic() &&
                                                    wakeupReason == HalGPIO::WakeupReason::PowerButton;

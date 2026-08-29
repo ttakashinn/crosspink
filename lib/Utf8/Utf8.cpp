@@ -1,5 +1,7 @@
 #include "Utf8.h"
 
+#include <array>
+
 #include "Utf8ComposeTable.h"
 
 namespace {
@@ -21,9 +23,32 @@ uint32_t utf8ComposePair(const uint32_t base, const uint32_t mark) {
   }
   return 0;
 }
+
+// Canonical combining classes relevant to Vietnamese, with one deliberate
+// repair rule: circumflex/breve sort before tone marks even though they share
+// class 230. Malformed EPUBs commonly emit "a + acute + circumflex"; strict NFC
+// cannot compose that order, while readers still expect the Vietnamese glyph ấ.
+uint8_t vietnameseMarkOrder(const uint32_t mark) {
+  switch (mark) {
+    case 0x031B:  // horn, CCC 216
+      return 10;
+    case 0x0323:  // dot below, CCC 220
+      return 20;
+    case 0x0302:  // circumflex, CCC 230 (Vietnamese shape mark)
+    case 0x0306:  // breve, CCC 230 (Vietnamese shape mark)
+      return 30;
+    case 0x0300:  // grave, CCC 230 (tone)
+    case 0x0301:  // acute, CCC 230 (tone)
+    case 0x0303:  // tilde, CCC 230 (tone)
+    case 0x0309:  // hook above, CCC 230 (tone)
+      return 40;
+    default:
+      return 50;
+  }
+}
 }  // namespace
 
-std::string utf8ComposeNfc(const std::string& in) {
+std::string utf8ComposeNfc(std::string in) {
   // Fast path: NFC composition can only change text that contains a combining
   // diacritical mark U+0300-036F (UTF-8 lead byte 0xCC or 0xCD). Plain ASCII and
   // already-precomposed (NFC) text -- the vast majority of words -- have none, so
@@ -43,28 +68,62 @@ std::string utf8ComposeNfc(const std::string& in) {
   const unsigned char* p = reinterpret_cast<const unsigned char*>(in.c_str());
   uint32_t base = 0;
   bool haveBase = false;
+  std::array<uint32_t, 8> marks{};
+  size_t markCount = 0;
+
+  const auto flushCluster = [&]() {
+    if (!haveBase) return;
+
+    // Stable insertion sort keeps unrelated marks in source order while
+    // repairing the bounded Vietnamese subset above.
+    for (size_t i = 1; i < markCount; ++i) {
+      const uint32_t mark = marks[i];
+      const uint8_t order = vietnameseMarkOrder(mark);
+      size_t j = i;
+      while (j > 0 && vietnameseMarkOrder(marks[j - 1]) > order) {
+        marks[j] = marks[j - 1];
+        --j;
+      }
+      marks[j] = mark;
+    }
+
+    std::array<uint32_t, 8> uncomposed{};
+    size_t uncomposedCount = 0;
+    uint32_t composedBase = base;
+    for (size_t i = 0; i < markCount; ++i) {
+      const uint32_t composed = utf8ComposePair(composedBase, marks[i]);
+      if (composed != 0) {
+        composedBase = composed;
+      } else {
+        uncomposed[uncomposedCount++] = marks[i];
+      }
+    }
+    utf8AppendCodepoint(composedBase, out);
+    for (size_t i = 0; i < uncomposedCount; ++i) utf8AppendCodepoint(uncomposed[i], out);
+    haveBase = false;
+    markCount = 0;
+  };
+
   while (*p) {
     const uint32_t cp = utf8NextCodepoint(&p);
     if (cp == 0) break;
     if (utf8IsCombiningMark(cp)) {
-      const uint32_t composed = haveBase ? utf8ComposePair(base, cp) : 0;
-      if (composed) {
-        base = composed;  // keep accumulating further marks onto the composed char
-        continue;
+      if (!haveBase) {
+        utf8AppendCodepoint(cp, out);
+      } else if (markCount < marks.size()) {
+        marks[markCount++] = cp;
+      } else {
+        // Pathological clusters stay bounded without dropping text.
+        flushCluster();
+        utf8AppendCodepoint(cp, out);
       }
-      // No composition: flush the pending base, then emit the mark unchanged.
-      if (haveBase) {
-        utf8AppendCodepoint(base, out);
-        haveBase = false;
-      }
-      utf8AppendCodepoint(cp, out);
     } else {
-      if (haveBase) utf8AppendCodepoint(base, out);
+      flushCluster();
       base = cp;
       haveBase = true;
     }
   }
-  if (haveBase) utf8AppendCodepoint(base, out);
+  flushCluster();
   return out;
 }
 

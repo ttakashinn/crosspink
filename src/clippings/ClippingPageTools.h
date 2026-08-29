@@ -5,6 +5,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -39,18 +40,34 @@ struct HighlightLine {
   int16_t bottom = 0;
 };
 
+struct ResolvedClipping {
+  uint32_t id = 0;
+  uint16_t startWordIndex = 0;
+  uint16_t endWordIndex = 0;
+};
+
+inline constexpr size_t MAX_RESOLVED_CLIPPINGS = ClippingCodec::MAX_CLIPPINGS_PER_BOOK;
+
+size_t resolveClippings(const std::vector<WordRef>& words, const std::vector<ClippingCodec::Record>& records,
+                        uint16_t spineIndex, uint16_t pageIndex, uint32_t pageVisibleOffset,
+                        std::optional<uint32_t> nextPageVisibleOffset,
+                        std::array<ResolvedClipping, MAX_RESOLVED_CLIPPINGS>& resolved);
+
 struct HighlightPlan {
   static constexpr size_t MAX_LINES = 128;
   std::array<HighlightLine, MAX_LINES> lines{};
   size_t count = 0;
   bool truncated = false;
+  std::array<ResolvedClipping, MAX_RESOLVED_CLIPPINGS> resolved{};
+  size_t resolvedCount = 0;
 
   void drawUnderline(const GfxRenderer& renderer) const;
   void clearGrayscale(const GfxRenderer& renderer) const;
 };
 
 HighlightPlan buildHighlightPlan(GfxRenderer& renderer, const Page& page, int fontId, int marginLeft, int marginTop,
-                                 const std::vector<ClippingCodec::Record>& records, uint16_t spineIndex,
-                                 uint16_t pageIndex, uint32_t pageVisibleOffset);
+                                 int lineHeight, const std::vector<ClippingCodec::Record>& records, uint16_t spineIndex,
+                                 uint16_t pageIndex, uint32_t pageVisibleOffset,
+                                 std::optional<uint32_t> nextPageVisibleOffset);
 
 }  // namespace ClippingPageTools

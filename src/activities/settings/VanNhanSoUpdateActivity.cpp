@@ -71,25 +71,11 @@ bool hostSystemDateTime(Rtc::DateTime& out) {
 }
 #endif
 
-const char* safeParam(const char* const* values, const size_t count, const uint8_t index) {
-  return values[index < count ? index : 0];
-}
-
 bool buildProfileSignature(char* output, const size_t outputSize) {
-  static constexpr const char* LAYOUTS[] = {"minimal", "full"};
-  static constexpr const char* FONT_SIZES[] = {"standard", "large"};
-  static constexpr const char* VOCABULARY_LEVELS[] = {"b1", "b2", "c1", "c2", "mixed"};
-  static constexpr const char* WEATHER_LOCATIONS[] = {"hanoi",  "hochiminh", "danang", "haiphong",
-                                                      "cantho", "hue",       "dongnai"};
-
-  const int written =
-      snprintf(output, outputSize, "layout=%s&font=%s&vocab=%s&weather=%s&finance=%u&grayscale=1",
-               safeParam(LAYOUTS, std::size(LAYOUTS), SETTINGS.vanNhanSoLayout),
-               safeParam(FONT_SIZES, std::size(FONT_SIZES), SETTINGS.vanNhanSoFontSize),
-               safeParam(VOCABULARY_LEVELS, std::size(VOCABULARY_LEVELS), SETTINGS.vanNhanSoVocabularyLevel),
-               safeParam(WEATHER_LOCATIONS, std::size(WEATHER_LOCATIONS), SETTINGS.vanNhanSoWeatherLocation),
-               SETTINGS.vanNhanSoFinance ? 1U : 0U);
-  return written > 0 && static_cast<size_t>(written) < outputSize;
+  // The legacy single-image marker must use the same canonical profile as the
+  // manifest URL and per-profile cache. Keeping a second option table here
+  // previously allowed a new weather location to silently fall back to Hanoi.
+  return vannhanso_profile::buildQuery(output, outputSize);
 }
 
 bool isLeapYear(const uint16_t year) { return (year % 4 == 0 && year % 100 != 0) || year % 400 == 0; }

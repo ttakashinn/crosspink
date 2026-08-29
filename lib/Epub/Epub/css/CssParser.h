@@ -25,6 +25,7 @@
  *
  * Not supported (silently ignored):
  *   - Three-or-more-part descendants and child/sibling combinators
+ *   - Attribute selectors
  *   - Pseudo-classes and pseudo-elements
  *   - Media queries (content is skipped)
  *   - @import, @font-face, etc.
@@ -51,7 +52,7 @@ class CssParser {
   };
 
   // Bump when CSS cache format or rules change; section caches are invalidated when this changes
-  static constexpr uint8_t CSS_CACHE_VERSION = 12;
+  static constexpr uint8_t CSS_CACHE_VERSION = 14;
   static constexpr size_t MAX_DESCENDANT_RULES = 64;
   using DescendantMask = uint64_t;
 
@@ -109,12 +110,15 @@ class CssParser {
     descendantEntries_.reset();
     selectorPool_.reset();
     stylePool_.reset();
+    propertyOrderOverrides_.reset();
     entryCount_ = entryCapacity_ = 0;
     descendantEntryCount_ = descendantEntryCapacity_ = 0;
     selectorPoolSize_ = selectorPoolCapacity_ = 0;
     styleCount_ = styleCapacity_ = 0;
+    propertyOrderOverrideCount_ = propertyOrderOverrideCapacity_ = 0;
     ruleGrowthStopped_ = false;
     descendantRulesTruncated_ = false;
+    nextSourceOrder_ = 0;
   }
 
   /**
@@ -161,8 +165,10 @@ class CssParser {
     uint32_t offset;
     uint16_t styleIndex;
     uint16_t length;
+    uint16_t specificity;
+    uint16_t sourceOrder;
   };
-  static_assert(sizeof(SelectorEntry) == 8);
+  static_assert(sizeof(SelectorEntry) == 12);
 
   struct DescendantEntry {
     uint32_t ancestorOffset;
@@ -170,8 +176,18 @@ class CssParser {
     uint16_t styleIndex;
     uint16_t ancestorLength;
     uint16_t subjectLength;
+    uint16_t specificity;
+    uint16_t sourceOrder;
   };
-  static_assert(sizeof(DescendantEntry) == 16);
+  static_assert(sizeof(DescendantEntry) == 20);
+
+  struct PropertyOrderOverride {
+    uint32_t selectorOffset;
+    uint16_t sourceOrder;
+    uint8_t property;
+    uint8_t descendant;
+  };
+  static_assert(sizeof(PropertyOrderOverride) == 8);
 
   // Bounded flat storage keeps every growth operation fallible and avoids the
   // throwing node allocations used by std::unordered_map.
@@ -179,6 +195,7 @@ class CssParser {
   std::unique_ptr<DescendantEntry[]> descendantEntries_;
   std::unique_ptr<char[]> selectorPool_;
   std::unique_ptr<CssStyle[]> stylePool_;
+  std::unique_ptr<PropertyOrderOverride[]> propertyOrderOverrides_;
   uint16_t entryCount_ = 0;
   uint16_t entryCapacity_ = 0;
   uint16_t descendantEntryCount_ = 0;
@@ -187,8 +204,11 @@ class CssParser {
   uint32_t selectorPoolCapacity_ = 0;
   uint16_t styleCount_ = 0;
   uint16_t styleCapacity_ = 0;
+  uint16_t propertyOrderOverrideCount_ = 0;
+  uint16_t propertyOrderOverrideCapacity_ = 0;
   bool ruleGrowthStopped_ = false;
   bool descendantRulesTruncated_ = false;
+  uint16_t nextSourceOrder_ = 0;
 
   std::string cachePath;
 
@@ -198,18 +218,25 @@ class CssParser {
   [[nodiscard]] int compareEntryToPieces(const SelectorEntry& entry, std::string_view p0, std::string_view p1,
                                          std::string_view p2) const;
   [[nodiscard]] size_t lowerBound(std::string_view p0, std::string_view p1, std::string_view p2, bool& exact) const;
-  [[nodiscard]] const CssStyle* findStyle(std::string_view p0, std::string_view p1 = {},
-                                          std::string_view p2 = {}) const;
+  [[nodiscard]] const SelectorEntry* findEntry(std::string_view p0, std::string_view p1 = {},
+                                               std::string_view p2 = {}) const;
   [[nodiscard]] std::string_view selectorAt(size_t index) const;
   [[nodiscard]] std::string_view descendantAncestorAt(size_t index) const;
   [[nodiscard]] std::string_view descendantSubjectAt(size_t index) const;
-  RuleInsertResult insertOrMerge(std::string_view selector, const CssStyle& style);
-  RuleInsertResult insertOrMergeDescendant(std::string_view ancestor, std::string_view subject, const CssStyle& style);
+  RuleInsertResult insertOrMerge(std::string_view selector, const CssStyle& style, uint16_t sourceOrder);
+  RuleInsertResult insertOrMergeDescendant(std::string_view ancestor, std::string_view subject, const CssStyle& style,
+                                           uint16_t sourceOrder);
   PoolResult ensureEntryCapacity(size_t needed);
   PoolResult ensureDescendantEntryCapacity(size_t needed);
   PoolResult ensureSelectorPoolCapacity(size_t needed);
   PoolResult ensureStyleCapacity(size_t needed);
+  PoolResult ensurePropertyOrderOverrideCapacity(size_t needed);
   PoolResult internStyle(const CssStyle& style, uint16_t& indexOut);
+  PoolResult recordPropertyOrders(uint32_t selectorOffset, bool descendant, const CssStyle& style, uint16_t sourceOrder,
+                                  const CssStyle* existing = nullptr);
+  PoolResult recordPropertyOrder(uint32_t selectorOffset, bool descendant, uint8_t property, uint16_t sourceOrder);
+  [[nodiscard]] uint16_t propertySourceOrder(uint32_t selectorOffset, bool descendant, uint8_t property,
+                                             uint16_t fallback) const;
   [[nodiscard]] static bool selectorMatchesElement(std::string_view selector, std::string_view tagName,
                                                    std::string_view classAttr);
   static CssStyle parseDeclarations(std::string_view declBlock);
