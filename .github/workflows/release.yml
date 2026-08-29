@@ -1,9 +1,8 @@
 name: Compile Release
 
-# Builds every board's release firmware on tag push, with the .bin named
-# exactly as OtaUpdater requests it from the GitHub release: plain
-# firmware.bin for the C3 X4/X3 binary, firmware-<board>.bin for every other
-# board. Attach the artifacts' .bin files to the release as-is.
+# Builds the supported Văn Nhân Số release targets on tag push: plain
+# firmware.bin for the combined C3 X3/X4 binary and firmware-x4pro.bin for
+# X4 Pro. Attach the artifacts' .bin files to the release as-is.
 
 on:
   push:
@@ -22,12 +21,8 @@ jobs:
         include:
           - pio_env: gh_release
             asset: firmware.bin
-          - pio_env: sticky-gh_release
-            asset: firmware-sticky.bin
           - pio_env: x4pro-gh_release
             asset: firmware-x4pro.bin
-          - pio_env: papermono-gh_release
-            asset: firmware-papermono.bin
     steps:
       - uses: actions/checkout@v6
         with:
@@ -127,8 +122,8 @@ jobs:
           mkdir publish
           find release-assets -type f \( -name 'firmware*.bin' -o -name 'firmware*.bin.sha256' \) \
             -exec cp {} publish/ \;
-          test "$(find publish -maxdepth 1 -name 'firmware*.bin' | wc -l | tr -d ' ')" = 4
-          test "$(find publish -maxdepth 1 -name 'firmware*.bin.sha256' | wc -l | tr -d ' ')" = 4
+          test "$(find publish -maxdepth 1 -name 'firmware*.bin' | wc -l | tr -d ' ')" = 2
+          test "$(find publish -maxdepth 1 -name 'firmware*.bin.sha256' | wc -l | tr -d ' ')" = 2
           for checksum in publish/*.sha256; do
             asset="${checksum%.sha256}"
             test "$(cat "$checksum")" = "$(sha256sum "$asset" | awk '{print $1}')"
@@ -142,6 +137,10 @@ jobs:
           set -euo pipefail
           upstream_version="${GITHUB_REF_NAME%%-vns.*}"
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            for stale in firmware-sticky.bin firmware-sticky.bin.sha256 \
+              firmware-papermono.bin firmware-papermono.bin.sha256; do
+              gh release delete-asset "$GITHUB_REF_NAME" "$stale" --yes 2>/dev/null || true
+            done
             gh release upload "$GITHUB_REF_NAME" publish/* --clobber
           else
             gh release create "$GITHUB_REF_NAME" publish/* \
