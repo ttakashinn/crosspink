@@ -137,6 +137,7 @@ jobs:
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           upstream_version="${GITHUB_REF_NAME%%-vns.*}"
