@@ -105,16 +105,24 @@ ReadStatus inspect(const std::string& path) {
     file.close();
     return ReadStatus::NEWER_VERSION;
   }
-  if ((header[4] != 1 && header[4] != ClippingCodec::VERSION) || header[5] != 0) {
+  if ((header[4] != 1 && header[4] != 2 && header[4] != ClippingCodec::VERSION) || header[5] != 0) {
     file.close();
     return ReadStatus::INVALID;
   }
 
-  const bool legacy = header[4] == 1;
-  const size_t recordHeaderSize = legacy ? ClippingCodec::LEGACY_RECORD_HEADER_SIZE : ClippingCodec::RECORD_HEADER_SIZE;
+  const uint8_t version = header[4];
+  const bool legacy = version == 1;
+  const bool segmented = version == ClippingCodec::VERSION;
+  const size_t recordHeaderSize =
+      legacy ? ClippingCodec::LEGACY_RECORD_HEADER_SIZE
+             : (segmented ? ClippingCodec::RECORD_HEADER_SIZE : ClippingCodec::V2_RECORD_HEADER_SIZE);
   const uint16_t count = readU16(header.data() + 6);
   const uint32_t payloadSize = readU32(header.data() + 8);
-  const size_t maxPayload = ClippingCodec::MAX_CLIPPINGS_PER_BOOK * (recordHeaderSize + ClippingCodec::MAX_TEXT_BYTES);
+  const size_t perRecordMaximum =
+      recordHeaderSize +
+      (segmented ? ClippingCodec::MAX_SEGMENTS_PER_CLIPPING * ClippingCodec::SEGMENT_HEADER_SIZE : 0) +
+      ClippingCodec::MAX_TEXT_BYTES;
+  const size_t maxPayload = ClippingCodec::MAX_CLIPPINGS_PER_BOOK * perRecordMaximum;
   if (count > ClippingCodec::MAX_CLIPPINGS_PER_BOOK || payloadSize > maxPayload ||
       length != ClippingCodec::HEADER_SIZE + payloadSize) {
     file.close();
@@ -123,7 +131,8 @@ ReadStatus inspect(const std::string& path) {
 
   uint32_t crc = UINT32_MAX;
   size_t consumed = 0;
-  std::array<uint8_t, ClippingCodec::RECORD_HEADER_SIZE> recordHeader{};
+  std::array<uint8_t, ClippingCodec::V2_RECORD_HEADER_SIZE> recordHeader{};
+  std::array<uint8_t, ClippingCodec::SEGMENT_HEADER_SIZE> segmentHeader{};
   std::array<uint8_t, ClippingCodec::MAX_TEXT_BYTES> text{};
   std::array<uint32_t, ClippingCodec::MAX_CLIPPINGS_PER_BOOK> ids{};
   for (uint16_t i = 0; i < count; ++i) {
@@ -135,15 +144,64 @@ ReadStatus inspect(const std::string& path) {
     updateCrc(crc, recordHeader.data(), recordHeaderSize);
     consumed += recordHeaderSize;
 
-    const size_t startOffset = legacy ? 8 : 12;
-    const size_t endOffset = legacy ? 10 : 14;
-    const size_t textLengthOffset = legacy ? 12 : 16;
-    const size_t reservedOffset = legacy ? 14 : 18;
-    const uint16_t start = readU16(recordHeader.data() + startOffset);
-    const uint16_t end = readU16(recordHeader.data() + endOffset);
-    const uint16_t textLength = readU16(recordHeader.data() + textLengthOffset);
-    if (start > end || textLength == 0 || textLength > text.size() || recordHeader[reservedOffset] != 0 ||
-        recordHeader[reservedOffset + 1] != 0 || textLength > payloadSize - consumed) {
+    uint16_t textLength = 0;
+    std::array<uint16_t, ClippingCodec::MAX_SEGMENTS_PER_CLIPPING> separatorOffsets{};
+    uint8_t separatorCount = 0;
+    if (segmented) {
+      const uint8_t segmentCount = recordHeader[6];
+      textLength = readU16(recordHeader.data() + 8);
+      if (segmentCount == 0 || segmentCount > ClippingCodec::MAX_SEGMENTS_PER_CLIPPING || textLength == 0 ||
+          textLength > text.size() || recordHeader[7] != 0 ||
+          std::any_of(recordHeader.begin() + 10, recordHeader.begin() + ClippingCodec::RECORD_HEADER_SIZE,
+                      [](const uint8_t value) { return value != 0; })) {
+        file.close();
+        return ReadStatus::INVALID;
+      }
+      size_t expectedTextOffset = 0;
+      uint16_t previousPage = 0;
+      for (uint8_t segmentIndex = 0; segmentIndex < segmentCount; ++segmentIndex) {
+        if (payloadSize - consumed < segmentHeader.size() ||
+            file.read(segmentHeader.data(), segmentHeader.size()) != static_cast<int>(segmentHeader.size())) {
+          file.close();
+          return ReadStatus::INVALID;
+        }
+        updateCrc(crc, segmentHeader.data(), segmentHeader.size());
+        consumed += segmentHeader.size();
+        const uint16_t page = readU16(segmentHeader.data());
+        const uint16_t start = readU16(segmentHeader.data() + 2);
+        const uint16_t end = readU16(segmentHeader.data() + 4);
+        const uint16_t textOffset = readU16(segmentHeader.data() + 6);
+        const uint16_t segmentTextLength = readU16(segmentHeader.data() + 8);
+        if (start > end || segmentTextLength == 0 || textOffset != expectedTextOffset || textOffset > textLength ||
+            segmentTextLength > textLength - textOffset || segmentHeader[10] != 0 || segmentHeader[11] != 0 ||
+            (segmentIndex > 0 && page <= previousPage)) {
+          file.close();
+          return ReadStatus::INVALID;
+        }
+        if (segmentIndex > 0) separatorOffsets[separatorCount++] = static_cast<uint16_t>(textOffset - 1);
+        previousPage = page;
+        expectedTextOffset = static_cast<size_t>(textOffset) + segmentTextLength;
+        if (segmentIndex + 1 < segmentCount) ++expectedTextOffset;
+      }
+      if (expectedTextOffset != textLength) {
+        file.close();
+        return ReadStatus::INVALID;
+      }
+    } else {
+      const size_t startOffset = legacy ? 8 : 12;
+      const size_t endOffset = legacy ? 10 : 14;
+      const size_t textLengthOffset = legacy ? 12 : 16;
+      const size_t reservedOffset = legacy ? 14 : 18;
+      const uint16_t start = readU16(recordHeader.data() + startOffset);
+      const uint16_t end = readU16(recordHeader.data() + endOffset);
+      textLength = readU16(recordHeader.data() + textLengthOffset);
+      if (start > end || textLength == 0 || textLength > text.size() || recordHeader[reservedOffset] != 0 ||
+          recordHeader[reservedOffset + 1] != 0) {
+        file.close();
+        return ReadStatus::INVALID;
+      }
+    }
+    if (textLength > payloadSize - consumed) {
       file.close();
       return ReadStatus::INVALID;
     }
@@ -161,7 +219,9 @@ ReadStatus inspect(const std::string& path) {
     }
     updateCrc(crc, text.data(), textLength);
     consumed += textLength;
-    if (!utf8IsValid({reinterpret_cast<const char*>(text.data()), textLength})) {
+    if (!utf8IsValid({reinterpret_cast<const char*>(text.data()), textLength}) ||
+        std::any_of(separatorOffsets.begin(), separatorOffsets.begin() + separatorCount,
+                    [&](const uint16_t offset) { return text[offset] != ' '; })) {
       file.close();
       return ReadStatus::INVALID;
     }
@@ -174,13 +234,18 @@ ReadStatus inspect(const std::string& path) {
 
 bool fileMatches(const std::string& path, const std::vector<uint8_t>& expected) {
   HalFile file;
-  if (!Storage.openFileForRead("CLIP", path, file) || file.fileSize() != expected.size()) return false;
+  if (!Storage.openFileForRead("CLIP", path, file)) return false;
+  if (file.fileSize() != expected.size()) {
+    file.close();
+    return false;
+  }
   std::array<uint8_t, 128> chunk{};
   size_t offset = 0;
   while (offset < expected.size()) {
     const size_t count = std::min(chunk.size(), expected.size() - offset);
     if (file.read(chunk.data(), count) != static_cast<int>(count) ||
         !std::equal(chunk.begin(), chunk.begin() + static_cast<std::ptrdiff_t>(count), expected.begin() + offset)) {
+      file.close();
       return false;
     }
     offset += count;

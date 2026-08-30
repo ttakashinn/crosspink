@@ -30,6 +30,9 @@
 #include "features/vannhanso/VanNhanSoUpdatePolicy.h"
 #include "fontIds.h"
 #include "network/HttpDownloader.h"
+#include "network/WifiConnectionDiagnostics.h"
+#include "network/WifiConnectionPlatform.h"
+#include "network/WifiConnectionPolicy.h"
 
 #ifndef VANNHANSO_X3_MANIFEST_URL
 #define VANNHANSO_X3_MANIFEST_URL "https://vannhanso.com/eink/v2/xteink-x3/manifest/today"
@@ -248,6 +251,7 @@ void VanNhanSoUpdateActivity::onEnter() {
 
 void VanNhanSoUpdateActivity::onExit() {
   Activity::onExit();
+  wifi_connection_diagnostics::endAttempt();
 
   if (shouldTearDownWifiOnExit && WiFi.getMode() != WIFI_MODE_NULL) {
     WiFi.disconnect(false);
@@ -320,22 +324,46 @@ void VanNhanSoUpdateActivity::startAutomaticUpdate() {
   }
 
   WiFi.persistent(false);
-  WiFi.mode(WIFI_STA);
-  WiFi.disconnect(true, true);
+  const bool stationModeReady = wifi_connection_platform::enterStationMode();
+  if (!wifi_connection_platform::disconnectForRetry(1000)) {
+    LOG_INF("VNS", "Previous STA disconnect did not settle within 1000ms; continuing");
+  }
   delay(100);
+  if (!wifi_connection_platform::disablePowerSave()) {
+    LOG_INF("VNS", "Could not disable WiFi power save during association");
+  }
   WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
   WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
-  WiFi.begin(credential->ssid.c_str(), credential->password.c_str());
+
+  connectionStartTime = millis();
+  wifi_connection_diagnostics::beginAttempt();
+  const wl_status_t beginStatus = WiFi.begin(credential->ssid.c_str(), credential->password.c_str());
+  connectionBeginAccepted = wifi_connection_platform::beginAccepted(stationModeReady, beginStatus);
+  lastConnectionStatusLogTime = 0;
+  lastLoggedWifiStatus = -1;
+  LOG_INF("VNS", "Automatic WiFi begin status=%d accepted=%d", static_cast<int>(beginStatus), connectionBeginAccepted);
 
   shouldTearDownWifiOnExit = true;
-  connectionStartTime = millis();
   state = AUTO_CONNECTING;
   if (pendingProfileRequired) requestUpdate();
 }
 
 void VanNhanSoUpdateActivity::checkAutomaticConnection() {
   const wl_status_t status = WiFi.status();
-  if (status == WL_CONNECTED) {
+  const unsigned long now = millis();
+  const unsigned long elapsed = now - connectionStartTime;
+  if (lastLoggedWifiStatus != static_cast<int>(status) ||
+      now - lastConnectionStatusLogTime >= CONNECTION_STATUS_LOG_INTERVAL_MS) {
+    LOG_INF("VNS", "Automatic WiFi poll elapsed=%lums status=%d", elapsed, static_cast<int>(status));
+    lastLoggedWifiStatus = static_cast<int>(status);
+    lastConnectionStatusLogTime = now;
+  }
+
+  const auto outcome = wifi_connection_policy::evaluate(
+      {wifi_connection_platform::policyStatus(status), wifi_connection_diagnostics::failureHint(),
+       connectionBeginAccepted, static_cast<uint32_t>(elapsed), static_cast<uint32_t>(AUTO_CONNECTION_TIMEOUT_MS)});
+  if (outcome == wifi_connection_policy::Outcome::CONNECTED) {
+    wifi_connection_diagnostics::endAttempt();
     const bool haveCurrentDate = resolveCurrentDate(false);
     if (haveCurrentDate && vannhanso_update_policy::shouldSkipCurrentCache(
                                trigger, isCurrentCache(), currentDateKey, currentMinute,
@@ -354,10 +382,12 @@ void VanNhanSoUpdateActivity::checkAutomaticConnection() {
     return;
   }
 
-  if (status == WL_CONNECT_FAILED || status == WL_NO_SSID_AVAIL ||
-      millis() - connectionStartTime > AUTO_CONNECTION_TIMEOUT_MS) {
-    LOG_ERR("VNS", "Automatic update WiFi connection failed");
-    fail(CrossPointState::VanNhanSoUpdateError::WIFI_TIMEOUT);
+  if (outcome != wifi_connection_policy::Outcome::PENDING) {
+    wifi_connection_diagnostics::endAttempt();
+    LOG_ERR("VNS", "Automatic update WiFi failed outcome=%d status=%d elapsed=%lums", static_cast<int>(outcome),
+            static_cast<int>(status), elapsed);
+    fail(outcome == wifi_connection_policy::Outcome::TIMED_OUT ? CrossPointState::VanNhanSoUpdateError::WIFI_TIMEOUT
+                                                               : CrossPointState::VanNhanSoUpdateError::CONNECT);
     finish();
   }
 }

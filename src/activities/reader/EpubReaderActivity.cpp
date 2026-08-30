@@ -175,6 +175,22 @@ void moveFinishedBookToReadFolder(const std::string& srcPath, const std::string&
   }
 }
 
+std::unique_ptr<Page> loadClippingPage(void* context, const uint16_t pageIndex) {
+  auto* clippingSection = static_cast<Section*>(context);
+  return clippingSection ? clippingSection->loadPage(pageIndex) : nullptr;
+}
+
+bool sameClippingAnchor(const ClippingCodec::Record& lhs, const ClippingCodec::Record& rhs) {
+  if (lhs.spineIndex != rhs.spineIndex || lhs.text != rhs.text ||
+      ClippingCodec::segmentCount(lhs) != ClippingCodec::segmentCount(rhs)) {
+    return false;
+  }
+  for (size_t i = 0; i < ClippingCodec::segmentCount(lhs); ++i) {
+    if (ClippingCodec::segmentAt(lhs, i) != ClippingCodec::segmentAt(rhs, i)) return false;
+  }
+  return true;
+}
+
 }  // namespace
 
 EpubReaderActivity::~EpubReaderActivity() {
@@ -635,15 +651,13 @@ void EpubReaderActivity::openClipSelection() {
   left += SETTINGS.screenMargin;
   const uint16_t pageIndex = static_cast<uint16_t>(section->currentPage);
   const uint32_t pageVisibleOffset = page->visibleTextOffset;
-  const auto nextPageVisibleOffset = pageIndex < UINT16_MAX
-                                         ? section->getVisibleTextOffsetForPage(static_cast<uint16_t>(pageIndex + 1))
-                                         : std::nullopt;
   const int fontId = SETTINGS.getReaderFontId();
   const int lineHeight = renderer.getLineHeight(fontId, SETTINGS.getReaderLineCompression());
+  const ClipSelectionActivity::PageProvider pageProvider{section.get(), &loadClippingPage, section->pageCount};
   startActivityForResult(
       std::make_unique<ClipSelectionActivity>(renderer, mappedInput, std::move(page), left, top, cachedClippings,
                                               static_cast<uint16_t>(currentSpineIndex), pageIndex, pageVisibleOffset,
-                                              nextPageVisibleOffset, fontId, lineHeight),
+                                              pageProvider, fontId, lineHeight),
       [this](const ActivityResult& result) {
         if (!result.isCancelled && std::holds_alternative<ClippingSelectionResult>(result.data)) {
           toggleClipping(std::get<ClippingSelectionResult>(result.data));
@@ -653,18 +667,40 @@ void EpubReaderActivity::openClipSelection() {
 }
 
 void EpubReaderActivity::toggleClipping(const ClippingSelectionResult& selection) {
-  if (!epub || !section || selection.text.empty()) return;
-  const uint32_t visibleOffset = currentPageVisibleOffset.value_or(0);
+  static_assert(ClippingSelectionResult::MAX_SEGMENTS == ClippingCodec::MAX_SEGMENTS_PER_CLIPPING);
+  if (!epub || !section || selection.text.empty() || selection.segmentCount == 0 ||
+      selection.segmentCount > ClippingCodec::MAX_SEGMENTS_PER_CLIPPING) {
+    return;
+  }
+  ClippingCodec::Record candidate;
+  candidate.spineIndex = selection.spineIndex;
+  candidate.text = selection.text;
+  const auto& first = selection.segments[0];
+  candidate.pageHint = first.pageHint;
+  candidate.pageVisibleOffset = first.pageVisibleOffset;
+  candidate.startWordIndex = first.startWordIndex;
+  candidate.endWordIndex = first.endWordIndex;
+  if (selection.segmentCount > 1) {
+    candidate.segmentCount = selection.segmentCount;
+    for (size_t i = 0; i < selection.segmentCount; ++i) {
+      const auto& source = selection.segments[i];
+      candidate.segments[i] = {source.pageHint,     source.pageVisibleOffset, source.startWordIndex,
+                               source.endWordIndex, source.textOffset,        source.textLength};
+    }
+  }
+  if (!ClippingCodec::validRecord(candidate, false)) {
+    clippingMessage = StrId::STR_HIGHLIGHT_SAVE_FAILED;
+    showClippingMessage = true;
+    clippingMessageTime = millis();
+    return;
+  }
   auto duplicate = selection.clippingId == 0
                        ? cachedClippings.end()
                        : std::find_if(cachedClippings.begin(), cachedClippings.end(),
                                       [&](const auto& clipping) { return clipping.id == selection.clippingId; });
   if (duplicate == cachedClippings.end()) {
-    duplicate = std::find_if(cachedClippings.begin(), cachedClippings.end(), [&](const auto& clipping) {
-      return clipping.spineIndex == currentSpineIndex && clipping.pageVisibleOffset == visibleOffset &&
-             clipping.startWordIndex == selection.startWordIndex && clipping.endWordIndex == selection.endWordIndex &&
-             clipping.text == selection.text;
-    });
+    duplicate = std::find_if(cachedClippings.begin(), cachedClippings.end(),
+                             [&](const auto& clipping) { return sameClippingAnchor(clipping, candidate); });
   }
   const size_t duplicateIndex = static_cast<size_t>(duplicate - cachedClippings.begin());
   std::optional<ClippingCodec::Record> removed;
@@ -678,14 +714,8 @@ void EpubReaderActivity::toggleClipping(const ClippingSelectionResult& selection
     clippingMessageTime = millis();
     return;
   } else {
-    ClippingCodec::Record clipping{static_cast<uint16_t>(currentSpineIndex),
-                                   static_cast<uint16_t>(section->currentPage),
-                                   visibleOffset,
-                                   selection.startWordIndex,
-                                   selection.endWordIndex,
-                                   selection.text};
-    clipping.id = ClippingCodec::makeStableId(clipping, cachedClippings);
-    cachedClippings.push_back(std::move(clipping));
+    candidate.id = ClippingCodec::makeStableId(candidate, cachedClippings);
+    cachedClippings.push_back(std::move(candidate));
     clippingMessage = StrId::STR_HIGHLIGHT_SAVED;
   }
   const auto saveStatus = ClippingStore::save(epub->getPath(), epub->getCachePath(), cachedClippings);

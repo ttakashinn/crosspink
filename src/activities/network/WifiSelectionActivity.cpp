@@ -16,6 +16,8 @@
 #include "components/UIScale.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "network/WifiConnectionDiagnostics.h"
+#include "network/WifiConnectionPlatform.h"
 
 namespace fui = freeink::ui;
 
@@ -23,6 +25,7 @@ namespace {
 constexpr fui::ActionId ACTION_ROW = 1;
 constexpr fui::ActionId ACTION_SCAN = 2;
 constexpr fui::ActionId ACTION_PROMPT = 3;
+
 }  // namespace
 
 WifiSelectionActivity::WifiSelectionActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
@@ -163,6 +166,8 @@ void WifiSelectionActivity::onEnter() {
 
 void WifiSelectionActivity::onExit() {
   Activity::onExit();
+
+  wifi_connection_diagnostics::endAttempt();
 
   LOG_DBG("WIFI", "Free heap at onExit start: %d bytes", ESP.getFreeHeap());
 
@@ -442,6 +447,7 @@ void WifiSelectionActivity::handleAutoConnectFailure() {
 
 void WifiSelectionActivity::showNetworkListFromAutoConnect() {
   LOG_DBG("WIFI", "User requested manual network list");
+  wifi_connection_diagnostics::endAttempt();
   WiFi.disconnect();
   autoConnecting = false;
   manualNetworkListRequested = true;
@@ -459,15 +465,28 @@ void WifiSelectionActivity::showNetworkListFromAutoConnect() {
 
 void WifiSelectionActivity::attemptConnection() {
   state = autoConnecting ? WifiSelectionState::AUTO_CONNECTING : WifiSelectionState::CONNECTING;
-  connectionStartTime = millis();
   connectedIP.clear();
   connectionError.clear();
+  lastConnectionStatusLogTime = 0;
+  lastLoggedWifiStatus = -1;
+  connectionBeginAccepted = true;
   requestUpdate();
 
+  LOG_INF("WIFI", "Connecting to ssid=%s auto=%d saved=%d encrypted=%d passProvided=%d", selectedSSID.c_str(),
+          autoConnecting, usedSavedPassword, selectedRequiresPassword, !enteredPassword.empty());
+
   WiFi.persistent(false);  // Credentials are managed by WifiCredentialStore; suppress SDK NVS auto-connect
-  WiFi.mode(WIFI_STA);
-  WiFi.disconnect(true, true);  // Abort any in-progress SDK auto-connect and clear NVS-saved SSID
+  const bool stationModeReady = wifi_connection_platform::enterStationMode();
+  // Abort the previous attempt without erasing AP state or power-cycling the
+  // radio. The old disconnect(true, true) added a full radio restart and AP
+  // state erase immediately before the following X3 handshake.
+  if (!wifi_connection_platform::disconnectForRetry(1000)) {
+    LOG_INF("WIFI", "Previous STA disconnect did not settle within 1000ms; continuing");
+  }
   delay(100);
+  if (!wifi_connection_platform::disablePowerSave()) {
+    LOG_INF("WIFI", "Could not disable WiFi power save during association");
+  }
 
   // Scan all channels so networks with multiple APs use the strongest matching
   // BSSID instead of the first match found by the framework's default fast scan.
@@ -486,11 +505,17 @@ void WifiSelectionActivity::attemptConnection() {
     LOG_ERR("WIFI", "Failed to read station MAC for hostname (err=%d)", static_cast<int>(macResult));
   }
 
+  connectionStartTime = millis();
+  wifi_connection_diagnostics::beginAttempt();
+  wl_status_t beginStatus = WL_CONNECT_FAILED;
   if (selectedRequiresPassword && !enteredPassword.empty()) {
-    WiFi.begin(selectedSSID.c_str(), enteredPassword.c_str());
+    beginStatus = WiFi.begin(selectedSSID.c_str(), enteredPassword.c_str());
   } else {
-    WiFi.begin(selectedSSID.c_str());
+    beginStatus = WiFi.begin(selectedSSID.c_str());
   }
+  connectionBeginAccepted = wifi_connection_platform::beginAccepted(stationModeReady, beginStatus);
+  LOG_INF("WIFI", "WiFi.begin returned status=%d/%s accepted=%d", static_cast<int>(beginStatus),
+          wifi_connection_platform::statusName(beginStatus), connectionBeginAccepted);
 }
 
 void WifiSelectionActivity::checkConnectionStatus() {
@@ -499,14 +524,32 @@ void WifiSelectionActivity::checkConnectionStatus() {
   }
 
   const wl_status_t status = WiFi.status();
+  const unsigned long now = millis();
+  const unsigned long elapsed = now - connectionStartTime;
+  const unsigned long timeoutMs = autoConnecting ? AUTO_CONNECTION_TIMEOUT_MS : CONNECTION_TIMEOUT_MS;
 
-  if (status == WL_CONNECTED) {
+  if (lastLoggedWifiStatus != static_cast<int>(status) ||
+      now - lastConnectionStatusLogTime >= CONNECTION_STATUS_LOG_INTERVAL_MS) {
+    LOG_INF("WIFI", "Connection poll: elapsed=%lums status=%d/%s", elapsed, static_cast<int>(status),
+            wifi_connection_platform::statusName(status));
+    lastLoggedWifiStatus = static_cast<int>(status);
+    lastConnectionStatusLogTime = now;
+  }
+
+  const wifi_connection_policy::Snapshot snapshot{wifi_connection_platform::policyStatus(status),
+                                                  wifi_connection_diagnostics::failureHint(), connectionBeginAccepted,
+                                                  static_cast<uint32_t>(elapsed), static_cast<uint32_t>(timeoutMs)};
+  const auto outcome = wifi_connection_policy::evaluate(snapshot);
+
+  if (outcome == wifi_connection_policy::Outcome::CONNECTED) {
     // Successfully connected
     IPAddress ip = WiFi.localIP();
     char ipStr[16];
     snprintf(ipStr, sizeof(ipStr), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
     connectedIP = ipStr;
     autoConnecting = false;
+    wifi_connection_diagnostics::endAttempt();
+    LOG_INF("WIFI", "Connected to ssid=%s ip=%s rssi=%d", selectedSSID.c_str(), connectedIP.c_str(), WiFi.RSSI());
 
 #if defined(ENABLE_SERIAL_LOG) && LOG_LEVEL >= 2
     uint8_t connectedBssid[6] = {};
@@ -551,25 +594,24 @@ void WifiSelectionActivity::checkConnectionStatus() {
     return;
   }
 
-  if (status == WL_CONNECT_FAILED || status == WL_NO_SSID_AVAIL) {
-    connectionError = tr(STR_ERROR_GENERAL_FAILURE);
-    if (status == WL_NO_SSID_AVAIL) {
-      connectionError = tr(STR_ERROR_NETWORK_NOT_FOUND);
+  if (outcome != wifi_connection_policy::Outcome::PENDING) {
+    switch (outcome) {
+      case wifi_connection_policy::Outcome::NETWORK_NOT_FOUND:
+        connectionError = tr(STR_ERROR_NETWORK_NOT_FOUND);
+        break;
+      case wifi_connection_policy::Outcome::AUTHENTICATION_FAILED:
+        connectionError = tr(STR_AUTH_FAILED);
+        break;
+      case wifi_connection_policy::Outcome::TIMED_OUT:
+        connectionError = tr(STR_ERROR_CONNECTION_TIMEOUT);
+        break;
+      default:
+        connectionError = tr(STR_WIFI_CONN_FAILED);
+        break;
     }
-    if (autoConnecting) {
-      handleAutoConnectFailure();
-      return;
-    }
-    state = WifiSelectionState::CONNECTION_FAILED;
-    requestUpdate();
-    return;
-  }
-
-  // Check for timeout
-  const unsigned long timeoutMs = autoConnecting ? AUTO_CONNECTION_TIMEOUT_MS : CONNECTION_TIMEOUT_MS;
-  if (millis() - connectionStartTime > timeoutMs) {
-    WiFi.disconnect();
-    connectionError = tr(STR_ERROR_CONNECTION_TIMEOUT);
+    wifi_connection_diagnostics::endAttempt();
+    LOG_INF("WIFI", "Connection ended: ssid=%s outcome=%d status=%d/%s elapsed=%lums", selectedSSID.c_str(),
+            static_cast<int>(outcome), static_cast<int>(status), wifi_connection_platform::statusName(status), elapsed);
     if (autoConnecting) {
       handleAutoConnectFailure();
       return;

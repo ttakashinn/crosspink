@@ -31,7 +31,7 @@ bool isSelectableToken(const char* text, const size_t length) {
 }
 
 void collectWords(const Page& page, GfxRenderer& renderer, const int fontId, const int marginLeft, const int marginTop,
-                  std::vector<WordRef>& words, uint16_t& rowCount) {
+                  std::vector<WordRef>& words, uint16_t& rowCount, bool* truncated) {
   words.clear();
   words.reserve(128);
   rowCount = 0;
@@ -39,6 +39,7 @@ void collectWords(const Page& page, GfxRenderer& renderer, const int fontId, con
   pageText.reserve(2048);
   uint8_t styleMask = 0;
   bool full = false;
+  if (truncated) *truncated = false;
 
   for (const auto& element : page.elements) {
     if (!element || element->getTag() != TAG_PageLine) continue;
@@ -67,6 +68,7 @@ void collectWords(const Page& page, GfxRenderer& renderer, const int fontId, con
     if (full) break;
   }
   if (styleMask == 0) styleMask = 1;
+  if (truncated) *truncated = full;
   renderer.ensureSdCardFontReady(fontId, pageText.c_str(), styleMask);
   for (auto& word : words) {
     word.width = static_cast<int16_t>(std::max(1, renderer.getTextAdvanceX(fontId, word.text, word.style)));
@@ -138,8 +140,8 @@ bool quoteMatchesAt(const std::vector<WordRef>& words, const size_t first, const
   return cursor == quote.size();
 }
 
-bool findQuote(const std::vector<WordRef>& words, const ClippingCodec::Record& record, uint16_t& start, uint16_t& end) {
-  const std::string_view quote(record.text);
+bool findQuote(const std::vector<WordRef>& words, const std::string_view quote, const uint16_t anchorWordIndex,
+               uint16_t& start, uint16_t& end) {
   const size_t tokenCount = quoteTokenCount(quote);
   if (tokenCount == 0 || tokenCount > words.size()) return false;
 
@@ -147,7 +149,7 @@ bool findQuote(const std::vector<WordRef>& words, const ClippingCodec::Record& r
   int best = -1;
   for (size_t first = 0; first + tokenCount <= words.size(); ++first) {
     if (!quoteMatchesAt(words, first, quote, tokenCount)) continue;
-    const int distance = std::abs(static_cast<int>(first) - static_cast<int>(record.startWordIndex));
+    const int distance = std::abs(static_cast<int>(first) - static_cast<int>(anchorWordIndex));
     if (distance < bestDistance) {
       bestDistance = distance;
       best = static_cast<int>(first);
@@ -159,22 +161,23 @@ bool findQuote(const std::vector<WordRef>& words, const ClippingCodec::Record& r
   return true;
 }
 
-bool exactAnchorMatches(const std::vector<WordRef>& words, const ClippingCodec::Record& record) {
-  if (record.startWordIndex > record.endWordIndex || record.endWordIndex >= words.size()) return false;
-  const size_t tokenCount = static_cast<size_t>(record.endWordIndex - record.startWordIndex) + 1;
-  return quoteMatchesAt(words, record.startWordIndex, record.text, tokenCount);
+bool exactAnchorMatches(const std::vector<WordRef>& words, const ClippingCodec::Segment& segment,
+                        const std::string_view quote) {
+  if (segment.startWordIndex > segment.endWordIndex || segment.endWordIndex >= words.size()) return false;
+  const size_t tokenCount = static_cast<size_t>(segment.endWordIndex - segment.startWordIndex) + 1;
+  return quoteMatchesAt(words, segment.startWordIndex, quote, tokenCount);
 }
 
-bool recordCouldResolveOnPage(const ClippingCodec::Record& record, const uint16_t pageIndex,
-                              const uint32_t pageVisibleOffset, const std::optional<uint32_t> nextPageVisibleOffset) {
-  if (record.pageHint == pageIndex && record.pageVisibleOffset == pageVisibleOffset) return true;
+bool segmentCouldResolveOnPage(const ClippingCodec::Segment& segment, const uint16_t pageIndex,
+                               const uint32_t pageVisibleOffset, const std::optional<uint32_t> nextPageVisibleOffset) {
+  if (segment.pageHint == pageIndex && segment.pageVisibleOffset == pageVisibleOffset) return true;
   if (nextPageVisibleOffset.has_value()) {
-    return record.pageVisibleOffset >= pageVisibleOffset && record.pageVisibleOffset < *nextPageVisibleOffset;
+    return segment.pageVisibleOffset >= pageVisibleOffset && segment.pageVisibleOffset < *nextPageVisibleOffset;
   }
   // The final page has no following offset. Keep the old page hint as a safe
   // fallback; searching neighbouring pages can paint the same quote multiple
   // times when common text repeats.
-  return record.pageHint == pageIndex;
+  return segment.pageHint == pageIndex;
 }
 
 bool addLine(HighlightPlan& plan, const HighlightLine& candidate) {
@@ -201,22 +204,25 @@ size_t resolveClippings(const std::vector<WordRef>& words, const std::vector<Cli
                         std::array<ResolvedClipping, MAX_RESOLVED_CLIPPINGS>& resolved) {
   size_t count = 0;
   for (const auto& record : records) {
-    if (record.spineIndex != spineIndex ||
-        !recordCouldResolveOnPage(record, pageIndex, pageVisibleOffset, nextPageVisibleOffset)) {
-      continue;
+    if (record.spineIndex != spineIndex) continue;
+    const size_t totalSegments = ClippingCodec::segmentCount(record);
+    for (size_t segmentIndex = 0; segmentIndex < totalSegments; ++segmentIndex) {
+      const auto segment = ClippingCodec::segmentAt(record, segmentIndex);
+      if (!segmentCouldResolveOnPage(segment, pageIndex, pageVisibleOffset, nextPageVisibleOffset)) continue;
+      const std::string_view quote(record.text.data() + segment.textOffset, segment.textLength);
+      uint16_t start = 0;
+      uint16_t end = 0;
+      const bool exactAnchor = segment.pageHint == pageIndex && segment.pageVisibleOffset == pageVisibleOffset &&
+                               exactAnchorMatches(words, segment, quote);
+      if (exactAnchor) {
+        start = segment.startWordIndex;
+        end = segment.endWordIndex;
+      } else if (!findQuote(words, quote, segment.startWordIndex, start, end)) {
+        continue;
+      }
+      if (count == resolved.size()) return count;
+      resolved[count++] = {record.id, start, end, static_cast<uint8_t>(segmentIndex)};
     }
-    uint16_t start = 0;
-    uint16_t end = 0;
-    const bool exactAnchor = record.pageHint == pageIndex && record.pageVisibleOffset == pageVisibleOffset &&
-                             exactAnchorMatches(words, record);
-    if (exactAnchor) {
-      start = record.startWordIndex;
-      end = record.endWordIndex;
-    } else if (!findQuote(words, record, start, end)) {
-      continue;
-    }
-    if (count == resolved.size()) break;
-    resolved[count++] = {record.id, start, end};
   }
   return count;
 }
@@ -229,8 +235,14 @@ HighlightPlan buildHighlightPlan(GfxRenderer& renderer, const Page& page, const 
   HighlightPlan plan;
   if (records.empty()) return plan;
   const bool hasCandidate = std::any_of(records.begin(), records.end(), [&](const auto& record) {
-    return record.spineIndex == spineIndex &&
-           recordCouldResolveOnPage(record, pageIndex, pageVisibleOffset, nextPageVisibleOffset);
+    if (record.spineIndex != spineIndex) return false;
+    for (size_t i = 0; i < ClippingCodec::segmentCount(record); ++i) {
+      if (segmentCouldResolveOnPage(ClippingCodec::segmentAt(record, i), pageIndex, pageVisibleOffset,
+                                    nextPageVisibleOffset)) {
+        return true;
+      }
+    }
+    return false;
   });
   // This avoids page-word collection, a 2KB text batch and font measurement on
   // the overwhelmingly common pages that contain no highlight anchor.

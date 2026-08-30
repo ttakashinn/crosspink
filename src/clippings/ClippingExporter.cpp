@@ -70,10 +70,8 @@ bool validRecords(const std::vector<ClippingCodec::Record>& records) {
   std::array<uint32_t, ClippingCodec::MAX_CLIPPINGS_PER_BOOK> ids{};
   for (size_t i = 0; i < records.size(); ++i) {
     const auto& record = records[i];
-    if (record.id == 0 || record.startWordIndex > record.endWordIndex || record.text.empty() ||
-        record.text.size() > ClippingCodec::MAX_TEXT_BYTES || !utf8IsValid(record.text) ||
-        std::find(ids.begin(), ids.begin() + static_cast<std::ptrdiff_t>(i), record.id) !=
-            ids.begin() + static_cast<std::ptrdiff_t>(i)) {
+    if (!ClippingCodec::validRecord(record) || std::find(ids.begin(), ids.begin() + static_cast<std::ptrdiff_t>(i),
+                                                         record.id) != ids.begin() + static_cast<std::ptrdiff_t>(i)) {
       return false;
     }
     ids[i] = record.id;
@@ -91,9 +89,15 @@ bool writeBook(HalFile& file, const SavedItemsCatalog::Entry& book, const std::v
   }
 
   for (const auto& record : records) {
-    const std::string location = "- Page " + std::to_string(static_cast<unsigned>(record.pageHint) + 1U) +
-                                 " | Chapter " + std::to_string(static_cast<unsigned>(record.spineIndex) + 1U) +
-                                 " | Offset " + std::to_string(record.pageVisibleOffset) + "\n\n";
+    const auto first = ClippingCodec::segmentAt(record, 0);
+    const auto last = ClippingCodec::segmentAt(record, ClippingCodec::segmentCount(record) - 1);
+    const std::string pages = first.pageHint == last.pageHint
+                                  ? "Page " + std::to_string(static_cast<unsigned>(first.pageHint) + 1U)
+                                  : "Pages " + std::to_string(static_cast<unsigned>(first.pageHint) + 1U) + "-" +
+                                        std::to_string(static_cast<unsigned>(last.pageHint) + 1U);
+    const std::string location = "- " + pages + " | Chapter " +
+                                 std::to_string(static_cast<unsigned>(record.spineIndex) + 1U) + " | Offset " +
+                                 std::to_string(first.pageVisibleOffset) + "\n\n";
     if (!writeString(file, location, digest) || !writeString(file, record.text, digest) ||
         !writeLiteral(file, "\n==========\n", digest)) {
       return false;

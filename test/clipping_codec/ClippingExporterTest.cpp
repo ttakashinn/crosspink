@@ -145,3 +145,17 @@ TEST_F(ClippingExporterTest, UnavailableOnlyExportDoesNotReplaceExistingFile) {
   EXPECT_EQ(result.skippedBooks, 1);
   EXPECT_EQ(readAll(output), oldExport);
 }
+
+TEST_F(ClippingExporterTest, ExportsMultiPageLocationRange) {
+  const auto entry = book("/Books/book.epub", "Book", "Author");
+  ClippingCodec::Record record{1, 2, 30, 4, 6, "page one page two", 12};
+  record.segmentCount = 2;
+  record.segments[0] = {2, 30, 4, 6, 0, 8};
+  record.segments[1] = {3, 70, 0, 1, 9, 8};
+  LoaderContext context;
+  context.records[entry.sourcePath] = {record};
+
+  ASSERT_EQ(ClippingExporter::exportTo({entry}, output.string(), loadBook, &context).status,
+            ClippingExporter::Status::EXPORTED);
+  EXPECT_NE(readAll(output).find("- Pages 3-4 | Chapter 2 | Offset 30"), std::string::npos);
+}

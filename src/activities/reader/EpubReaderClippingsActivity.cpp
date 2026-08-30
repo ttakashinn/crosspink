@@ -149,7 +149,12 @@ void EpubReaderClippingsActivity::refreshWindow(int start) {
     snippets[i] = normalizedWhitespace(clipping.text);
     const int tocIndex = epub ? epub->getTocIndexForSpineIndex(clipping.spineIndex) : -1;
     const std::string chapter = tocIndex >= 0 ? epub->getTocItem(tocIndex).title : tr(STR_UNNAMED);
-    subtitles[i] = chapter + " · " + tr(STR_CLIPPING_PAGE_PREFIX) + " " + std::to_string(clipping.pageHint + 1);
+    const auto first = ClippingCodec::segmentAt(clipping, 0);
+    const auto last = ClippingCodec::segmentAt(clipping, ClippingCodec::segmentCount(clipping) - 1);
+    const std::string pageRange = first.pageHint == last.pageHint
+                                      ? std::to_string(first.pageHint + 1)
+                                      : std::to_string(first.pageHint + 1) + "–" + std::to_string(last.pageHint + 1);
+    subtitles[i] = chapter + " · " + tr(STR_CLIPPING_PAGE_PREFIX) + " " + pageRange;
     fui::ListItem item;
     item.label = snippets[i].c_str();
     item.subtitle = subtitles[i].c_str();

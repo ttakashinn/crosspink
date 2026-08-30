@@ -99,9 +99,13 @@ class WifiSelectionActivity final : public Activity, private UiAppHost {
   int forgetPromptSelection = 0;
 
   // Connection timeout
-  static constexpr unsigned long CONNECTION_TIMEOUT_MS = 15000;
-  static constexpr unsigned long AUTO_CONNECTION_TIMEOUT_MS = 7000;
+  static constexpr unsigned long CONNECTION_TIMEOUT_MS = 25000;
+  static constexpr unsigned long AUTO_CONNECTION_TIMEOUT_MS = 15000;
+  static constexpr unsigned long CONNECTION_STATUS_LOG_INTERVAL_MS = 2000;
   unsigned long connectionStartTime = 0;
+  unsigned long lastConnectionStatusLogTime = 0;
+  int lastLoggedWifiStatus = -1;
+  bool connectionBeginAccepted = true;
 
   // The UiAppHost app hosts the network list and the save/forget prompts
   // (themed rows and dialogs, touch routing); every other state keeps its

@@ -30,7 +30,7 @@ struct WordRef {
 
 bool isSelectableToken(const char* text, size_t length);
 void collectWords(const Page& page, GfxRenderer& renderer, int fontId, int marginLeft, int marginTop,
-                  std::vector<WordRef>& words, uint16_t& rowCount);
+                  std::vector<WordRef>& words, uint16_t& rowCount, bool* truncated = nullptr);
 bool selectionText(const std::vector<WordRef>& words, uint16_t start, uint16_t end, std::string& text);
 
 struct HighlightLine {
@@ -44,9 +44,12 @@ struct ResolvedClipping {
   uint32_t id = 0;
   uint16_t startWordIndex = 0;
   uint16_t endWordIndex = 0;
+  uint8_t segmentIndex = 0;
 };
 
-inline constexpr size_t MAX_RESOLVED_CLIPPINGS = ClippingCodec::MAX_CLIPPINGS_PER_BOOK;
+// A resolved segment produces at least one underline line, so retaining more
+// entries than the geometry plan can draw only wastes stack/heap on ESP32-C3.
+inline constexpr size_t MAX_RESOLVED_CLIPPINGS = 128;
 
 size_t resolveClippings(const std::vector<WordRef>& words, const std::vector<ClippingCodec::Record>& records,
                         uint16_t spineIndex, uint16_t pageIndex, uint32_t pageVisibleOffset,

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -68,10 +70,23 @@ struct FilePathResult {
 };
 
 struct ClippingSelectionResult {
+  struct Segment {
+    uint16_t pageHint = 0;
+    uint32_t pageVisibleOffset = 0;
+    uint16_t startWordIndex = 0;
+    uint16_t endWordIndex = 0;
+    uint16_t textOffset = 0;
+    uint16_t textLength = 0;
+  };
+
+  static constexpr size_t MAX_SEGMENTS = 4;
   uint16_t startWordIndex = 0;
   uint16_t endWordIndex = 0;
   std::string text;
   uint32_t clippingId = 0;
+  uint16_t spineIndex = 0;
+  uint8_t segmentCount = 0;
+  std::array<Segment, MAX_SEGMENTS> segments{};
 };
 
 using ResultVariant = std::variant<std::monostate, WifiResult, KeyboardResult, MenuResult, ChapterResult, PercentResult,

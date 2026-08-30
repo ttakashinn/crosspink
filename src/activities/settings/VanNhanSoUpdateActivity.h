@@ -52,13 +52,17 @@ class VanNhanSoUpdateActivity final : public Activity {
   bool ignoreTriggerPowerUntilRelease = false;
   bool sleepCancelledByUser = false;
   unsigned long connectionStartTime = 0;
+  unsigned long lastConnectionStatusLogTime = 0;
+  int lastLoggedWifiStatus = -1;
+  bool connectionBeginAccepted = true;
   uint32_t currentProfileHash = 0;
   uint32_t currentDateKey = 0;
   uint16_t currentMinute = UINT16_MAX;
   std::atomic<size_t> downloadedBytes{0};
   std::atomic<size_t> totalBytes{0};
 
-  static constexpr unsigned long AUTO_CONNECTION_TIMEOUT_MS = 12000;
+  static constexpr unsigned long AUTO_CONNECTION_TIMEOUT_MS = 20000;
+  static constexpr unsigned long CONNECTION_STATUS_LOG_INTERVAL_MS = 2000;
   static constexpr uint32_t AUTOMATIC_DOWNLOAD_TIMEOUT_MS = 12000;
   static constexpr uint32_t MANUAL_DOWNLOAD_TIMEOUT_MS = 20000;
 

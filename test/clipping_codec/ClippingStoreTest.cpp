@@ -128,3 +128,16 @@ TEST_F(ClippingStoreTest, RekeysDataWhenBookMoves) {
   EXPECT_EQ(ClippingStore::load(movedSource, movedCache.string(), loaded), ClippingStore::LoadStatus::LOADED);
   EXPECT_EQ(loaded, records());
 }
+
+TEST_F(ClippingStoreTest, StreamingInspectionAcceptsMultiPageGeneration) {
+  ClippingCodec::Record record{1, 4, 20, 3, 8, "first page second page", 91};
+  record.segmentCount = 2;
+  record.segments[0] = {4, 20, 3, 8, 0, 10};
+  record.segments[1] = {5, 80, 0, 1, 11, 11};
+  const std::vector<ClippingCodec::Record> expected = {record};
+
+  ASSERT_EQ(ClippingStore::save(sourcePath_, cache_.string(), expected), ClippingStore::SaveStatus::SAVED);
+  std::vector<ClippingCodec::Record> loaded;
+  EXPECT_EQ(ClippingStore::load(sourcePath_, cache_.string(), loaded), ClippingStore::LoadStatus::LOADED);
+  EXPECT_EQ(loaded, expected);
+}
