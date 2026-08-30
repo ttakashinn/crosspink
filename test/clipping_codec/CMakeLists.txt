@@ -1,8 +1,10 @@
 add_executable(ClippingCodecTest
   ClippingCodecTest.cpp
   ClippingStoreTest.cpp
+  ClippingExporterTest.cpp
   SavedItemsCatalogTest.cpp
   ${REPO_ROOT}/src/clippings/ClippingCodec.cpp
+  ${REPO_ROOT}/src/clippings/ClippingExporter.cpp
   ${REPO_ROOT}/src/clippings/ClippingStore.cpp
   ${REPO_ROOT}/src/saved_items/SavedItemsCatalog.cpp
 )

@@ -19,6 +19,67 @@ void utf8TruncateChars(std::string& str, size_t numChars);
 // stored in NFD (e.g. some EPUB chapter titles) otherwise renders broken.
 std::string utf8ComposeNfc(std::string in);
 
+// Trim lookup-boundary punctuation/whitespace from a UTF-8 token and compose
+// Vietnamese combining marks. Punctuation inside a token (for example an
+// apostrophe) is preserved; invalid edge codepoints are discarded.
+std::string utf8CleanLookupWord(const std::string& text);
+
+// Compact Unicode lowercase mapping for ASCII and every precomposed
+// Vietnamese uppercase letter. This deliberately avoids a locale/runtime
+// Unicode dependency on the MCU.
+inline uint32_t utf8LowerVietnamese(const uint32_t cp) {
+  if (cp >= 'A' && cp <= 'Z') return cp + ('a' - 'A');
+  if (cp >= 0x1EA0 && cp <= 0x1EF8 && (cp & 1U) == 0) return cp + 1;
+  switch (cp) {
+    case 0x00C0:
+      return 0x00E0;
+    case 0x00C1:
+      return 0x00E1;
+    case 0x00C2:
+      return 0x00E2;
+    case 0x00C3:
+      return 0x00E3;
+    case 0x00C8:
+      return 0x00E8;
+    case 0x00C9:
+      return 0x00E9;
+    case 0x00CA:
+      return 0x00EA;
+    case 0x00CC:
+      return 0x00EC;
+    case 0x00CD:
+      return 0x00ED;
+    case 0x00D2:
+      return 0x00F2;
+    case 0x00D3:
+      return 0x00F3;
+    case 0x00D4:
+      return 0x00F4;
+    case 0x00D5:
+      return 0x00F5;
+    case 0x00D9:
+      return 0x00F9;
+    case 0x00DA:
+      return 0x00FA;
+    case 0x00DD:
+      return 0x00FD;
+    case 0x0102:
+      return 0x0103;
+    case 0x0110:
+      return 0x0111;
+    case 0x0128:
+      return 0x0129;
+    case 0x0168:
+      return 0x0169;
+    case 0x01A0:
+      return 0x01A1;
+    case 0x01AF:
+      return 0x01B0;
+    default:
+      return cp;
+  }
+}
+
 // Truncate a raw char buffer to the last complete UTF-8 codepoint boundary.
 // Returns the new length (<= len). If the buffer ends mid-sequence, the
 // incomplete trailing bytes are excluded.

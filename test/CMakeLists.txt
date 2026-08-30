@@ -38,6 +38,10 @@ target_compile_options(crosspoint_test_common INTERFACE
 enable_testing()
 include(GoogleTest)
 
+find_program(PYTHON3_EXECUTABLE NAMES python3 REQUIRED)
+add_test(NAME ReaderFontSymbolCoverageTest
+  COMMAND ${PYTHON3_EXECUTABLE} ${REPO_ROOT}/lib/EpdFont/scripts/verify-reader-symbol-fonts.py)
+
 add_subdirectory(streaming_json_parser)
 add_subdirectory(release_json_parser)
 add_subdirectory(differential_rounding)
@@ -67,3 +71,5 @@ add_subdirectory(clipping_codec)
 add_subdirectory(book_cache_utils)
 add_subdirectory(hal_file)
 add_subdirectory(home_menu_viewport)
+add_subdirectory(dictionary)
+add_subdirectory(page_turn_queue)

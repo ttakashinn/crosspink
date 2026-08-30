@@ -2,6 +2,7 @@
 
 #include <Epub.h>
 
+#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
@@ -30,8 +31,9 @@ class SavedItemsActivity final : public UiListActivity {
   bool catalogError = false;
   const bool clippingsOnly;
   OptionPopup popup;
+  std::atomic<bool> exportRequested{false};
 
-  int listCount() const override { return static_cast<int>(books.size()); }
+  int listCount() const override { return static_cast<int>(rowItems.size()); }
   const char* headerTitle() const override;
   void buildScreen(UiScreen& screen) override;
   void activateIndex(int index) override;
@@ -41,6 +43,9 @@ class SavedItemsActivity final : public UiListActivity {
 
   void reload();
   void rebuildRows();
+  bool isExportRow(int index) const;
+  int bookIndexForRow(int index) const;
+  void exportClippings();
   void showOpenMenu(int index);
   void showDeleteMenu(int index);
   void showDeleteConfirmation(int index, bool bookmarks);

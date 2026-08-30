@@ -12,6 +12,7 @@
 #include "MappedInputManager.h"
 #include "activities/reader/EpubReaderBookmarksActivity.h"
 #include "activities/reader/EpubReaderClippingsActivity.h"
+#include "clippings/ClippingExporter.h"
 #include "clippings/ClippingStore.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -53,8 +54,18 @@ void SavedItemsActivity::reload() {
 void SavedItemsActivity::rebuildRows() {
   subtitles.clear();
   rowItems.clear();
-  subtitles.reserve(books.size());
-  rowItems.reserve(books.size());
+  const size_t rowCount = books.size() + (clippingsOnly && !books.empty() ? 1U : 0U);
+  subtitles.reserve(rowCount);
+  rowItems.reserve(rowCount);
+  if (clippingsOnly && !books.empty()) {
+    subtitles.emplace_back(ClippingExporter::OUTPUT_PATH);
+    fui::ListItem exportItem;
+    exportItem.label = tr(STR_EXPORT_CLIPPINGS);
+    exportItem.subtitle = subtitles.back().c_str();
+    exportItem.icon = listIconFor(UIIcon::File, 32);
+    exportItem.actionValue = 0;
+    rowItems.push_back(exportItem);
+  }
   for (size_t i = 0; i < books.size(); ++i) {
     const auto& book = books[i];
     char counts[96];
@@ -77,9 +88,15 @@ void SavedItemsActivity::rebuildRows() {
     item.label = book.title.c_str();
     item.subtitle = subtitles.back().c_str();
     item.icon = listIconFor(UIIcon::Bookmark, 32);
-    item.actionValue = static_cast<int16_t>(i);
+    item.actionValue = static_cast<int16_t>(i + (clippingsOnly ? 1U : 0U));
     rowItems.push_back(item);
   }
+}
+
+bool SavedItemsActivity::isExportRow(const int index) const { return clippingsOnly && !books.empty() && index == 0; }
+
+int SavedItemsActivity::bookIndexForRow(const int index) const {
+  return index - (clippingsOnly && !books.empty() ? 1 : 0);
 }
 
 void SavedItemsActivity::buildScreen(UiScreen& screen) {
@@ -125,7 +142,7 @@ bool SavedItemsActivity::handleButtons() {
     return true;
   }
   if (mappedInput.wasLongPressed(MappedInputManager::Button::Confirm, DELETE_HOLD_MS)) {
-    if (listCount() > 0) showDeleteMenu(nav.selected);
+    if (listCount() > 0 && !isExportRow(nav.selected)) showDeleteMenu(bookIndexForRow(nav.selected));
     return true;
   }
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
@@ -140,17 +157,24 @@ void SavedItemsActivity::activateIndex(const int index) {
   if (index < 0 || index >= listCount()) return;
   app.clearTapFlash();
   nav.selected = index;
-  const auto& book = books[index];
+  if (isExportRow(index)) {
+    exportRequested.store(true);
+    requestUpdate();
+    return;
+  }
+  const int bookIndex = bookIndexForRow(index);
+  if (bookIndex < 0 || bookIndex >= static_cast<int>(books.size())) return;
+  const auto& book = books[bookIndex];
   if (clippingsOnly) {
-    openClippings(index);
+    openClippings(bookIndex);
     return;
   }
   if (book.bookmarkCount > 0 && book.clippingCount > 0) {
-    showOpenMenu(index);
+    showOpenMenu(bookIndex);
   } else if (book.bookmarkCount > 0) {
-    openBookmarks(index);
+    openBookmarks(bookIndex);
   } else {
-    openClippings(index);
+    openClippings(bookIndex);
   }
 }
 
@@ -158,10 +182,30 @@ void SavedItemsActivity::onRowLongPress(const int index) {
   if (index < 0 || index >= listCount()) return;
   app.clearTapFlash();
   nav.selected = index;
-  showDeleteMenu(index);
+  if (!isExportRow(index)) showDeleteMenu(bookIndexForRow(index));
+}
+
+void SavedItemsActivity::exportClippings() {
+  const auto loader = [](const SavedItemsCatalog::Entry& entry, std::vector<ClippingCodec::Record>& records, void*) {
+    std::string cachePath;
+    if (!getBookCachePath(entry.sourcePath, cachePath)) return false;
+    const auto status = ClippingStore::load(entry.sourcePath, cachePath, records);
+    return status == ClippingStore::LoadStatus::LOADED || status == ClippingStore::LoadStatus::LOADED_BACKUP ||
+           status == ClippingStore::LoadStatus::LOADED_TEMP;
+  };
+  const auto result = ClippingExporter::exportTo(books, ClippingExporter::OUTPUT_PATH, loader);
+  const char* message = tr(STR_CLIPPINGS_EXPORT_FAILED);
+  if (result.status == ClippingExporter::Status::EXPORTED) {
+    message = tr(STR_CLIPPINGS_EXPORTED);
+  } else if (result.status == ClippingExporter::Status::PARTIAL) {
+    message = tr(STR_CLIPPINGS_EXPORT_PARTIAL);
+  }
+  const char* options[] = {tr(STR_DONE)};
+  popup.show(message, options, 1, 0, [](int) {});
 }
 
 void SavedItemsActivity::showOpenMenu(const int index) {
+  if (index < 0 || index >= static_cast<int>(books.size())) return;
   const char* options[] = {tr(STR_BOOKMARKS), tr(STR_CLIPPINGS)};
   popup.show(books[index].title.c_str(), options, 2, 0, [this, index](const int selected) {
     if (selected == 0)
@@ -173,7 +217,7 @@ void SavedItemsActivity::showOpenMenu(const int index) {
 }
 
 void SavedItemsActivity::showDeleteMenu(const int index) {
-  if (index < 0 || index >= listCount()) return;
+  if (index < 0 || index >= static_cast<int>(books.size())) return;
   if (clippingsOnly) {
     showDeleteConfirmation(index, false);
     return;
@@ -199,7 +243,7 @@ void SavedItemsActivity::showDeleteConfirmation(const int index, const bool book
 }
 
 void SavedItemsActivity::deleteAll(const int index, const bool bookmarks) {
-  if (index < 0 || index >= listCount()) return;
+  if (index < 0 || index >= static_cast<int>(books.size())) return;
   const auto entry = books[index];
   bool saved = false;
   if (bookmarks) {
@@ -237,7 +281,7 @@ std::shared_ptr<Epub> SavedItemsActivity::makeBook(const std::string& path) {
 }
 
 void SavedItemsActivity::openBookmarks(const int index) {
-  if (index < 0 || index >= listCount()) return;
+  if (index < 0 || index >= static_cast<int>(books.size())) return;
   const auto entry = books[index];
   activeEpub = makeBook(entry.sourcePath);
   if (!activeEpub) {
@@ -266,7 +310,7 @@ void SavedItemsActivity::openBookmarks(const int index) {
 }
 
 void SavedItemsActivity::openClippings(const int index) {
-  if (index < 0 || index >= listCount()) return;
+  if (index < 0 || index >= static_cast<int>(books.size())) return;
   const auto entry = books[index];
   activeEpub = makeBook(entry.sourcePath);
   if (!activeEpub) {
@@ -313,6 +357,14 @@ void SavedItemsActivity::render(RenderLock&&) {
   drawChrome();
   renderUi();
   for (int pass = 0; nav.consumeRebuildNeeded() && pass < 8; ++pass) {
+    renderer.clearScreen();
+    drawChrome();
+    renderUi();
+  }
+  if (exportRequested.exchange(false)) {
+    GUI.drawPopup(renderer, tr(STR_EXPORTING_CLIPPINGS));
+    renderer.displayBuffer();
+    exportClippings();
     renderer.clearScreen();
     drawChrome();
     renderUi();

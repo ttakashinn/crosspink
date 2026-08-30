@@ -1,8 +1,14 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
+#include <limits>
 #include <string>
+
+namespace clipping_test_storage {
+inline size_t writeBudget = std::numeric_limits<size_t>::max();
+}
 
 class HalFile {
  public:
@@ -30,7 +36,15 @@ class HalFile {
     return file_ ? static_cast<int>(std::fread(buffer, 1, count, file_)) : -1;
   }
 
-  size_t write(const void* buffer, const size_t count) { return file_ ? std::fwrite(buffer, 1, count, file_) : 0; }
+  size_t write(const void* buffer, const size_t count) {
+    if (!file_) return 0;
+    const size_t allowed = std::min(count, clipping_test_storage::writeBudget);
+    const size_t written = std::fwrite(buffer, 1, allowed, file_);
+    if (clipping_test_storage::writeBudget != std::numeric_limits<size_t>::max()) {
+      clipping_test_storage::writeBudget -= written;
+    }
+    return written;
+  }
 
   void flush() {
     if (file_) std::fflush(file_);
@@ -71,6 +85,8 @@ class HalStorage {
   }
   bool openFileForRead(const char*, const std::string& path, HalFile& file) { return file.open(path.c_str(), "rb"); }
   bool openFileForWrite(const char*, const std::string& path, HalFile& file) { return file.open(path.c_str(), "wb"); }
+  void limitWritesTo(const size_t bytes) { clipping_test_storage::writeBudget = bytes; }
+  void resetFaults() { clipping_test_storage::writeBudget = std::numeric_limits<size_t>::max(); }
 };
 
 #define Storage HalStorage::getInstance()

@@ -13,6 +13,7 @@
 #include "CrossPointSettings.h"
 #include "DictionaryDefinitionActivity.h"
 #include "components/UITheme.h"
+#include "util/DictionaryHistoryStore.h"
 
 namespace {
 
@@ -176,6 +177,8 @@ void DictionaryWordSelectActivity::performLookup() {
   const bool found = ok && dict.lookup(words[selected].text, definition, headword, &result);
 
   if (found) {
+    DICTIONARY_HISTORY.record(words[selected].text);
+    if (!DICTIONARY_HISTORY.flush()) LOG_ERR("DICT", "Could not persist dictionary history");
     popup = Popup::None;
     startActivityForResult(
         std::make_unique<DictionaryDefinitionActivity>(renderer, mappedInput, std::move(headword),

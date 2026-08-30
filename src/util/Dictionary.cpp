@@ -5,11 +5,11 @@
 #include <Memory.h>
 
 #include <algorithm>
-#include <cctype>
 #include <cstdio>
 #include <cstring>
 
 #include "DictZip.h"
+#include "DictionaryQuery.h"
 #include "DictionaryRegistry.h"
 #include "StringUtils.h"
 
@@ -59,10 +59,6 @@ uint32_t readBe32(const uint8_t* p) {
   return (static_cast<uint32_t>(p[0]) << 24) | (static_cast<uint32_t>(p[1]) << 16) |
          (static_cast<uint32_t>(p[2]) << 8) | static_cast<uint32_t>(p[3]);
 }
-
-// Word characters for cleaning: ASCII alphanumerics plus any UTF-8
-// continuation/lead byte, so accented words keep their edges.
-bool isWordByte(unsigned char c) { return c >= 0x80 || std::isalnum(c) != 0; }
 
 // Facts read from the .ifo at open time. Only the first 2KB is scanned — .ifo
 // headers are tiny and both keys always appear early when present.
@@ -565,40 +561,14 @@ bool Dictionary::readDefinition(const DictLocation& location, std::string& out, 
   return true;
 }
 
-std::string Dictionary::cleanWord(const char* word) {
-  if (!word) return "";
-  const auto* b = reinterpret_cast<const unsigned char*>(word);
-  size_t start = 0;
-  size_t end = strlen(word);
-  // Curly quotes and dashes (General Punctuation U+2000-U+206F = E2 80/81 xx)
-  // are all >= 0x80, so isWordByte keeps them; strip those 3-byte codepoints
-  // from the edges too, or EPUB text like garage.” never matches a headword.
-  while (start < end) {
-    if (!isWordByte(b[start]))
-      start++;
-    else if (end - start >= 3 && b[start] == 0xE2 && (b[start + 1] == 0x80 || b[start + 1] == 0x81))
-      start += 3;
-    else
-      break;
-  }
-  while (end > start) {
-    if (!isWordByte(b[end - 1]))
-      end--;
-    else if (end - start >= 3 && b[end - 3] == 0xE2 && (b[end - 2] == 0x80 || b[end - 2] == 0x81))
-      end -= 3;
-    else
-      break;
-  }
-  if (start >= end) return "";
-
-  std::string result(word + start, end - start);
-  std::transform(result.begin(), result.end(), result.begin(),
-                 [](unsigned char c) { return c >= 0x80 ? c : static_cast<unsigned char>(std::tolower(c)); });
-  return result;
-}
+std::string Dictionary::cleanWord(const char* word) { return word ? DictionaryQuery::clean(word) : std::string{}; }
 
 void Dictionary::stemVariants(const std::string& word, std::vector<std::string>& out) {
   out.clear();
+  // The rules below are deliberately English-only. Applying byte-suffix
+  // stemming to Vietnamese or another Unicode word can turn a valid lookup
+  // miss into an unrelated headword.
+  if (std::any_of(word.begin(), word.end(), [](const unsigned char byte) { return byte >= 0x80; })) return;
   out.reserve(6);
   const size_t n = word.size();
   const auto add = [&out](std::string v) {

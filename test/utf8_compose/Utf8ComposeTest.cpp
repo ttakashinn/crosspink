@@ -77,3 +77,18 @@ TEST(Utf8Validation, RejectsMalformedAndNonScalarSequences) {
   EXPECT_FALSE(utf8IsValid("\xF4\x90\x80\x80"));  // beyond U+10FFFF
   EXPECT_FALSE(utf8IsValid("\x80"));              // stray continuation
 }
+
+TEST(Utf8DictionaryLookup, CleansUnicodeBoundariesAndComposesVietnamese) {
+  EXPECT_EQ(utf8CleanLookupWord("  “Tiếng!”  "), "Tiếng");
+  EXPECT_EQ(utf8CleanLookupWord("..."), "");
+  EXPECT_EQ(utf8CleanLookupWord("l'esprit"), "l'esprit");
+  EXPECT_EQ(utf8CleanLookupWord("Tie" + kCombCirc + kCombAcute + "ng"), "Tiếng");
+}
+
+TEST(Utf8DictionaryLookup, LowercasesEveryVietnameseUppercaseShape) {
+  EXPECT_EQ(utf8LowerVietnamese('A'), static_cast<uint32_t>('a'));
+  EXPECT_EQ(utf8LowerVietnamese(0x0110), 0x0111U);  // Đ -> đ
+  EXPECT_EQ(utf8LowerVietnamese(0x01AF), 0x01B0U);  // Ư -> ư
+  EXPECT_EQ(utf8LowerVietnamese(0x1EF8), 0x1EF9U);  // Ỹ -> ỹ
+  EXPECT_EQ(utf8LowerVietnamese(0x4E2D), 0x4E2DU);  // unrelated scripts unchanged
+}

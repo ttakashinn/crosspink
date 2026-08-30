@@ -21,6 +21,7 @@ parser.add_argument("fontstack", action="store", nargs='+', help="list of font f
 parser.add_argument("--2bit", dest="is2Bit", action="store_true", help="generate 2-bit greyscale bitmap instead of 1-bit black and white.")
 parser.add_argument("--mono", dest="mono", action="store_true", help="For 1-bit fonts, rasterise with FreeType's native monochrome renderer (hinted, drop-out controlled) instead of antialiased-greyscale then threshold. Crisper stems on well-hinted faces (e.g. Ubuntu); avoid on thin faces whose sub-pixel stems would drop out. Ignored with --2bit.")
 parser.add_argument("--additional-intervals", dest="additional_intervals", action="append", help="Additional code point intervals to export as min,max. This argument can be repeated.")
+parser.add_argument("--fallback-only-additional", dest="fallback_only_additional", action="store_true", help="Use secondary fontstack faces only for codepoints explicitly named by --additional-intervals. Keeps a small fallback from filling unrelated holes in the built-in interval set.")
 parser.add_argument("--compress", dest="compress", action="store_true", help="Compress glyph bitmaps using DEFLATE with group-based compression.")
 parser.add_argument("--zopfli", dest="zopfli", action="store_true", help="Use Zopfli for the DEFLATE backend instead of zlib. Produces standard raw-DEFLATE streams (decoded unchanged by the on-device uzlib inflater), typically a few percent smaller than zlib -9, at the cost of much slower compression. Requires --compress and the 'zopfli' package.")
 parser.add_argument("--force-autohint", dest="force_autohint", action="store_true", help="Force FreeType auto-hinter instead of native font hinting. Improves stem width consistency for fonts with weak or no native TrueType hints.")
@@ -282,7 +283,10 @@ if args.pnum:
 
 def load_glyph(code_point):
     face_index = 0
-    while face_index < len(font_stack):
+    face_count = len(font_stack)
+    if args.fallback_only_additional and not any(first <= code_point <= last for first, last in add_ints):
+        face_count = min(face_count, 1)
+    while face_index < face_count:
         face = font_stack[face_index]
         glyph_index = pnum_glyph_overrides.get((face_index, code_point))
         if glyph_index is None:

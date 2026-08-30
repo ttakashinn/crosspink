@@ -19,6 +19,7 @@
 #include "ReadingStats.h"
 #include "clippings/ClippingCodec.h"
 #include "components/OptionPopup.h"
+#include "util/BoundedPageTurnQueue.h"
 
 class EpubReaderActivity final : public ReaderActivity {
   std::shared_ptr<Epub> epub;
@@ -34,7 +35,7 @@ class EpubReaderActivity final : public ReaderActivity {
   std::optional<uint32_t> pendingOffsetJump;
   unsigned long lastPageTurnTime = 0UL;
   unsigned long pageTurnDuration = 0UL;
-  int8_t pendingManualTurn = 0;
+  BoundedPageTurnQueue pendingManualTurns;
   bool pendingPercentJump = false;
   float pendingSpineProgress = 0.0f;
   bool pendingScreenshot = false;
