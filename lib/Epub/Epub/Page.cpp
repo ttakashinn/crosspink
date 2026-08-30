@@ -170,6 +170,25 @@ bool Page::serialize(HalFile& file) const {
     }
   }
 
+  if (file.write(publisherPageLabel, sizeof(publisherPageLabel)) != sizeof(publisherPageLabel)) {
+    LOG_ERR("PGE", "Failed to write publisher page label");
+    return false;
+  }
+
+  const uint16_t linkCount = std::min<uint16_t>(links.size(), MAX_LINKS_PER_PAGE);
+  serialization::writePod(file, linkCount);
+  for (uint16_t i = 0; i < linkCount; i++) {
+    const auto& link = links[i];
+    if (file.write(link.href, sizeof(link.href)) != sizeof(link.href)) {
+      LOG_ERR("PGE", "Failed to write link %u", i);
+      return false;
+    }
+    serialization::writePod(file, link.x);
+    serialization::writePod(file, link.y);
+    serialization::writePod(file, link.width);
+    serialization::writePod(file, link.height);
+  }
+
   return true;
 }
 
@@ -234,6 +253,44 @@ std::unique_ptr<Page> Page::deserialize(HalFile& file) {
     }
     entry.number[sizeof(entry.number) - 1] = '\0';
     entry.href[sizeof(entry.href) - 1] = '\0';
+  }
+
+  if (file.read(page->publisherPageLabel, sizeof(page->publisherPageLabel)) != sizeof(page->publisherPageLabel)) {
+    LOG_ERR("PGE", "Failed to read publisher page label");
+    return nullptr;
+  }
+  if (memchr(page->publisherPageLabel, '\0', sizeof(page->publisherPageLabel)) == nullptr) {
+    LOG_ERR("PGE", "Invalid publisher page label terminator");
+    return nullptr;
+  }
+  page->publisherPageLabel[sizeof(page->publisherPageLabel) - 1] = '\0';
+  if (!utf8IsValid(page->publisherPageLabel)) {
+    LOG_ERR("PGE", "Invalid publisher page label UTF-8");
+    return nullptr;
+  }
+
+  uint16_t linkCount;
+  serialization::readPod(file, linkCount);
+  if (linkCount > MAX_LINKS_PER_PAGE) {
+    LOG_ERR("PGE", "Invalid link count %u", linkCount);
+    return nullptr;
+  }
+  page->links.resize(linkCount);
+  for (uint16_t i = 0; i < linkCount; i++) {
+    auto& link = page->links[i];
+    if (file.read(link.href, sizeof(link.href)) != sizeof(link.href)) {
+      LOG_ERR("PGE", "Failed to read link %u", i);
+      return nullptr;
+    }
+    link.href[sizeof(link.href) - 1] = '\0';
+    serialization::readPod(file, link.x);
+    serialization::readPod(file, link.y);
+    serialization::readPod(file, link.width);
+    serialization::readPod(file, link.height);
+    if (link.href[0] == '\0' || link.width <= 0 || link.height <= 0) {
+      LOG_ERR("PGE", "Invalid link geometry %u", i);
+      return nullptr;
+    }
   }
 
   return page;

@@ -27,3 +27,26 @@ TEST(ReaderRenderSpecTest, SafeModeDisablesHeavyOptionalLayoutInputs) {
   EXPECT_EQ(EpubRenderMode::Safe, actual.renderMode);
   EXPECT_STREQ("safe", epubRenderModeName(actual.renderMode));
 }
+
+TEST(ReaderRenderSpecTest, SimplifiedModeKeepsImagesAndPublisherCss) {
+  ReaderRenderSpec requested;
+  requested.embeddedStyle = true;
+  requested.imageRendering = 0;
+
+  const ReaderRenderSpec actual = applyEpubRenderMode(requested, EpubRenderMode::Simplified);
+
+  EXPECT_TRUE(actual.embeddedStyle);
+  EXPECT_EQ(0, actual.imageRendering);
+  EXPECT_EQ(EpubRenderMode::Simplified, actual.renderMode);
+  EXPECT_STREQ("simplified", epubRenderModeName(actual.renderMode));
+  EXPECT_EQ(EpubRenderMode::Safe, nextLighterEpubRenderMode(actual.renderMode));
+}
+
+TEST(ReaderRenderSpecTest, RemembersFallbackOnlyAfterSuccessfulPageRender) {
+  EXPECT_FALSE(
+      shouldRememberEpubFallback(static_cast<uint8_t>(EpubRenderMode::Standard), EpubRenderMode::Simplified, false));
+  EXPECT_TRUE(
+      shouldRememberEpubFallback(static_cast<uint8_t>(EpubRenderMode::Standard), EpubRenderMode::Simplified, true));
+  EXPECT_FALSE(
+      shouldRememberEpubFallback(static_cast<uint8_t>(EpubRenderMode::Simplified), EpubRenderMode::Simplified, true));
+}

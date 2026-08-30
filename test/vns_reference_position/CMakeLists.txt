@@ -1,0 +1,4 @@
+add_executable(VnsReferencePositionTest VnsReferencePositionTest.cpp)
+target_include_directories(VnsReferencePositionTest PRIVATE ${CMAKE_SOURCE_DIR}/../src)
+target_link_libraries(VnsReferencePositionTest PRIVATE crosspoint_test_common GTest::gtest_main)
+gtest_discover_tests(VnsReferencePositionTest)

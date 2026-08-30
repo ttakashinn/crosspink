@@ -56,6 +56,8 @@ class CrossPointState : public PersistableStore<CrossPointState> {
   uint16_t vanNhanSoLastHttpStatus = 0;
   uint32_t vanNhanSoPendingProfileHash = 0;
   uint32_t vanNhanSoFailureProfileHash = 0;
+  uint8_t vanNhanSoAutoRetrySkipsRemaining = 0;
+  uint32_t lastDictionaryReviewWordHash = 0;
 
   static const char* getFilePath() { return "/.crosspoint/state.json"; }
   void toJson(JsonDocument& doc) const;

@@ -331,6 +331,9 @@ TEST(ReadingStatsCalendar, HandlesLeapDaysTimezoneAndStreaks) {
 
 TEST(ReadingStatsCalendar, IgnoresUnknownOrBackwardClockAndBoundsFinishEstimate) {
   BookReadingStats stats{3600, 60, 3, false, 500, 20260829, 20260829, 1, 1};
+  stats.avgSecondsPerForwardPage = 60;
+  stats.paceSampleCount = 60;
+  stats.estimatedTimeLeftSeconds = 3600;
   ReadingStatsMath::recordReadingDay(stats, 0);
   ReadingStatsMath::recordReadingDay(stats, 20260828);
   EXPECT_EQ(stats.lastReadDateKey, 20260829U);
@@ -353,6 +356,33 @@ TEST(ReadingStatsCalendar, ComputesCurrentAndLongestHistoryWithoutKeepingAStaleS
   EXPECT_EQ(ReadingStatsMath::displayedCurrentStreak(stats, 20260829), 2U);
   EXPECT_EQ(ReadingStatsMath::displayedCurrentStreak(stats, 20260830), 2U);
   EXPECT_EQ(ReadingStatsMath::displayedCurrentStreak(stats, 20260831), 0U);
+}
+
+TEST(ReadingStatsEstimate, RequiresEnoughRealReadingBeforeShowingTimeLeft) {
+  BookReadingStats stats;
+  stats.totalReadingSeconds = 299;
+  stats.avgSecondsPerForwardPage = 30;
+  stats.paceSampleCount = 5;
+  stats.estimatedTimeLeftSeconds = ReadingStatsMath::paceEstimatedSecondsLeft(stats, 50);
+  EXPECT_FALSE(ReadingStatsMath::hasConfidentTimeLeft(stats, 50));
+
+  stats.totalReadingSeconds = 300;
+  EXPECT_TRUE(ReadingStatsMath::hasConfidentTimeLeft(stats, 50));
+  stats.paceSampleCount = 4;
+  EXPECT_FALSE(ReadingStatsMath::hasConfidentTimeLeft(stats, 50));
+  stats.paceSampleCount = 5;
+  EXPECT_FALSE(ReadingStatsMath::hasConfidentTimeLeft(stats, 100));
+}
+
+TEST(ReadingStatsEstimate, UsesQualifiedPagePaceWithoutProgressTimeFallback) {
+  BookReadingStats stats;
+  stats.totalReadingSeconds = 3600;
+  stats.avgSecondsPerForwardPage = 24;
+  stats.paceSampleCount = 20;
+  EXPECT_EQ(ReadingStatsMath::paceEstimatedSecondsLeft(stats, 75), 1800U);
+  EXPECT_EQ(ReadingStatsMath::estimatedSecondsLeft(stats, 50), 0U);
+  stats.estimatedTimeLeftSeconds = ReadingStatsMath::paceEstimatedSecondsLeft(stats, 75);
+  EXPECT_EQ(ReadingStatsMath::estimatedSecondsLeft(stats, 50), 1800U);
 }
 
 TEST(ReadingStatsLayout, FitsX4X4ProAndX3PortraitViewports) {

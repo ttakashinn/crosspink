@@ -45,12 +45,20 @@ class BookMetadataCache {
           spineIndex(spineIndex) {}
   };
 
+  struct PageListEntry {
+    std::string label;
+    std::string href;
+    std::string anchor;
+    int16_t spineIndex = -1;
+  };
+
  private:
   std::string cachePath;
   std::string sourcePath;
   uint32_t lutOffset;
   uint16_t spineCount;
   uint16_t tocCount;
+  uint16_t pageListCount;
   bool loaded;
   bool buildMode;
   bool sourceMismatch = false;
@@ -59,6 +67,7 @@ class BookMetadataCache {
   // Temp file handles during build
   HalFile spineFile;
   HalFile tocFile;
+  HalFile pageListFile;
   // Buffers the per-entry tmp-file writes during the OPF/TOC passes: those
   // writes interleave with zip-inflate SD reads, and unbuffered they thrash
   // SdFat's shared sector cache (one 512B transaction per 4-byte pod). One
@@ -94,6 +103,8 @@ class BookMetadataCache {
 
   bool writeSpineEntry(HalFile& file, const SpineEntry& entry) const;
   bool writeTocEntry(HalFile& file, const TocEntry& entry) const;
+  bool writePageListEntry(HalFile& file, const PageListEntry& entry) const;
+  int16_t resolveSpineIndex(const std::string& href);
 
  public:
   BookMetadata coreMetadata;
@@ -104,6 +115,7 @@ class BookMetadataCache {
         lutOffset(0),
         spineCount(0),
         tocCount(0),
+        pageListCount(0),
         loaded(false),
         buildMode(false) {}
   ~BookMetadataCache() = default;
@@ -115,6 +127,7 @@ class BookMetadataCache {
   bool endContentOpfPass();
   bool beginTocPass();
   void createTocEntry(const std::string& title, const std::string& href, const std::string& anchor, uint8_t level);
+  void createPageListEntry(const std::string& label, const std::string& href, const std::string& anchor);
   bool endTocPass();
   bool endWrite();
   bool cleanupTmpFiles() const;
@@ -126,6 +139,7 @@ class BookMetadataCache {
   bool load();
   SpineEntry getSpineEntry(int index);
   TocEntry getTocEntry(int index);
+  std::vector<PageListEntry> getPageListEntriesForSpine(int spineIndex) const;
   // Cumulative byte size up to and including the given spine item (0 if out of range
   // or not loaded). Backed by the in-RAM cumulativeSizes cache populated in load().
   uint32_t getCumulativeSize(int index) const;

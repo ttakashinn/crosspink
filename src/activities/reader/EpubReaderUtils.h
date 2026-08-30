@@ -1,9 +1,11 @@
 #pragma once
 
 #include <Epub.h>
+#include <Epub/PageLink.h>
 #include <Logging.h>
 
 #include <optional>
+#include <vector>
 
 #include "ProgressFile.h"
 
@@ -37,6 +39,24 @@ inline bool saveProgress(const Epub& epub, int spineIndex, int pageNumber, int p
   }
   LOG_DBG("ERS", "Progress saved: spine=%d offset=%u page=%d", spineIndex, visibleTextOffset.value_or(0), pageNumber);
   return true;
+}
+
+inline const PageLink* linkAtPoint(const std::vector<PageLink>& links, const int x, const int y, const int marginLeft,
+                                   const int marginTop) {
+  constexpr int TOUCH_SLOP = 6;
+  constexpr int MIN_TOUCH_WIDTH = 28;
+  const int pageX = x - marginLeft;
+  const int pageY = y - marginTop;
+  const PageLink* best = nullptr;
+  uint64_t bestScore = UINT64_MAX;
+  for (const auto& link : links) {
+    const uint64_t score = link.touchScore(pageX, pageY, TOUCH_SLOP, MIN_TOUCH_WIDTH);
+    if (score < bestScore) {
+      best = &link;
+      bestScore = score;
+    }
+  }
+  return best;
 }
 
 }  // namespace EpubReaderUtils

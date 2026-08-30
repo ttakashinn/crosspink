@@ -166,6 +166,34 @@
       ]
     },
     {
+      "id": "publisher-page-list",
+      "href": "text/04-phan-trang.xhtml#publisher-page-101",
+      "full_build": true,
+      "structural_expectations": {
+        "x4-default": {
+          "publisher_page": {
+            "label": "101"
+          }
+        },
+        "x3-default": {
+          "publisher_page": {
+            "label": "101"
+          }
+        },
+        "x4-no-text-aa": {
+          "publisher_page": {
+            "label": "101"
+          }
+        }
+      },
+      "covers": [
+        "EPUB Navigation Document page-list",
+        "space-separated epub:type and role tokens",
+        "page-list label priority over inline marker label",
+        "publisher-page label inheritance"
+      ]
+    },
+    {
       "id": "tables-lists",
       "href": "text/05-bang-danh-sach.xhtml#wide-table",
       "full_build": true,

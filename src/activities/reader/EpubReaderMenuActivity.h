@@ -2,14 +2,17 @@
 #include <Epub.h>
 #include <I18n.h>
 
+#include <array>
 #include <string>
 #include <vector>
 
-#include "activities/UiListActivity.h"
+#include "activities/UiTabListActivity.h"
 #include "components/OptionPopup.h"
 
-class EpubReaderMenuActivity final : public UiListActivity {
+class EpubReaderMenuActivity final : public UiTabListActivity {
  public:
+  enum class Tab : uint8_t { Read, Marks, More, Count };
+
   // Menu actions available from the reader menu.
   enum class MenuAction {
     SELECT_CHAPTER,
@@ -30,7 +33,11 @@ class EpubReaderMenuActivity final : public UiListActivity {
     DICTIONARY,
     HIGHLIGHT_TEXT,
     MY_CLIPPINGS,
-    READING_STATS
+    READING_STATS,
+    WORD_SPACING,
+    REPAIR_PARAGRAPH_INDENT,
+    RENDER_MODE,
+    TRY_FULL_RENDER_QUALITY
   };
 
   struct MenuItem {
@@ -38,11 +45,14 @@ class EpubReaderMenuActivity final : public UiListActivity {
     StrId labelId;
   };
 
-  static void buildMenuItems(std::vector<MenuItem>& items, bool hasFootnotes, bool hasBookmarks);
+  static void buildMenuItems(std::vector<MenuItem>& items, bool hasFootnotes, bool hasBookmarks,
+                             bool hasRenderFallback = false);
 
   explicit EpubReaderMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const std::string& title,
                                   const int currentPage, const int totalPages, const int bookProgressPercent,
-                                  const uint8_t currentOrientation, const bool hasFootnotes, bool hasBookmarks);
+                                  const uint8_t currentOrientation, const bool hasFootnotes, bool hasBookmarks,
+                                  uint16_t autoPageTurnSeconds, uint8_t wordSpacing, bool repairParagraphIndent,
+                                  uint8_t renderMode, uint8_t activeRenderMode);
 
   void render(RenderLock&&) override;
   bool handleHomeGesture() override;
@@ -52,11 +62,17 @@ class EpubReaderMenuActivity final : public UiListActivity {
   // fixed-capacity array avoids any heap allocation for the row list. Labels
   // are set once in the constructor (buildMenuRowItems()); buildScreen()
   // only refreshes rows whose values reflect live state.
-  static constexpr size_t MAX_MENU_ITEMS = 20;
-  freeink::ui::ListItem menuRowItems[MAX_MENU_ITEMS]{};
+  static constexpr size_t MAX_MENU_ITEMS = 24;
+  static constexpr size_t TAB_COUNT = static_cast<size_t>(Tab::Count);
+  std::array<std::array<freeink::ui::ListItem, MAX_MENU_ITEMS>, TAB_COUNT> menuRowItems{};
   void buildMenuRowItems();
 
-  int listCount() const override { return static_cast<int>(menuItems.size()); }
+  int listCount() const override { return static_cast<int>(activeItems().size()); }
+  int tabCount() const override { return static_cast<int>(Tab::Count); }
+  int activeTab() const override { return static_cast<int>(activeTab_); }
+  const char* tabLabel(int index) const override;
+  void onTabAction(int index) override;
+  void stepTab(int direction) override;
   void buildScreen(UiScreen& screen) override;
   void activateIndex(int index) override;
   // Popup input runs before any button or touch handling.
@@ -68,17 +84,26 @@ class EpubReaderMenuActivity final : public UiListActivity {
   void drawChrome() override;
 
   void closeCancelled();
+  void switchTab(int direction);
+  const std::vector<MenuItem>& activeItems() const { return tabItems[static_cast<size_t>(activeTab_)]; }
+  std::vector<MenuItem>& activeItems() { return tabItems[static_cast<size_t>(activeTab_)]; }
+  static Tab tabForAction(MenuAction action);
+  static std::string formatAutoTurnInterval(uint16_t seconds);
+  static int autoTurnIndex(uint16_t seconds);
 
   // Fixed menu layout
-  std::vector<MenuItem> menuItems;
+  std::array<std::vector<MenuItem>, TAB_COUNT> tabItems;
+  Tab activeTab_ = Tab::Read;
 
   OptionPopup optionPopup;
   std::string title = "Reader Menu";
   uint8_t pendingOrientation = 0;
-  uint8_t selectedPageTurnOption = 0;
+  uint16_t selectedAutoTurnSeconds = 0;
+  uint8_t selectedWordSpacing = 0;
+  uint8_t selectedRepairParagraphIndent = 0;
+  uint8_t selectedRenderMode = 0;
   const std::vector<StrId> orientationLabels = {StrId::STR_PORTRAIT, StrId::STR_LANDSCAPE_CW, StrId::STR_INVERTED,
                                                 StrId::STR_LANDSCAPE_CCW};
-  const std::vector<const char*> pageTurnLabels = {I18N.get(StrId::STR_STATE_OFF), "1", "3", "6", "12"};
   int currentPage = 0;
   int totalPages = 0;
   int bookProgressPercent = 0;

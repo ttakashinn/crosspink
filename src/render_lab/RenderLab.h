@@ -35,7 +35,7 @@ void recordTimings(unsigned long prewarmMs, unsigned long bwRenderMs, unsigned l
 void recordGrayscaleOutcome(bool applied, const char* path, uint16_t stripRows, const char* fallbackReason);
 
 [[noreturn]] void complete(const GfxRenderer& renderer, int spineIndex, int pageIndex, int pageCount,
-                           uint32_t visibleTextOffset, EpubRenderMode renderMode);
+                           uint32_t visibleTextOffset, EpubRenderMode renderMode, const char* publisherPageLabel);
 
 }  // namespace render_lab
 

@@ -3,6 +3,7 @@
 #include <expat.h>
 
 #include <string>
+#include <string_view>
 
 class BookMetadataCache;
 
@@ -24,6 +25,7 @@ class TocNavParser final : public Print {
   XML_Parser parser = nullptr;
   ParserState state = START;
   BookMetadataCache* cache;
+  bool currentNavIsPageList = false;
 
   // Track nesting depth for <ol> elements to determine TOC depth
   uint8_t olDepth = 0;

@@ -6,10 +6,13 @@ All POD fields are written in the ESP32 little-endian representation used by
 
 ## `book.bin`
 
-### Version 10
+### Version 13
 
 `book.bin` stores EPUB metadata plus lookup tables for spine and TOC entries.
-The current firmware writes this version from `BookMetadataCache`.
+The current firmware writes this version from `BookMetadataCache`. Version 12
+added a bounded source fingerprint so replacing an EPUB at the same path
+invalidates generated metadata. Version 13 invalidates older metadata when
+publisher `page-list` sidecar support is enabled.
 
 ImHex pattern:
 
@@ -18,7 +21,7 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 10
+#define EXPECTED_VERSION 13
 #define MAX_STRING_LENGTH 65535
 
 struct String {
@@ -55,6 +58,12 @@ struct TocEntry {
     s16 spineIndex [[comment("Index into spine (-1 if none)")]];
 };
 
+enum SourceFingerprintKind : u8 {
+    UNAVAILABLE = 0,
+    FILE_SIZE = 1,
+    CENTRAL_DIRECTORY = 2
+};
+
 struct BookBin {
     u8 version;
     if (version != EXPECTED_VERSION) {
@@ -64,6 +73,10 @@ struct BookBin {
     u32 lutOffset [[comment("Offset to lookup tables")]];
     u16 spineCount;
     u16 tocCount;
+    SourceFingerprintKind sourceFingerprintKind;
+    u64 sourceFileSize;
+    u32 centralDirectorySize;
+    u32 centralDirectoryHash [[comment("FNV-1a 32-bit hash")]];
 
     Metadata metadata;
 
@@ -88,13 +101,87 @@ if (parsedSize != fileSize) {
 }
 ```
 
+## `page-list.bin`
+
+### Version 1
+
+This optional sidecar stores publisher-page entries parsed from the EPUB
+Navigation Document. It is generated beside `book.bin` through a temporary
+file and published by rename. A missing, unsupported or malformed sidecar is
+ignored; it never prevents the book itself from opening.
+
+The writer accepts at most 8,192 entries. The reader validates the version,
+entry count, string bounds, spine range, UTF-8 label and exact end of file, then
+returns at most 64 matching entries per spine.
+
+```c++
+import std.mem;
+import std.string;
+import std.core;
+
+#define EXPECTED_PAGE_LIST_VERSION 1
+#define MAX_PAGE_LIST_COUNT 8192
+#define MAX_LABEL_LENGTH 1024
+#define MAX_HREF_LENGTH 4096
+
+struct BoundedString {
+    u32 length;
+    char data[length];
+};
+
+struct PageListEntry {
+    BoundedString label [[comment("Maximum 1024 UTF-8 bytes")]];
+    BoundedString href [[comment("Maximum 4096 bytes")]];
+    BoundedString anchor [[comment("Maximum 4096 bytes")]];
+    s16 spineIndex;
+};
+
+struct PageListBin {
+    u8 version;
+    if (version != EXPECTED_PAGE_LIST_VERSION) {
+        std::error(std::format("Unsupported version: {}", version));
+    }
+    u16 entryCount;
+    if (entryCount > MAX_PAGE_LIST_COUNT) {
+        std::error(std::format("Too many entries: {}", entryCount));
+    }
+    PageListEntry entries[entryCount];
+};
+
+PageListBin pageList @ 0x00;
+```
+
 ## `section.bin`
 
-### Version 41
+### Version 49
 
-Each file in `sections/*.bin` stores one laid-out spine section. The header is
+Each file in `sections/*.bin`, `sections/*.simplified.bin` or
+`sections/*.safe.bin` stores one laid-out spine section. The header is
 also the cache-busting key: if any layout-affecting setting differs from the
 current reader settings, the section is discarded and rebuilt.
+
+Version 49 adds a 32-byte publisher-page label to each serialized page.
+
+Version 48 adds at most 32 internal-link records per page. Each record contains
+a 256-byte href plus signed 16-bit `x`, `y`, `width` and `height` values relative
+to the page origin.
+
+Version 47 adds `wordSpacing` and `repairParagraphIndent` to the cache header.
+
+Version 46 changes CSS cascade behavior for `!important` and invalid
+declarations, so older positioned output is invalid.
+
+Version 45 hardens section payload validation and clips pixel caches to the
+viewport.
+
+Version 44 invalidates cached glyph measurements after the Vietnamese-aware
+small-caps fix.
+
+Version 43 adds the active `renderMode` to the header. Standard, Simplified and
+Safe use separate section filenames to prevent a fallback from overwriting the
+preferred-quality cache.
+
+Version 42 changes descendant-selector and `page-break-before/after` layout.
 
 Version 41 keeps the version 40 serialized layout unchanged. It was bumped
 because simple HTML table rows are now laid out as positioned columns rather
@@ -158,7 +245,7 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 41
+#define EXPECTED_VERSION 49
 #define MAX_STRING_LENGTH 65535
 #define FOOTNOTE_NUMBER_LEN 32
 #define FOOTNOTE_HREF_LEN 256
@@ -282,12 +369,25 @@ struct FootnoteEntry {
     char href[FOOTNOTE_HREF_LEN];
 };
 
+struct PageLink {
+    char href[FOOTNOTE_HREF_LEN];
+    s16 x;
+    s16 y;
+    s16 width;
+    s16 height;
+};
+
 struct Page {
     u16 elementCount;
     PageElement elements[elementCount] [[inline]];
 
     u16 footnoteCount;
     FootnoteEntry footnotes[footnoteCount];
+
+    char publisherPageLabel[32];
+
+    u16 linkCount;
+    PageLink links[linkCount];
 };
 
 struct AnchorEntry {
@@ -321,6 +421,9 @@ struct SectionBin {
     bool embeddedStyle;
     u8 imageRendering;
     bool focusReadingEnabled;
+    u8 wordSpacing;
+    bool repairParagraphIndent;
+    u8 renderMode;
 
     u16 pageCount;
     u32 pageLutOffset;
@@ -363,3 +466,24 @@ if (parsedSize != fileSize) {
     std::warning(std::format("Unparsed data detected: {} bytes remaining at offset 0x{:X}", fileSize - parsedSize, parsedSize));
 }
 ```
+
+## `reader-settings-vns.bin`
+
+### Version 2
+
+Mỗi cache sách có thể chứa file setting 66 byte này cùng các generation
+`.tmp`/`.bak`. Header gồm magic `VNSR`, version 2, payload length 55 byte và
+CRC-32 của payload. Version 2 giữ 45 byte setting của version 1 rồi nối thêm:
+
+| Payload offset | Kiểu | Trường |
+| ---: | --- | --- |
+| 45 | `u8` | `wordSpacing`, miền 0–2 |
+| 46 | `u8` | `repairParagraphIndent`, 0/1 |
+| 47 | `u16` | `autoPageTurnSeconds`, 0 hoặc 5–120 |
+| 49 | `u8` | `preferredRenderMode`, miền 0–2 |
+| 50 | `u8` | `lastWorkingFallback`, miền 0–2 hoặc `0xFF` |
+| 51 | `u32` | `fallbackRenderSignature` |
+
+Decoder vẫn nhận version 1 và khởi tạo các trường mở rộng bằng giá trị an toàn.
+Version mới hơn làm store chuyển sang trạng thái không ghi để firmware cũ không
+ghi đè dữ liệu có ngữ nghĩa chưa biết.

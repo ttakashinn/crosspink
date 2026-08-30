@@ -91,17 +91,23 @@ inline float pagesPerMinute(const GlobalReadingStats& stats) {
              : static_cast<float>(stats.totalPagesTurned) * 60.0f / static_cast<float>(stats.totalReadingSeconds);
 }
 
-inline uint32_t progressEstimatedSecondsLeft(const BookReadingStats& stats, const int progressPercent) {
-  if (stats.isCompleted) return 0;
-  if (progressPercent <= 0 || progressPercent >= 100 || stats.totalReadingSeconds < 120) return 0;
-  const uint64_t remaining = static_cast<uint64_t>(stats.totalReadingSeconds) * (100 - progressPercent);
-  return static_cast<uint32_t>(std::min<uint64_t>(remaining / progressPercent, UINT32_MAX));
+inline uint32_t paceEstimatedSecondsLeft(const BookReadingStats& stats, const uint32_t remainingPages) {
+  if (stats.isCompleted || stats.avgSecondsPerForwardPage == 0 || remainingPages == 0) return 0;
+  const uint64_t remaining = static_cast<uint64_t>(stats.avgSecondsPerForwardPage) * remainingPages;
+  return static_cast<uint32_t>(std::min<uint64_t>(remaining, UINT32_MAX));
 }
 
 inline uint32_t estimatedSecondsLeft(const BookReadingStats& stats, const int progressPercent) {
-  if (stats.isCompleted) return 0;
-  return stats.estimatedTimeLeftSeconds > 0 ? stats.estimatedTimeLeftSeconds
-                                            : progressEstimatedSecondsLeft(stats, progressPercent);
+  (void)progressPercent;
+  return stats.isCompleted ? 0 : stats.estimatedTimeLeftSeconds;
+}
+
+inline bool hasConfidentTimeLeft(const BookReadingStats& stats, const int progressPercent) {
+  // Five qualified forward-page dwell samples and five active minutes keep a
+  // short browse/jump sequence from producing a noisy estimate in the reader.
+  return !stats.isCompleted && progressPercent > 0 && progressPercent < 100 && stats.avgSecondsPerForwardPage > 0 &&
+         stats.paceSampleCount >= 5 && stats.totalReadingSeconds >= 300 &&
+         estimatedSecondsLeft(stats, progressPercent) > 0;
 }
 
 inline bool isLeapYear(const uint32_t year) { return year % 4 == 0 && (year % 100 != 0 || year % 400 == 0); }

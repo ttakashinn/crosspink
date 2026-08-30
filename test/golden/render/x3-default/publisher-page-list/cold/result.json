@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "status": "ok",
+  "profile": "x3-default",
+  "checkpoint": "publisher-page-list",
+  "href": "text/04-phan-trang.xhtml#publisher-page-101",
+  "cache_state": "cold",
+  "epub_sha256": "ba3255392f08d254c905080430706214213485f1a72e93bdd68d2c207f8956ec",
+  "orientation": "portrait",
+  "logical_width": 528,
+  "logical_height": 792,
+  "physical_width": 792,
+  "physical_height": 528,
+  "spine_index": 4,
+  "page_index": 4,
+  "page_count": 7,
+  "visible_text_offset": 2043,
+  "publisher_page": {
+    "label": "101"
+  },
+  "font_family": "notoserif",
+  "font_point_size": 14,
+  "text_antialiasing": true,
+  "embedded_styles": true,
+  "paragraph_alignment": "justified",
+  "extra_paragraph_spacing": true,
+  "focus_reading": false,
+  "grayscale_lsb_captured": true,
+  "grayscale_msb_captured": true,
+  "framebuffer_pbm": "framebuffer.pbm",
+  "framebuffer_pgm": "framebuffer.pgm"
+}

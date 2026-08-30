@@ -14,10 +14,10 @@ bool isAutomatic(UpdateTrigger trigger);
 bool maySkipCurrentCache(UpdateTrigger trigger);
 bool shouldSleepAfterUpdate(UpdateTrigger trigger);
 
-// The daily mode may trust a matching cache only when the clock has moved
-// forward since the last server-confirmed success. A frozen RTC or a restored
-// settings file must perform a lightweight manifest check instead of keeping
-// yesterday's image indefinitely.
+// Automatic modes may trust a matching cache only after the wall clock has
+// advanced beyond the minute when the server confirmed it. A frozen, invalid,
+// or backwards clock must not keep suppressing refreshes. Manual refresh always
+// reaches the server.
 bool shouldSkipCurrentCache(UpdateTrigger trigger, bool cacheMatchesCurrentDate, uint32_t currentDate,
                             uint16_t currentMinute, uint32_t lastSuccessDate, uint16_t lastSuccessMinute);
 
@@ -33,5 +33,13 @@ uint32_t pendingProfileHash(bool hasCurrentProfileImage, uint32_t currentProfile
 bool isBackoffActive(uint32_t currentProfileHash, uint32_t failureProfileHash, bool lastAttemptFailed,
                      uint8_t consecutiveFailures, uint32_t currentDate, uint16_t currentMinute,
                      uint32_t lastAttemptDate, uint16_t lastAttemptMinute);
+
+// A device without trustworthy wall-clock time cannot measure a minute-based
+// backoff across deep sleep. Persist a small number of automatic triggers to
+// skip instead, so an unavailable network does not delay every sleep while a
+// later trigger can still recover without user intervention.
+uint8_t automaticRetrySkipsAfterFailure(uint8_t consecutiveFailures);
+bool shouldSkipAutomaticRetry(uint32_t currentProfileHash, uint32_t failureProfileHash, bool lastAttemptFailed,
+                              uint8_t skipsRemaining);
 
 }  // namespace vannhanso_update_policy

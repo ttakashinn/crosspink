@@ -10,6 +10,12 @@ TEST(PerBookReaderSettingsCodec, RoundTripsVietnameseSdFontName) {
   settings.fontPointSize = 18;
   settings.lineSpacing = CrossPointSettings::WIDE;
   settings.screenMargin = 15;
+  settings.wordSpacing = 2;
+  settings.repairParagraphIndent = 1;
+  settings.autoPageTurnSeconds = 45;
+  settings.preferredRenderMode = 1;
+  settings.lastWorkingFallback = 2;
+  settings.fallbackRenderSignature = 0x12345678U;
   const char name[] = "Văn Nhân Serif";
   std::copy(std::begin(name), std::end(name), settings.sdFontFamilyName.begin());
 
@@ -51,4 +57,52 @@ TEST(PerBookReaderSettingsCodec, RejectsInvalidValuesBeforeWriting) {
   settings.screenMargin = 10;
   settings.fontPointSize = 0;
   EXPECT_FALSE(PerBookReaderSettingsCodec::encode(settings, encoded));
+  settings.fontPointSize = 16;
+  settings.autoPageTurnSeconds = 4;
+  EXPECT_FALSE(PerBookReaderSettingsCodec::encode(settings, encoded));
+  settings.autoPageTurnSeconds = 30;
+  settings.preferredRenderMode = 3;
+  EXPECT_FALSE(PerBookReaderSettingsCodec::encode(settings, encoded));
+}
+
+TEST(PerBookReaderSettingsCodec, MigratesVersionOneWithSafeExtensionDefaults) {
+  PerBookReaderSettings settings;
+  settings.hasOverrides = true;
+  settings.fontPointSize = 19;
+
+  std::array<uint8_t, PerBookReaderSettingsCodec::PAYLOAD_OFFSET + PerBookReaderSettingsCodec::V1_PAYLOAD_SIZE> v1{};
+  std::copy(PerBookReaderSettingsCodec::MAGIC.begin(), PerBookReaderSettingsCodec::MAGIC.end(), v1.begin());
+  v1[PerBookReaderSettingsCodec::VERSION_OFFSET] = 1;
+  PerBookReaderSettingsCodec::writeU16(v1.data() + PerBookReaderSettingsCodec::LENGTH_OFFSET,
+                                       PerBookReaderSettingsCodec::V1_PAYLOAD_SIZE);
+  uint8_t* payload = v1.data() + PerBookReaderSettingsCodec::PAYLOAD_OFFSET;
+  payload[0] = 1;
+  payload[1] = settings.fontFamily;
+  payload[2] = settings.fontPointSize;
+  payload[3] = settings.lineSpacing;
+  payload[4] = settings.paragraphAlignment;
+  payload[5] = settings.orientation;
+  payload[6] = settings.screenMargin;
+  payload[7] = settings.embeddedStyle;
+  payload[8] = settings.focusReadingEnabled;
+  payload[9] = settings.hyphenationEnabled;
+  payload[10] = settings.extraParagraphSpacing;
+  payload[11] = settings.textAntiAliasing;
+  payload[12] = settings.imageRendering;
+  std::memcpy(payload + 13, settings.sdFontFamilyName.data(), settings.sdFontFamilyName.size());
+  PerBookReaderSettingsCodec::writeU32(
+      v1.data() + PerBookReaderSettingsCodec::CRC_OFFSET,
+      PerBookReaderSettingsCodec::crc32(payload, PerBookReaderSettingsCodec::V1_PAYLOAD_SIZE));
+
+  PerBookReaderSettings decoded;
+  EXPECT_EQ(PerBookReaderSettingsCodec::decode(v1.data(), v1.size(), decoded),
+            PerBookReaderSettingsCodec::DecodeStatus::OK);
+  EXPECT_TRUE(decoded.hasOverrides);
+  EXPECT_EQ(decoded.fontPointSize, 19);
+  EXPECT_EQ(decoded.wordSpacing, 0);
+  EXPECT_EQ(decoded.repairParagraphIndent, 0);
+  EXPECT_EQ(decoded.autoPageTurnSeconds, 0);
+  EXPECT_EQ(decoded.preferredRenderMode, 0);
+  EXPECT_EQ(decoded.lastWorkingFallback, UINT8_MAX);
+  EXPECT_EQ(decoded.fallbackRenderSignature, 0U);
 }

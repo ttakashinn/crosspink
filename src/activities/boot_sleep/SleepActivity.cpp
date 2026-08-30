@@ -12,6 +12,7 @@
 #include <Memory.h>
 #include <PNGdec.h>
 #include <Txt.h>
+#include <Utf8.h>
 #include <Xtc.h>
 
 #include <algorithm>
@@ -25,10 +26,14 @@
 #include "CrossPointState.h"
 #include "activities/reader/ReaderUtils.h"
 #include "components/UITheme.h"
+#include "features/dictionary_review/DictionaryReviewCard.h"
 #include "features/vannhanso/VanNhanSoCache.h"
 #include "fontIds.h"
 #include "images/Logo120.h"
 #include "images/MoonIcon.h"
+#include "util/Dictionary.h"
+#include "util/DictionaryHistoryStore.h"
+#include "util/HtmlToPlainText.h"
 
 namespace {
 
@@ -486,6 +491,27 @@ void releaseSdFontCachesForDecode(const GfxRenderer& renderer) {
   }
 }
 
+uint32_t dictionaryReviewWordHash(const std::string& word) {
+  uint32_t hash = 2166136261U;
+  for (const unsigned char byte : word) {
+    hash ^= byte;
+    hash *= 16777619U;
+  }
+  return hash;
+}
+
+int drawWrappedSleepText(const GfxRenderer& renderer, const int fontId, const int x, const int y, const int width,
+                         const std::string& text, const int maxLines) {
+  if (text.empty() || maxLines <= 0 || width <= 0) return y;
+  const auto lines = renderer.wrappedText(fontId, text.c_str(), width, maxLines);
+
+  const int lineHeight = renderer.getLineHeight(fontId);
+  for (size_t i = 0; i < lines.size(); ++i) {
+    renderer.drawText(fontId, x, y + static_cast<int>(i) * lineHeight, lines[i].c_str());
+  }
+  return y + static_cast<int>(lines.size()) * lineHeight;
+}
+
 }  // namespace
 
 void SleepActivity::onEnter() {
@@ -539,6 +565,8 @@ void SleepActivity::onEnter() {
       return renderCustomSleepScreen();
     case (CrossPointSettings::SLEEP_SCREEN_MODE::VANNHANSO):
       return renderVanNhanSoSleepScreen();
+    case (CrossPointSettings::SLEEP_SCREEN_MODE::DICTIONARY_REVIEW):
+      return renderDictionaryReviewSleepScreen();
     case (CrossPointSettings::SLEEP_SCREEN_MODE::COVER):
       return renderCoverSleepScreen();
     case (CrossPointSettings::SLEEP_SCREEN_MODE::COVER_CUSTOM):
@@ -570,6 +598,122 @@ void SleepActivity::renderVanNhanSoSleepScreen() const {
   }
 
   renderDefaultSleepScreen();
+}
+
+void SleepActivity::renderDictionaryReviewSleepScreen() const {
+  const auto& history = DICTIONARY_HISTORY.entries();
+  if (history.empty() || SETTINGS.dictionaryName[0] == '\0') {
+    LOG_DBG("SLP", "Dictionary review unavailable: no history or selected dictionary");
+    return renderDefaultSleepScreen();
+  }
+
+  releaseSdFontCachesForDecode(renderer);
+  Dictionary dictionary;
+  if (!dictionary.open(SETTINGS.dictionaryName) || dictionary.needsIndex()) {
+    // Sleeping must not unexpectedly launch a long index build. The normal
+    // dictionary screen will build it on the next explicit lookup.
+    LOG_ERR("SLP", "Dictionary review unavailable: dictionary missing or index stale");
+    return renderDefaultSleepScreen();
+  }
+
+  const size_t entryCount = history.size();
+  size_t start = static_cast<size_t>(random(static_cast<long>(entryCount)));
+  if (entryCount > 1 && dictionaryReviewWordHash(history[start]) == APP_STATE.lastDictionaryReviewWordHash) {
+    start = (start + 1) % entryCount;
+  }
+
+  DictionaryReviewCard selected;
+  uint32_t selectedHash = 0;
+  constexpr size_t MAX_LOOKUP_ATTEMPTS = 4;
+  const size_t attempts = std::min(entryCount, MAX_LOOKUP_ATTEMPTS);
+  for (size_t attempt = 0; attempt < attempts; ++attempt) {
+    const std::string& query = history[(start + attempt) % entryCount];
+    const uint32_t hash = dictionaryReviewWordHash(query);
+    if (entryCount > 1 && hash == APP_STATE.lastDictionaryReviewWordHash) continue;
+
+    std::string definition;
+    std::string headword;
+    Dictionary::LookupResult lookupResult = Dictionary::LookupResult::NotFound;
+    if (!dictionary.lookup(query.c_str(), definition, headword, &lookupResult,
+                           static_cast<uint32_t>(dictionary_review::MAX_SOURCE_BYTES))) {
+      continue;
+    }
+    definition.resize(static_cast<size_t>(utf8SafeTruncateBuffer(definition.data(), definition.size())));
+    std::replace(definition.begin(), definition.end(), '\0', '\n');
+    if (dictionary.definitionsAreHtml()) {
+      // htmlToPlainText reserves an output buffer the size of its input. Do not
+      // enter that allocation path when the largest contiguous block is already
+      // tight; another history entry or the default screen is safer than a
+      // sleep-time reset.
+      constexpr uint32_t HTML_CONVERSION_HEADROOM_BYTES = 4 * 1024;
+      if (ESP.getMaxAllocHeap() < definition.size() + HTML_CONVERSION_HEADROOM_BYTES) {
+        LOG_ERR("SLP", "Skipping dictionary review HTML conversion: low contiguous heap");
+        continue;
+      }
+      definition = htmlToPlainText(definition);
+    }
+    auto card = dictionary_review::extractCard(headword.empty() ? query : headword, definition);
+    if (!card.usable()) continue;
+    selected = std::move(card);
+    selectedHash = hash;
+    break;
+  }
+
+  if (!selected.usable()) {
+    LOG_ERR("SLP", "Dictionary review found no displayable history entry");
+    return renderDefaultSleepScreen();
+  }
+
+  const int pageWidth = renderer.getScreenWidth();
+  const int pageHeight = renderer.getScreenHeight();
+  const int side = std::max(24, pageWidth / 16);
+  const int contentWidth = pageWidth - side * 2;
+  renderer.clearScreen();
+
+  int y = 24;
+  renderer.drawCenteredText(UI_10_FONT_ID, y, tr(STR_DICTIONARY_REVIEW_TITLE), true, EpdFontFamily::BOLD);
+  y += renderer.getLineHeight(UI_10_FONT_ID) + 24;
+  const auto wordLines =
+      renderer.wrappedText(NOTOSERIF_18_FONT_ID, selected.word.c_str(), contentWidth, 2, EpdFontFamily::BOLD);
+  for (const auto& wordLine : wordLines) {
+    renderer.drawCenteredText(NOTOSERIF_18_FONT_ID, y, wordLine.c_str(), true, EpdFontFamily::BOLD);
+    y += renderer.getLineHeight(NOTOSERIF_18_FONT_ID);
+  }
+  y += 8;
+  if (!selected.phonetic.empty()) {
+    const auto phoneticLines = renderer.wrappedText(UI_10_FONT_ID, selected.phonetic.c_str(), contentWidth, 2);
+    for (const auto& line : phoneticLines) {
+      renderer.drawCenteredText(UI_10_FONT_ID, y, line.c_str());
+      y += renderer.getLineHeight(UI_10_FONT_ID);
+    }
+    y += 16;
+  } else {
+    y += 8;
+  }
+  renderer.drawLine(side, y, pageWidth - side, y, 2, true);
+  y += 18;
+
+  const auto drawSection = [&](const StrId label, const std::string& text, const int requestedMaxLines) {
+    const int labelHeight = renderer.getLineHeight(UI_10_FONT_ID) + 4;
+    const int textLineHeight = renderer.getLineHeight(NOTOSERIF_14_FONT_ID);
+    const int availableLines = (pageHeight - 30 - y - labelHeight) / std::max(1, textLineHeight);
+    const int maxLines = std::min(requestedMaxLines, availableLines);
+    if (text.empty() || maxLines <= 0) return;
+    renderer.drawText(UI_10_FONT_ID, side, y, I18N.get(label), true, EpdFontFamily::BOLD);
+    y += labelHeight;
+    y = drawWrappedSleepText(renderer, NOTOSERIF_14_FONT_ID, side, y, contentWidth, text, maxLines);
+    y += 14;
+  };
+
+  // Meaning is the only required detail and therefore owns the page before
+  // optional enrichment is considered.
+  drawSection(StrId::STR_DICTIONARY_MEANING, selected.meaning, 10);
+  drawSection(StrId::STR_DICTIONARY_EXAMPLE, selected.example, 4);
+  drawSection(StrId::STR_DICTIONARY_COLLOCATION, selected.collocation, 3);
+
+  renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+  APP_STATE.lastDictionaryReviewWordHash = selectedHash;
+  APP_STATE.saveToFile();
 }
 
 void SleepActivity::renderCustomSleepScreen() const {

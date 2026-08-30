@@ -13,6 +13,7 @@
 #include <string_view>
 #include <vector>
 
+#include "Epub/EpubRenderMode.h"
 #include "Epub/FootnoteEntry.h"
 #include "Epub/ParsedText.h"
 #include "Epub/blocks/ImageBlock.h"
@@ -62,6 +63,9 @@ class ChapterHtmlSlimParser {
   std::array<CssParser::DescendantMask, MAX_CSS_ANCESTOR_DEPTH> cssAncestorMasks = {};
   bool embeddedStyle;
   uint8_t imageRendering;
+  EpubRenderMode renderMode;
+  bool repairParagraphIndent;
+  uint8_t wordSpacing;
   std::string contentBase;
   std::string imageBasePath;
   int imageCounter = 0;
@@ -120,6 +124,7 @@ class ChapterHtmlSlimParser {
   std::vector<std::pair<std::string, uint16_t>> anchorData;
   std::string pendingAnchorId;          // deferred until after previous text block is flushed
   std::vector<std::string> tocAnchors;  // the list of anchors that are TOC chapter boundaries
+  std::vector<std::pair<std::string, std::string>> publisherPageAnchors;  // anchor -> printed label
   uint16_t xpathParagraphIndex = 0;
   uint16_t xpathListItemIndex = 0;
   // Canonical reading-position counter: zero-based Unicode codepoints in visible
@@ -129,6 +134,15 @@ class ChapterHtmlSlimParser {
   uint32_t partWordVisibleOffset = 0;
   uint32_t currentPageVisibleOffset = 0;
   bool currentPageVisibleOffsetSet = false;
+  struct PublisherPageMarker {
+    uint32_t visibleOffset = 0;
+    char label[32]{};
+  };
+  static constexpr size_t MAX_PUBLISHER_PAGE_MARKERS = 64;
+  std::array<PublisherPageMarker, MAX_PUBLISHER_PAGE_MARKERS> publisherPageMarkers{};
+  size_t publisherPageMarkerCount = 0;
+  size_t nextPublisherPageMarker = 0;
+  char activePublisherPageLabel[32]{};
   bool insideBody = false;
   bool htmlEnded_ = false;
   bool syntheticCharacterData = false;
@@ -137,6 +151,7 @@ class ChapterHtmlSlimParser {
   // Footnote link tracking
   bool insideFootnoteLink = false;
   int footnoteLinkDepth = -1;
+  uint8_t currentFootnoteLinkId = 0;
   FootnoteEntry currentFootnote = {};
   int currentFootnoteLinkTextLen = 0;
   std::vector<std::pair<int, FootnoteEntry>> pendingFootnotes;  // <wordIndex, entry>
@@ -171,6 +186,8 @@ class ChapterHtmlSlimParser {
   void finishTableRow();
   void addTableRowSeparator();
   void setCurrentPageVisibleOffset(uint32_t offset);
+  void addPublisherPageMarker(uint32_t offset, const char* label);
+  void applyPublisherPageLabel(Page& page, uint32_t visibleOffset);
   void makePages();
   static EpdFontFamily::Style fontStyleForTextDecoration(CssTextDecoration decoration);
   static void applyDirectionToEntry(StyleStackEntry& entry, const CssStyle& css);
@@ -194,7 +211,10 @@ class ChapterHtmlSlimParser {
       const std::function<void(std::unique_ptr<Page>, uint16_t, uint16_t, uint32_t)>& completePageFn,
       const bool embeddedStyle, const std::string& contentBase, const std::string& imageBasePath,
       const uint8_t imageRendering = 0, std::vector<std::string> tocAnchors = {},
-      const std::function<void()>& popupFn = nullptr, const CssParser* cssParser = nullptr)
+      std::vector<std::pair<std::string, std::string>> publisherPageAnchors = {},
+      const std::function<void()>& popupFn = nullptr, const CssParser* cssParser = nullptr,
+      const EpubRenderMode renderMode = EpubRenderMode::Standard, const bool repairParagraphIndent = false,
+      const uint8_t wordSpacing = 0)
 
       : epub(epub),
         filepath(filepath),
@@ -212,9 +232,13 @@ class ChapterHtmlSlimParser {
         cssParser(cssParser),
         embeddedStyle(embeddedStyle),
         imageRendering(imageRendering),
+        renderMode(renderMode),
+        repairParagraphIndent(repairParagraphIndent),
+        wordSpacing(wordSpacing > 2 ? 2 : wordSpacing),
         contentBase(contentBase),
         imageBasePath(imageBasePath),
-        tocAnchors(std::move(tocAnchors)) {}
+        tocAnchors(std::move(tocAnchors)),
+        publisherPageAnchors(std::move(publisherPageAnchors)) {}
 
   ~ChapterHtmlSlimParser();
 

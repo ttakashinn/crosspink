@@ -950,6 +950,11 @@ BookMetadataCache::TocEntry Epub::getTocItem(const int tocIndex) const {
   return bookMetadataCache->getTocEntry(tocIndex);
 }
 
+std::vector<BookMetadataCache::PageListEntry> Epub::getPageListEntriesForSpine(const int spineIndex) const {
+  return bookMetadataCache ? bookMetadataCache->getPageListEntriesForSpine(spineIndex)
+                           : std::vector<BookMetadataCache::PageListEntry>{};
+}
+
 int Epub::getTocItemsCount() const {
   if (!bookMetadataCache || !bookMetadataCache->isLoaded()) {
     return 0;

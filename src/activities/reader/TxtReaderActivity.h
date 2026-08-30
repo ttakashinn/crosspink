@@ -49,6 +49,7 @@ class TxtReaderActivity final : public ReaderActivity {
   bool loadBook() override;
   std::string getBookTitle() const override { return txt ? txt->getTitle() : ""; }
   void renderBook() override;
+  std::pair<int32_t, int32_t> readerTelemetryPosition() const override { return {currentPage, -1}; }
 
  public:
   explicit TxtReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string bookPath,

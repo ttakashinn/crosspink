@@ -4,6 +4,21 @@
 
 CrossPoint is open-source e-reader firmware - community-built, fully hackable, free forever. It's maintained by a growing community of developers and readers who believe your device should do what you want - not what a manufacturer decided for you.
 
+## Bản CrossPoint Văn Nhân Số
+
+Nhánh firmware này được phát triển trực tiếp trên nền [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader), giữ kiến trúc activity, renderer, cache EPUB, lớp phần cứng và khả năng tương thích thiết bị của CrossPoint. Phần mở rộng Văn Nhân Số được triển khai chọn lọc, có kiểm thử và có đường lui phù hợp với giới hạn RAM của ESP32-C3; đây không phải một renderer hoặc firmware độc lập được viết lại từ đầu.
+
+Các phần mở rộng và cải tiến chính gồm:
+
+- Màn hình ngủ Văn Nhân Số có nội dung được quản lý, chế độ cập nhật khi khởi động/lúc ngủ/thủ công, cache ngoại tuyến và backoff để lỗi mạng không lặp lại ở mỗi lần sử dụng. Mọi thao tác của người dùng đều có quyền hủy cập nhật tự động.
+- Chế độ màn hình ngủ **Ôn từ đã tra**: chọn ngẫu nhiên từ lịch sử tra cứu và chỉ bắt buộc có từ cùng phần giải nghĩa. Phiên âm, ví dụ và collocation được thêm khi nguồn thực sự có; chế độ hoạt động ngoại tuyến và tự dùng màn mặc định nếu không thể tạo thẻ ôn tập an toàn.
+- Reader EPUB có telemetry phát triển cho vòng đời lật trang, khoảng yên tĩnh sau khi trang hiện, 3 cấp dàn trang `Standard / Simplified / Safe`, fallback chỉ khi thiếu bộ nhớ và hành động thử lại chất lượng đầy đủ.
+- Tùy chọn theo từng sách gồm khoảng cách từ, sửa thụt đầu dòng bị thiếu và tự lật trang theo khoảng 5–120 giây. Bấm dừng tự lật sẽ lưu trạng thái tắt, không tự bật lại ở lần mở sách sau.
+- Menu reader dạng 3 nhóm trên thiết bị dùng nút, liên kết/footnote có vùng chạm, số trang nhà xuất bản, vị trí tham chiếu VNS không phụ thuộc font/margin/orientation và ước lượng thời gian đọc còn lại chỉ khi đủ dữ liệu.
+- Các cơ chế lưu trữ có version, validation và phục hồi file tạm/backup; cache dàn trang được invalid đúng khi format hoặc setting ảnh hưởng layout thay đổi.
+
+[CrossInk](https://github.com/uxjulia/CrossInk) và [CrossVi](https://github.com/tvhdc/crossvi) là 2 nguồn tham khảo quan trọng cho typography, render fallback, tổ chức menu, page reference, telemetry và idle guard. Mã được chọn lọc hoặc viết lại theo kiến trúc CrossPoint/Văn Nhân Số thay vì nhập nguyên khối từ các fork. Chi tiết phạm vi và căn cứ kỹ thuật nằm trong [kế hoạch `vns.7`](./docs/contributing/vns-7-plan.md).
+
 **Now running on:** ESP32C3-based Xteink [X4](https://www.xteink.com/products/xteink-x4) and [X3](https://www.xteink.com/products/xteink-x3).
 
 ![CrossPoint Reader running on Xteink device](./docs/images/cover.jpg)
@@ -12,7 +27,7 @@ CrossPoint is open-source e-reader firmware - community-built, fully hackable, f
 
 ## What can CrossPoint do?
 
-- **Reader engine**: EPUB 2/3 rendering with embedded-style option, image handling, hyphenation, kerning, chapter navigation, footnotes, bookmarks, dictionary lookups ([StarDict](docs/dictionary.md)), go-to-percent, auto page turn, orientation control, focus reading, KOReader progress sync and more. 
+- **Reader engine**: EPUB 2/3 rendering with embedded-style option, image handling, hyphenation, kerning, chapter navigation, footnotes, bookmarks, dictionary lookups ([StarDict](docs/dictionary.md)), go-to-percent, auto page turn, orientation control, focus reading, KOReader progress sync and more.
 
 - **Various formats**: native handling for `.epub`, `.xtc/.xtch`, `.txt`, and `.bmp`.
 
@@ -38,7 +53,7 @@ CrossPoint is open-source e-reader firmware - community-built, fully hackable, f
 
 - **Customization**: multiple themes (Classic, Lyra, Lyra Extended, RoundedRaff), sleep screen modes including transparent overlays, front/side button remapping, status bar controls, power-button behavior, refresh cadence, and more.
 
-- **Localization**: 24 UI languages and counting. RTL support.
+- **Localization**: 32 UI languages and counting. RTL support.
 
 ### Coming soon:
 
@@ -137,6 +152,9 @@ Conversion runs the firmware repo's `lib/EpdFont/scripts/fontconvert_sdcard.py` 
 - [Project scope](./SCOPE.md)
 - [Contributing docs](./docs/contributing/README.md)
 - [Touch and UI development](./docs/contributing/touch-and-ui.md) - how to build new screens on the FreeInkUI activity bases (UiListActivity and friends), plus build envs for the non-Xteink touch devices
+- [Thiết kế màn ngủ ôn từ đã tra](./docs/features/dictionary-review-sleep.md)
+- [Đặc tả vị trí tham chiếu VNS](./docs/contributing/vns-reference-position.md)
+- [Ghi chú phát hành `1.6.0-vns.7`](./docs/releases/1.6.0-vns.7.md)
 
 ---
 
@@ -231,6 +249,7 @@ cache. This cache directory exists at `.crosspoint` on the SD card. The structur
 │   ├── progress.bin     # reading position (chapter, page, etc.)
 │   ├── cover.bmp        # generated cover image
 │   ├── book.bin         # metadata: title, author, spine, TOC
+│   ├── page-list.bin    # optional EPUB publisher-page navigation entries
 │   ├── css_rules.cache  # parsed CSS rule cache
 │   ├── img_*            # rendered image cache files
 │   └── sections/        # per-chapter layout cache

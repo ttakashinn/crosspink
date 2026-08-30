@@ -486,13 +486,14 @@ DictLocation Dictionary::locateSynonym(LookupSession& session, const char* targe
   return result;
 }
 
-bool Dictionary::readDefinition(const DictLocation& location, std::string& out, LookupResult* outResult) {
+bool Dictionary::readDefinition(const DictLocation& location, std::string& out, LookupResult* outResult,
+                                const uint32_t maxDefinitionBytes) {
   const auto fail = [outResult](LookupResult r) {
     if (outResult) *outResult = r;
     return false;
   };
   if (!location.found) return fail(LookupResult::NotFound);
-  const uint32_t size = std::min(location.size, MAX_DEFINITION_BYTES);
+  const uint32_t size = std::min(location.size, std::min(maxDefinitionBytes, MAX_DEFINITION_BYTES));
   if (size == 0) {
     LOG_ERR("DICT", "Zero-length definition entry");
     return fail(LookupResult::ReadError);
@@ -598,7 +599,7 @@ void Dictionary::stemVariants(const std::string& word, std::vector<std::string>&
 }
 
 bool Dictionary::lookup(const char* word, std::string& definitionOut, std::string& matchedHeadwordOut,
-                        LookupResult* outResult) {
+                        LookupResult* outResult, const uint32_t maxDefinitionBytes) {
   const auto setResult = [outResult](LookupResult r) {
     if (outResult) *outResult = r;
   };
@@ -650,7 +651,7 @@ bool Dictionary::lookup(const char* word, std::string& definitionOut, std::strin
 
   // Found in the index — propagate the precise failure reason from readDefinition
   // (decompression / low memory / read error) so the caller can name it.
-  if (readDefinition(location, definitionOut, outResult)) {
+  if (readDefinition(location, definitionOut, outResult, maxDefinitionBytes)) {
     setResult(LookupResult::Found);
     return true;
   }

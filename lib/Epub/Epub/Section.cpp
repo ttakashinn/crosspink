@@ -50,7 +50,10 @@ namespace {
 // v44: Vietnamese-aware small caps changed glyph measurement and rendering.
 // v45: Section payload validation and pixel-cache clipping were hardened.
 // v46: CSS cascade now honors !important and rejects invalid declarations.
-constexpr uint8_t SECTION_FILE_VERSION = 46;
+// v47: Per-book word spacing and paragraph-indent repair join the render spec.
+// v48: Persist bounded internal-link hit rectangles with each page.
+// v49: Persist the publisher page label resolved for each page.
+constexpr uint8_t SECTION_FILE_VERSION = 49;
 // Written into the version field while a build is in progress; patched to
 // SECTION_FILE_VERSION only when the build is finalized. An abandoned /
 // crash-interrupted .bin therefore carries version 0, which loadSectionFile rejects
@@ -70,8 +73,9 @@ constexpr uint8_t SECTION_FILE_INCOMPLETE_VERSION = 0;
 constexpr uint8_t SECTION_FILE_PARTIAL_VERSION = 0xFE - (SECTION_FILE_VERSION - 28);
 constexpr uint32_t HEADER_SIZE = sizeof(uint8_t) + sizeof(int) + sizeof(float) + sizeof(bool) + sizeof(uint8_t) +
                                  sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(bool) + sizeof(bool) +
-                                 sizeof(uint8_t) + sizeof(bool) + sizeof(uint8_t) + sizeof(uint32_t) +
-                                 sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t);
+                                 sizeof(uint8_t) + sizeof(bool) + sizeof(uint8_t) + sizeof(bool) + sizeof(uint8_t) +
+                                 sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t) +
+                                 sizeof(uint32_t);
 }  // namespace
 
 // Out-of-line so the unique_ptr<ChapterHtmlSlimParser> in BuildContext can be
@@ -84,7 +88,18 @@ Section::Section(const std::shared_ptr<Epub>& epub, const int spineIndex, GfxRen
       filePath(filePathBase + ".bin") {}
 
 void Section::selectSectionFile(const ReaderRenderSpec& spec) {
-  filePath = filePathBase + (spec.renderMode == EpubRenderMode::Safe ? ".safe.bin" : ".bin");
+  switch (spec.renderMode) {
+    case EpubRenderMode::Simplified:
+      filePath = filePathBase + ".simplified.bin";
+      break;
+    case EpubRenderMode::Safe:
+      filePath = filePathBase + ".safe.bin";
+      break;
+    case EpubRenderMode::Standard:
+    default:
+      filePath = filePathBase + ".bin";
+      break;
+  }
 }
 
 // Suspend any in-progress build so every section.reset() / navigation / sleep path
@@ -123,7 +138,8 @@ void Section::writeSectionFileHeader(const ReaderRenderSpec& spec) {
                                    sizeof(spec.extraParagraphSpacing) + sizeof(spec.paragraphAlignment) +
                                    sizeof(spec.viewportWidth) + sizeof(spec.viewportHeight) + sizeof(pageCount) +
                                    sizeof(spec.hyphenationEnabled) + sizeof(spec.embeddedStyle) +
-                                   sizeof(spec.imageRendering) + sizeof(spec.focusReadingEnabled) + sizeof(uint8_t) +
+                                   sizeof(spec.imageRendering) + sizeof(spec.focusReadingEnabled) +
+                                   sizeof(spec.wordSpacing) + sizeof(spec.repairParagraphIndent) + sizeof(uint8_t) +
                                    sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t) +
                                    sizeof(uint32_t),
                 "Header size mismatch");
@@ -140,6 +156,8 @@ void Section::writeSectionFileHeader(const ReaderRenderSpec& spec) {
   serialization::writePod(file, spec.embeddedStyle);
   serialization::writePod(file, spec.imageRendering);
   serialization::writePod(file, spec.focusReadingEnabled);
+  serialization::writePod(file, spec.wordSpacing);
+  serialization::writePod(file, spec.repairParagraphIndent);
   serialization::writePod(file, static_cast<uint8_t>(spec.renderMode));
   serialization::writePod(file, pageCount);  // Placeholder for page count (will be initially 0, patched later)
   serialization::writePod(file, static_cast<uint32_t>(0));  // Placeholder for LUT offset (patched later)
@@ -178,6 +196,8 @@ bool Section::loadSectionFile(const ReaderRenderSpec& spec) {
     bool fileEmbeddedStyle;
     uint8_t fileImageRendering;
     bool fileFocusReadingEnabled;
+    uint8_t fileWordSpacing;
+    bool fileRepairParagraphIndent;
     uint8_t fileRenderMode;
     serialization::readPod(file, fileFontId);
     serialization::readPod(file, fileLineCompression);
@@ -189,6 +209,8 @@ bool Section::loadSectionFile(const ReaderRenderSpec& spec) {
     serialization::readPod(file, fileEmbeddedStyle);
     serialization::readPod(file, fileImageRendering);
     serialization::readPod(file, fileFocusReadingEnabled);
+    serialization::readPod(file, fileWordSpacing);
+    serialization::readPod(file, fileRepairParagraphIndent);
     serialization::readPod(file, fileRenderMode);
 
     if (spec.fontId != fileFontId || spec.lineCompression != fileLineCompression ||
@@ -196,6 +218,7 @@ bool Section::loadSectionFile(const ReaderRenderSpec& spec) {
         spec.viewportWidth != fileViewportWidth || spec.viewportHeight != fileViewportHeight ||
         spec.hyphenationEnabled != fileHyphenationEnabled || spec.embeddedStyle != fileEmbeddedStyle ||
         spec.imageRendering != fileImageRendering || spec.focusReadingEnabled != fileFocusReadingEnabled ||
+        spec.wordSpacing != fileWordSpacing || spec.repairParagraphIndent != fileRepairParagraphIndent ||
         static_cast<uint8_t>(spec.renderMode) != fileRenderMode) {
       file.close();
       LOG_ERR("SCT", "Deserialization failed: Parameters do not match");
@@ -433,6 +456,11 @@ bool Section::startBuild(const ReaderRenderSpec& spec, const std::function<void(
     }
   }
 
+  std::vector<std::pair<std::string, std::string>> publisherPageAnchors;
+  for (auto& entry : epub->getPageListEntriesForSpine(spineIndex)) {
+    publisherPageAnchors.emplace_back(std::move(entry.anchor), std::move(entry.label));
+  }
+
   // The parser stores the path/contentBase/imageBasePath by reference, so they must
   // live in the BuildContext (which outlives the parser). The page-complete callback
   // captures the BuildContext pointer to append to its in-RAM LUT; build_ owns the
@@ -448,7 +476,8 @@ bool Section::startBuild(const ReaderRenderSpec& spec, const std::function<void(
             {this->onPageComplete(std::move(page)), paragraphIndex, listItemIndex, visibleTextOffset});
       },
       spec.embeddedStyle, ctxPtr->contentBase, ctxPtr->imageBasePath, spec.imageRendering, std::move(tocAnchors),
-      popupFn, ctxPtr->cssParser);
+      std::move(publisherPageAnchors), popupFn, ctxPtr->cssParser, spec.renderMode, spec.repairParagraphIndent,
+      spec.wordSpacing);
   if (!ctx->parser) {
     lastBuildFailedLowMemory_ = true;
     LOG_ERR("SCT", "OOM: ChapterHtmlSlimParser");

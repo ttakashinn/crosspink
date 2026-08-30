@@ -14,8 +14,9 @@
 namespace PerBookReaderSettingsCodec {
 
 constexpr std::array<uint8_t, 4> MAGIC = {'V', 'N', 'S', 'R'};
-constexpr uint8_t VERSION = 1;
-constexpr uint16_t PAYLOAD_SIZE = 45;
+constexpr uint8_t VERSION = 2;
+constexpr uint16_t V1_PAYLOAD_SIZE = 45;
+constexpr uint16_t PAYLOAD_SIZE = 55;
 constexpr size_t VERSION_OFFSET = 4;
 constexpr size_t LENGTH_OFFSET = 5;
 constexpr size_t CRC_OFFSET = 7;
@@ -84,6 +85,11 @@ inline bool isValid(const PerBookReaderSettings& settings) {
          toggle(settings.embeddedStyle) && toggle(settings.focusReadingEnabled) &&
          toggle(settings.hyphenationEnabled) && toggle(settings.extraParagraphSpacing) &&
          toggle(settings.textAntiAliasing) && settings.imageRendering < CrossPointSettings::IMAGE_RENDERING_COUNT &&
+         settings.wordSpacing <= 2 && toggle(settings.repairParagraphIndent) &&
+         (settings.autoPageTurnSeconds == 0 ||
+          (settings.autoPageTurnSeconds >= 5 && settings.autoPageTurnSeconds <= 120)) &&
+         settings.preferredRenderMode <= 2 &&
+         (settings.lastWorkingFallback == UINT8_MAX || settings.lastWorkingFallback <= 2) &&
          validFontName(settings.sdFontFamilyName);
 }
 
@@ -108,6 +114,12 @@ inline bool encode(const PerBookReaderSettings& settings, Encoded& encoded) {
   payload[11] = settings.textAntiAliasing;
   payload[12] = settings.imageRendering;
   std::memcpy(payload + 13, settings.sdFontFamilyName.data(), settings.sdFontFamilyName.size());
+  payload[45] = settings.wordSpacing;
+  payload[46] = settings.repairParagraphIndent;
+  writeU16(payload + 47, settings.autoPageTurnSeconds);
+  payload[49] = settings.preferredRenderMode;
+  payload[50] = settings.lastWorkingFallback;
+  writeU32(payload + 51, settings.fallbackRenderSignature);
   writeU32(encoded.data() + CRC_OFFSET, crc32(payload, PAYLOAD_SIZE));
   return true;
 }
@@ -115,13 +127,16 @@ inline bool encode(const PerBookReaderSettings& settings, Encoded& encoded) {
 inline DecodeStatus decode(const uint8_t* bytes, const size_t length, PerBookReaderSettings& settings) {
   if (!bytes || length < PAYLOAD_OFFSET) return DecodeStatus::TRUNCATED;
   if (!std::equal(MAGIC.begin(), MAGIC.end(), bytes)) return DecodeStatus::BAD_MAGIC;
-  if (bytes[VERSION_OFFSET] > VERSION) return DecodeStatus::NEWER_VERSION;
-  if (bytes[VERSION_OFFSET] != VERSION) return DecodeStatus::UNSUPPORTED_VERSION;
-  if (length < ENCODED_SIZE) return DecodeStatus::TRUNCATED;
-  if (length != ENCODED_SIZE) return DecodeStatus::WRONG_SIZE;
-  if (readU16(bytes + LENGTH_OFFSET) != PAYLOAD_SIZE) return DecodeStatus::BAD_LENGTH;
+  const uint8_t version = bytes[VERSION_OFFSET];
+  if (version > VERSION) return DecodeStatus::NEWER_VERSION;
+  if (version != 1 && version != VERSION) return DecodeStatus::UNSUPPORTED_VERSION;
+  const uint16_t expectedPayloadSize = version == 1 ? V1_PAYLOAD_SIZE : PAYLOAD_SIZE;
+  const size_t expectedSize = PAYLOAD_OFFSET + expectedPayloadSize;
+  if (length < expectedSize) return DecodeStatus::TRUNCATED;
+  if (length != expectedSize) return DecodeStatus::WRONG_SIZE;
+  if (readU16(bytes + LENGTH_OFFSET) != expectedPayloadSize) return DecodeStatus::BAD_LENGTH;
   const uint8_t* payload = bytes + PAYLOAD_OFFSET;
-  if (readU32(bytes + CRC_OFFSET) != crc32(payload, PAYLOAD_SIZE)) return DecodeStatus::BAD_CRC;
+  if (readU32(bytes + CRC_OFFSET) != crc32(payload, expectedPayloadSize)) return DecodeStatus::BAD_CRC;
   if (payload[0] > 1) return DecodeStatus::INVALID_VALUE;
 
   PerBookReaderSettings decoded;
@@ -139,6 +154,14 @@ inline DecodeStatus decode(const uint8_t* bytes, const size_t length, PerBookRea
   decoded.textAntiAliasing = payload[11];
   decoded.imageRendering = payload[12];
   std::memcpy(decoded.sdFontFamilyName.data(), payload + 13, decoded.sdFontFamilyName.size());
+  if (version >= 2) {
+    decoded.wordSpacing = payload[45];
+    decoded.repairParagraphIndent = payload[46];
+    decoded.autoPageTurnSeconds = readU16(payload + 47);
+    decoded.preferredRenderMode = payload[49];
+    decoded.lastWorkingFallback = payload[50];
+    decoded.fallbackRenderSignature = readU32(payload + 51);
+  }
   if (!isValid(decoded)) return DecodeStatus::INVALID_VALUE;
   settings = decoded;
   return DecodeStatus::OK;

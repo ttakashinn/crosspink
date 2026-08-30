@@ -306,6 +306,19 @@ void VanNhanSoUpdateActivity::startAutomaticUpdate() {
     return;
   }
 
+  if (!haveCurrentDate && vannhanso_update_policy::shouldSkipAutomaticRetry(
+                              currentProfileHash, APP_STATE.vanNhanSoFailureProfileHash,
+                              APP_STATE.vanNhanSoUpdateResult == CrossPointState::VanNhanSoUpdateResult::FAILED,
+                              APP_STATE.vanNhanSoAutoRetrySkipsRemaining)) {
+    --APP_STATE.vanNhanSoAutoRetrySkipsRemaining;
+    APP_STATE.saveToFile();
+    LOG_INF("VNS", "Automatic update delayed for %u more trigger(s): clock unavailable",
+            APP_STATE.vanNhanSoAutoRetrySkipsRemaining);
+    state = SKIPPED;
+    finish();
+    return;
+  }
+
   if (isBackoffActive()) {
     LOG_INF("VNS", "Automatic update delayed by retry backoff");
     state = SKIPPED;
@@ -851,6 +864,7 @@ void VanNhanSoUpdateActivity::recordSuccess() {
   APP_STATE.vanNhanSoConsecutiveFailures = 0;
   APP_STATE.vanNhanSoLastHttpStatus = 0;
   APP_STATE.vanNhanSoFailureProfileHash = 0;
+  APP_STATE.vanNhanSoAutoRetrySkipsRemaining = 0;
   if (APP_STATE.vanNhanSoPendingProfileHash == currentProfileHash) {
     APP_STATE.vanNhanSoPendingProfileHash = 0;
   }
@@ -865,6 +879,7 @@ void VanNhanSoUpdateActivity::recordCancelled(const bool returnToStatus) {
     APP_STATE.vanNhanSoUpdateError = CrossPointState::VanNhanSoUpdateError::NONE;
     APP_STATE.vanNhanSoLastAttemptDate = currentDateKey;
     APP_STATE.vanNhanSoLastAttemptMinute = currentMinute;
+    APP_STATE.vanNhanSoAutoRetrySkipsRemaining = 0;
     APP_STATE.saveToFile();
     // A manual cancellation returns to the initial status page in the same
     // critical section. This prevents a queued render from briefly showing a
@@ -886,6 +901,10 @@ void VanNhanSoUpdateActivity::fail(const CrossPointState::VanNhanSoUpdateError e
     APP_STATE.vanNhanSoLastAttemptMinute = currentMinute;
     APP_STATE.vanNhanSoConsecutiveFailures = std::min<uint8_t>(APP_STATE.vanNhanSoConsecutiveFailures + 1, 4);
     APP_STATE.vanNhanSoFailureProfileHash = currentProfileHash;
+    APP_STATE.vanNhanSoAutoRetrySkipsRemaining =
+        automatic && currentDateKey == 0
+            ? vannhanso_update_policy::automaticRetrySkipsAfterFailure(APP_STATE.vanNhanSoConsecutiveFailures)
+            : 0;
     APP_STATE.saveToFile();
     state = FAILED;
   }

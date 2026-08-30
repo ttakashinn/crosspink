@@ -23,6 +23,8 @@ struct ReaderRenderSpec {
   bool embeddedStyle = true;
   uint8_t imageRendering = 0;
   bool focusReadingEnabled = false;
+  uint8_t wordSpacing = 0;
+  bool repairParagraphIndent = false;
   EpubRenderMode renderMode = EpubRenderMode::Standard;
 };
 

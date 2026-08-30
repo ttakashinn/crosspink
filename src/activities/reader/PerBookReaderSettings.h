@@ -23,6 +23,14 @@ struct PerBookReaderSettings {
   uint8_t extraParagraphSpacing = 1;
   uint8_t textAntiAliasing = 1;
   uint8_t imageRendering = CrossPointSettings::IMAGES_DISPLAY;
+  // EPUB-only extensions remain in the per-book record instead of changing
+  // global reader defaults for unrelated books.
+  uint8_t wordSpacing = 0;            // 0=normal, 1=relaxed, 2=wide
+  uint8_t repairParagraphIndent = 0;  // only paragraphs whose computed indent is zero
+  uint16_t autoPageTurnSeconds = 0;   // 0=off, otherwise 5..120
+  uint8_t preferredRenderMode = 0;    // EpubRenderMode raw value
+  uint8_t lastWorkingFallback = UINT8_MAX;
+  uint32_t fallbackRenderSignature = 0;
   std::array<char, SD_FONT_NAME_CAPACITY> sdFontFamilyName{};
 
   bool operator==(const PerBookReaderSettings&) const = default;
@@ -62,4 +70,27 @@ inline void applyReaderSettings(const PerBookReaderSettings& settings) {
   SETTINGS.imageRendering = settings.imageRendering;
   std::strncpy(SETTINGS.sdFontFamilyName, settings.sdFontFamilyName.data(), sizeof(SETTINGS.sdFontFamilyName) - 1);
   SETTINGS.sdFontFamilyName[sizeof(SETTINGS.sdFontFamilyName) - 1] = '\0';
+}
+
+inline uint32_t readerSettingsRenderSignature(const PerBookReaderSettings& settings) {
+  uint32_t hash = 2166136261U;
+  const auto mix = [&hash](const uint32_t value) {
+    hash ^= value;
+    hash *= 16777619U;
+  };
+  mix(settings.fontFamily);
+  mix(settings.fontPointSize);
+  mix(settings.lineSpacing);
+  mix(settings.paragraphAlignment);
+  mix(settings.orientation);
+  mix(settings.screenMargin);
+  mix(settings.embeddedStyle);
+  mix(settings.focusReadingEnabled);
+  mix(settings.hyphenationEnabled);
+  mix(settings.extraParagraphSpacing);
+  mix(settings.imageRendering);
+  mix(settings.wordSpacing);
+  mix(settings.repairParagraphIndent);
+  for (const char ch : settings.sdFontFamilyName) mix(static_cast<uint8_t>(ch));
+  return hash;
 }

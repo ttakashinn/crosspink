@@ -1,0 +1,4 @@
+add_executable(ReaderInteractionTest ReaderInteractionTest.cpp)
+target_include_directories(ReaderInteractionTest PRIVATE ${REPO_ROOT}/src/activities/reader)
+target_link_libraries(ReaderInteractionTest PRIVATE crosspoint_test_common GTest::gtest_main)
+gtest_discover_tests(ReaderInteractionTest)

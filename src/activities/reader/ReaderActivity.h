@@ -1,11 +1,13 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 
 #include "EndOfBookOptions.h"
+#include "ReaderInteraction.h"
 #include "activities/Activity.h"
 
 class ReaderActivity : public Activity {
@@ -13,6 +15,8 @@ class ReaderActivity : public Activity {
   std::string bookPath;
   int pagesUntilFullRefresh = 0;
   bool forcedRefreshPending = false;
+  reader_interaction::PostVisibleIdleGuard postVisibleIdleGuard;
+  reader_interaction::TurnTelemetry turnTelemetry;
 
   std::unique_ptr<EndOfBookOptions> endOfBookOptions;
   std::atomic<bool> endOfBookOptionsReady{false};
@@ -32,18 +36,26 @@ class ReaderActivity : public Activity {
   virtual void onReturnFromEndOfBook() {}
 
   virtual void renderBook() = 0;
+  virtual bool renderedReadingPageThisFrame() const { return true; }
   virtual void applyInitialOrientation();
   virtual void onEndOfBookRendered() {}
   virtual void flushReaderState() {}
   virtual void requestProgressSaveIfDue() {}
   virtual bool prepareReaderSettings() { return true; }
   virtual void restoreReaderSettings() {}
+  virtual std::pair<int32_t, int32_t> readerTelemetryPosition() const { return {-1, -1}; }
 
   bool handleBackNavigation();
   bool handleEndOfBookMenu(bool suppressConfirmRelease = false);
   bool handleEndOfBookPageTurn(bool prevTriggered, bool nextTriggered);
   void clearEndOfBookOptionsIfNeeded();
   void disableFastInitialRefresh();
+  void noteReaderInput(uint32_t atMs);
+  void beginReaderTurn(int direction, int queueDepth = 1);
+  void updateReaderTurnQueueDepth(int queueDepth);
+  bool canRunDeferredReaderWork(uint32_t nowMs) const;
+  uint32_t beginReaderIdleWork(const char* kind) const;
+  void endReaderIdleWork(const char* kind, uint32_t startedAtMs) const;
 
  public:
   ~ReaderActivity() override = default;

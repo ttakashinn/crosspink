@@ -23,10 +23,12 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     QUICK_RESUME = 6,
     VANNHANSO = 7,
     TRANSPARENT_CUSTOM = 8,
+    DICTIONARY_REVIEW = 9,
     SLEEP_SCREEN_MODE_COUNT
   };
   static_assert(VANNHANSO == 7, "Giữ giá trị persisted của màn hình ngủ Văn Nhân Số");
   static_assert(TRANSPARENT_CUSTOM == 8, "Không được dùng lại giá trị persisted của Văn Nhân Số");
+  static_assert(DICTIONARY_REVIEW == 9, "Chỉ nối thêm mode màn ngủ để không đổi setting đã lưu");
   enum SLEEP_SCREEN_COVER_MODE { FIT = 0, CROP = 1, SLEEP_SCREEN_COVER_MODE_COUNT };
   enum SLEEP_SCREEN_COVER_FILTER {
     NO_FILTER = 0,

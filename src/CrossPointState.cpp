@@ -63,6 +63,8 @@ void CrossPointState::toJson(JsonDocument& doc) const {
   doc["vanNhanSoLastHttpStatus"] = vanNhanSoLastHttpStatus;
   doc["vanNhanSoPendingProfileHash"] = vanNhanSoPendingProfileHash;
   doc["vanNhanSoFailureProfileHash"] = vanNhanSoFailureProfileHash;
+  doc["vanNhanSoAutoRetrySkipsRemaining"] = vanNhanSoAutoRetrySkipsRemaining;
+  doc["lastDictionaryReviewWordHash"] = lastDictionaryReviewWordHash;
 }
 
 bool CrossPointState::fromJson(JsonVariantConst doc) {
@@ -119,5 +121,8 @@ bool CrossPointState::fromJson(JsonVariantConst doc) {
   vanNhanSoLastHttpStatus = doc["vanNhanSoLastHttpStatus"] | static_cast<uint16_t>(0);
   vanNhanSoPendingProfileHash = doc["vanNhanSoPendingProfileHash"] | static_cast<uint32_t>(0);
   vanNhanSoFailureProfileHash = doc["vanNhanSoFailureProfileHash"] | static_cast<uint32_t>(0);
+  vanNhanSoAutoRetrySkipsRemaining = doc["vanNhanSoAutoRetrySkipsRemaining"] | static_cast<uint8_t>(0);
+  vanNhanSoAutoRetrySkipsRemaining = std::min<uint8_t>(vanNhanSoAutoRetrySkipsRemaining, 7);
+  lastDictionaryReviewWordHash = doc["lastDictionaryReviewWordHash"] | static_cast<uint32_t>(0);
   return true;
 }

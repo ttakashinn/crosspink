@@ -82,7 +82,7 @@ class Dictionary {
   // reports the precise outcome so the UI can distinguish a genuine miss from a
   // decompression / low-memory / read failure.
   bool lookup(const char* word, std::string& definitionOut, std::string& matchedHeadwordOut,
-              LookupResult* outResult = nullptr);
+              LookupResult* outResult = nullptr, uint32_t maxDefinitionBytes = MAX_DEFINITION_BYTES);
 
   static std::string cleanWord(const char* word);
 
@@ -175,7 +175,8 @@ class Dictionary {
 
   // Read the definition at location. On failure returns false and, if outResult
   // is given, sets it to the specific reason (Decompress / LowMemory / ReadError).
-  bool readDefinition(const DictLocation& location, std::string& out, LookupResult* outResult = nullptr);
+  bool readDefinition(const DictLocation& location, std::string& out, LookupResult* outResult,
+                      uint32_t maxDefinitionBytes);
   static void stemVariants(const std::string& word, std::vector<std::string>& out);
 
   // Read a null-terminated word from an open file into buf (max bufSize-1

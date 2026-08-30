@@ -46,8 +46,63 @@ void ReaderActivity::applyInitialOrientation() { ReaderUtils::applyOrientation(r
 
 void ReaderActivity::disableFastInitialRefresh() { pagesUntilFullRefresh = 0; }
 
+void ReaderActivity::noteReaderInput(const uint32_t atMs) { postVisibleIdleGuard.noteInput(atMs); }
+
+void ReaderActivity::beginReaderTurn(const int direction, const int queueDepth) {
+  const uint32_t now = static_cast<uint32_t>(millis());
+  const auto before = readerTelemetryPosition();
+  const uint32_t sequence = turnTelemetry.input(now, direction, before.first, before.second);
+  turnTelemetry.queued(now, queueDepth);
+#if defined(ENABLE_SERIAL_LOG) && defined(LOG_LEVEL) && LOG_LEVEL >= 2
+  LOG_DBG("PTM", "format=%s phase=input seq=%lu dir=%d queue=%d at_ms=%lu before=%ld:%ld", name.c_str(),
+          static_cast<unsigned long>(sequence), direction, queueDepth, static_cast<unsigned long>(now),
+          static_cast<long>(before.first), static_cast<long>(before.second));
+  LOG_DBG("PTM", "format=%s phase=queued seq=%lu dir=%d queue=%d at_ms=%lu", name.c_str(),
+          static_cast<unsigned long>(sequence), direction, queueDepth, static_cast<unsigned long>(now));
+#endif
+}
+
+void ReaderActivity::updateReaderTurnQueueDepth(const int queueDepth) {
+  const uint32_t now = static_cast<uint32_t>(millis());
+  turnTelemetry.queueDepth(queueDepth);
+#if defined(ENABLE_SERIAL_LOG) && defined(LOG_LEVEL) && LOG_LEVEL >= 2
+  const auto trace = turnTelemetry.snapshot();
+  LOG_DBG("PTM", "format=%s phase=queued seq=%lu dir=%d queue=%d at_ms=%lu", name.c_str(),
+          static_cast<unsigned long>(trace.sequence), trace.direction, queueDepth, static_cast<unsigned long>(now));
+#endif
+}
+
+bool ReaderActivity::canRunDeferredReaderWork(const uint32_t nowMs) const {
+  return postVisibleIdleGuard.canRunDeferredWork(nowMs);
+}
+
+uint32_t ReaderActivity::beginReaderIdleWork(const char* kind) const {
+  const uint32_t now = static_cast<uint32_t>(millis());
+#if defined(ENABLE_SERIAL_LOG) && defined(LOG_LEVEL) && LOG_LEVEL >= 2
+  LOG_DBG("PTM", "format=%s phase=idle_work_begin kind=%s at_ms=%lu free=%u largest=%u", name.c_str(), kind,
+          static_cast<unsigned long>(now), static_cast<unsigned>(ESP.getFreeHeap()),
+          static_cast<unsigned>(ESP.getMaxAllocHeap()));
+#else
+  (void)kind;
+#endif
+  return now;
+}
+
+void ReaderActivity::endReaderIdleWork(const char* kind, const uint32_t startedAtMs) const {
+#if defined(ENABLE_SERIAL_LOG) && defined(LOG_LEVEL) && LOG_LEVEL >= 2
+  const uint32_t now = static_cast<uint32_t>(millis());
+  LOG_DBG("PTM", "format=%s phase=idle_work_end kind=%s at_ms=%lu duration_ms=%lu free=%u largest=%u", name.c_str(),
+          kind, static_cast<unsigned long>(now), static_cast<unsigned long>(now - startedAtMs),
+          static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+#else
+  (void)kind;
+  (void)startedAtMs;
+#endif
+}
+
 void ReaderActivity::onEnter() {
   Activity::onEnter();
+  postVisibleIdleGuard.reset();
 
   if (!Storage.exists(bookPath.c_str())) {
     LOG_ERR("READER", "File does not exist: %s", bookPath.c_str());
@@ -145,6 +200,8 @@ bool ReaderActivity::handleEndOfBookPageTurn(const bool prevTriggered, const boo
 }
 
 void ReaderActivity::loop() {
+  const uint32_t inputAtMs = static_cast<uint32_t>(millis());
+  if (mappedInput.wasAnyPressed() || mappedInput.wasAnyReleased()) noteReaderInput(inputAtMs);
   requestProgressSaveIfDue();
   clearEndOfBookOptionsIfNeeded();
   if (handleEndOfBookMenu()) return;
@@ -163,12 +220,14 @@ void ReaderActivity::loop() {
       !fromTilt && SETTINGS.longPressButtonBehavior == SETTINGS.CHAPTER_SKIP && heldMs >= ReaderUtils::SKIP_HOLD_MS;
 
   if (prevTriggered) {
+    beginReaderTurn(-1);
     if (skip) {
       skipPages(-10);
     } else {
       pageTurn(false);
     }
   } else {
+    beginReaderTurn(1);
     if (skip) {
       skipPages(10);
     } else {
@@ -197,7 +256,37 @@ void ReaderActivity::render(RenderLock&&) {
     return;
   }
 
+  const uint32_t renderBeginAtMs = static_cast<uint32_t>(millis());
+  turnTelemetry.renderBegin(renderBeginAtMs);
+#if defined(ENABLE_SERIAL_LOG) && defined(LOG_LEVEL) && LOG_LEVEL >= 2
+  {
+    const auto trace = turnTelemetry.snapshot();
+    LOG_DBG("PTM", "format=%s phase=render_begin seq=%lu dir=%d queue=%d at_ms=%lu", name.c_str(),
+            static_cast<unsigned long>(trace.sequence), trace.direction, trace.queueDepth,
+            static_cast<unsigned long>(renderBeginAtMs));
+  }
+#endif
   renderBook();
+  if (!renderedReadingPageThisFrame()) return;
+  const uint32_t visibleAtMs = static_cast<uint32_t>(millis());
+  postVisibleIdleGuard.pageVisible(visibleAtMs);
+  const auto after = readerTelemetryPosition();
+  const auto trace = turnTelemetry.visible(visibleAtMs, after.first, after.second);
+#if defined(ENABLE_SERIAL_LOG) && defined(LOG_LEVEL) && LOG_LEVEL >= 2
+  const unsigned long inputVisibleMs = trace.inputAtMs == 0 ? 0 : visibleAtMs - trace.inputAtMs;
+  const unsigned long queuedVisibleMs = trace.queuedAtMs == 0 ? 0 : visibleAtMs - trace.queuedAtMs;
+  const unsigned long renderVisibleMs = trace.renderBeginAtMs == 0 ? 0 : visibleAtMs - trace.renderBeginAtMs;
+  LOG_DBG("PTM",
+          "format=%s phase=visible seq=%lu dir=%d queue=%d at_ms=%lu input_visible_ms=%lu "
+          "queued_visible_ms=%lu render_visible_ms=%lu before=%ld:%ld after=%ld:%ld free=%u largest=%u",
+          name.c_str(), static_cast<unsigned long>(trace.sequence), trace.direction, trace.queueDepth,
+          static_cast<unsigned long>(visibleAtMs), inputVisibleMs, queuedVisibleMs, renderVisibleMs,
+          static_cast<long>(trace.beforePrimary), static_cast<long>(trace.beforeSecondary),
+          static_cast<long>(trace.afterPrimary), static_cast<long>(trace.afterSecondary),
+          static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+#else
+  (void)trace;
+#endif
 }
 
 bool ReaderActivity::handleForcedRefresh() {

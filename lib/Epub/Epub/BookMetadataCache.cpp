@@ -13,17 +13,21 @@
 #include "FsHelpers.h"
 
 namespace {
-constexpr uint8_t BOOK_CACHE_VERSION = 12;  // v12: non-fatal source fingerprint + bounded validation
+constexpr uint8_t BOOK_CACHE_VERSION = 13;  // v13: publisher page-list sidecar support
 constexpr char bookBinFile[] = "/book.bin";
 constexpr char bookBinTempFile[] = "/book.bin.tmp";
 constexpr char bookBinBackupFile[] = "/book.bin.bak";
 constexpr char tmpSpineBinFile[] = "/spine.bin.tmp";
 constexpr char tmpTocBinFile[] = "/toc.bin.tmp";
+constexpr char pageListBinFile[] = "/page-list.bin";
+constexpr char tmpPageListBinFile[] = "/page-list.bin.tmp";
+constexpr uint8_t PAGE_LIST_VERSION = 1;
 // Buffer size for the buildBookBin streams. 3 buffers x 4KB, transient (freed on
 // return); 4KB = 8 SD sectors per transfer, enough to stop the sector-cache thrash.
 constexpr size_t BUILD_IO_BUFFER_SIZE = 4096;
 constexpr uint16_t MAX_SPINE_COUNT = 4096;
 constexpr uint16_t MAX_TOC_COUNT = 8192;
+constexpr uint16_t MAX_PAGE_LIST_COUNT = 8192;
 constexpr size_t MAX_METADATA_TEXT = 1024;
 constexpr size_t MAX_HREF_TEXT = 4096;
 
@@ -170,6 +174,16 @@ uint32_t writeTocEntryTo(F& file, const BookMetadataCache::TocEntry& entry) {
   return pos;
 }
 
+template <typename F>
+uint32_t writePageListEntryTo(F& file, const BookMetadataCache::PageListEntry& entry) {
+  const uint32_t pos = file.position();
+  serialization::writeString(file, entry.label);
+  serialization::writeString(file, entry.href);
+  serialization::writeString(file, entry.anchor);
+  serialization::writePod(file, entry.spineIndex);
+  return pos;
+}
+
 template <typename F, typename T>
 bool tryReadPodFrom(F& file, T& value) {
   return file.read(reinterpret_cast<uint8_t*>(&value), sizeof(value)) == sizeof(value);
@@ -204,6 +218,13 @@ bool tryReadTocEntryFrom(F& file, BookMetadataCache::TocEntry& entry) {
          tryReadPodFrom(file, entry.level) && tryReadPodFrom(file, entry.spineIndex);
 }
 
+template <typename F>
+bool tryReadPageListEntryFrom(F& file, BookMetadataCache::PageListEntry& entry) {
+  return tryReadStringFrom(file, entry.label, MAX_METADATA_TEXT) &&
+         tryReadStringFrom(file, entry.href, MAX_HREF_TEXT) && tryReadStringFrom(file, entry.anchor, MAX_HREF_TEXT) &&
+         tryReadPodFrom(file, entry.spineIndex);
+}
+
 bool tryReadSpineEntry(HalFile& file, BookMetadataCache::SpineEntry& entry) {
   return tryReadSpineEntryFrom(file, entry);
 }
@@ -217,6 +238,7 @@ bool BookMetadataCache::beginWrite() {
   buildMode = true;
   spineCount = 0;
   tocCount = 0;
+  pageListCount = 0;
   LOG_DBG("BMC", "Entering write mode");
   return true;
 }
@@ -255,6 +277,21 @@ bool BookMetadataCache::beginTocPass() {
   }
   if (!Storage.openFileForWrite("BMC", cachePath + tmpTocBinFile, tocFile)) {
     // Explicit close() required: member variable persists beyond function scope
+    spineFile.close();
+    return false;
+  }
+  if (!Storage.openFileForWrite("BMC", cachePath + tmpPageListBinFile, pageListFile) ||
+      pageListFile.write(&PAGE_LIST_VERSION, sizeof(PAGE_LIST_VERSION)) != sizeof(PAGE_LIST_VERSION)) {
+    pageListFile.close();
+    tocFile.close();
+    spineFile.close();
+    return false;
+  }
+  const uint16_t emptyPageListCount = 0;
+  if (pageListFile.write(reinterpret_cast<const uint8_t*>(&emptyPageListCount), sizeof(emptyPageListCount)) !=
+      sizeof(emptyPageListCount)) {
+    pageListFile.close();
+    tocFile.close();
     spineFile.close();
     return false;
   }
@@ -307,10 +344,15 @@ bool BookMetadataCache::beginTocPass() {
 bool BookMetadataCache::endTocPass() {
   const bool flushed = !passOut || passOut->flush();
   passOut.reset();
+  const bool pageListHeaderWritten = pageListFile.seek(sizeof(PAGE_LIST_VERSION)) &&
+                                     pageListFile.write(reinterpret_cast<const uint8_t*>(&pageListCount),
+                                                        sizeof(pageListCount)) == sizeof(pageListCount);
   // Explicit close() required: member variables persist beyond function scope
   const bool tocClosed = tocFile.close();
+  const bool pageListClosed = pageListFile.close();
   const bool spineClosed = spineFile.close();
-  const bool written = flushed && !passWriteFailed && tocClosed && spineClosed;
+  const bool written =
+      flushed && pageListHeaderWritten && !passWriteFailed && tocClosed && pageListClosed && spineClosed;
   if (!written) {
     LOG_ERR("BMC", "Failed writing toc tmp file");
   }
@@ -329,7 +371,7 @@ bool BookMetadataCache::endWrite() {
   }
 
   buildMode = false;
-  LOG_DBG("BMC", "Wrote %d spine, %d TOC entries", spineCount, tocCount);
+  LOG_DBG("BMC", "Wrote %d spine, %d TOC, %d page-list entries", spineCount, tocCount, pageListCount);
   return true;
 }
 
@@ -613,6 +655,16 @@ bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMeta
     Storage.remove(tempBookPath.c_str());
     return false;
   }
+  const std::string finalPageListPath = cachePath + pageListBinFile;
+  const std::string tempPageListPath = cachePath + tmpPageListBinFile;
+  Storage.remove(finalPageListPath.c_str());
+  if (!Storage.rename(tempPageListPath.c_str(), finalPageListPath.c_str())) {
+    // Page labels are optional. Never keep a sidecar from a previous source
+    // generation when the matching replacement could not be published.
+    Storage.remove(finalPageListPath.c_str());
+    Storage.remove(tempPageListPath.c_str());
+    LOG_ERR("BMC", "Could not publish optional EPUB page-list sidecar");
+  }
   // Keep the previous verified generation until load() validates the newly
   // published canonical file. A reboot or SD read error in that window can
   // then recover instead of forcing a full re-index.
@@ -630,6 +682,7 @@ bool BookMetadataCache::cleanupTmpFiles() const {
   if (Storage.exists(tocBinFile.c_str())) {
     Storage.remove(tocBinFile.c_str());
   }
+  Storage.remove((cachePath + tmpPageListBinFile).c_str());
   Storage.remove((cachePath + bookBinTempFile).c_str());
   return true;
 }
@@ -654,6 +707,45 @@ bool BookMetadataCache::writeTocEntry(HalFile& file, const TocEntry& entry) cons
          file.write(reinterpret_cast<const uint8_t*>(&entry.level), sizeof(entry.level)) == sizeof(entry.level) &&
          file.write(reinterpret_cast<const uint8_t*>(&entry.spineIndex), sizeof(entry.spineIndex)) ==
              sizeof(entry.spineIndex);
+}
+
+bool BookMetadataCache::writePageListEntry(HalFile& file, const PageListEntry& entry) const {
+  const auto writeString = [&file](const std::string& value) {
+    const uint32_t size = static_cast<uint32_t>(value.size());
+    return file.write(reinterpret_cast<const uint8_t*>(&size), sizeof(size)) == sizeof(size) &&
+           file.write(reinterpret_cast<const uint8_t*>(value.data()), value.size()) == value.size();
+  };
+  return writeString(entry.label) && writeString(entry.href) && writeString(entry.anchor) &&
+         file.write(reinterpret_cast<const uint8_t*>(&entry.spineIndex), sizeof(entry.spineIndex)) ==
+             sizeof(entry.spineIndex);
+}
+
+int16_t BookMetadataCache::resolveSpineIndex(const std::string& href) {
+  if (useSpineHrefIndex) {
+    const uint64_t targetHash = fnvHash64(href);
+    const uint16_t targetLen = static_cast<uint16_t>(href.size());
+    auto it =
+        std::lower_bound(spineHrefIndex.begin(), spineHrefIndex.end(), SpineHrefIndexEntry{targetHash, targetLen, 0},
+                         [](const SpineHrefIndexEntry& a, const SpineHrefIndexEntry& b) {
+                           return a.hrefHash < b.hrefHash || (a.hrefHash == b.hrefHash && a.hrefLen < b.hrefLen);
+                         });
+    if (it != spineHrefIndex.end() && it->hrefHash == targetHash && it->hrefLen == targetLen) return it->spineIndex;
+    return -1;
+  }
+
+  if (!spineFile.seek(0)) {
+    passWriteFailed = true;
+    return -1;
+  }
+  for (int i = 0; i < spineCount; ++i) {
+    SpineEntry spineEntry;
+    if (!tryReadSpineEntryFrom(spineFile, spineEntry)) {
+      passWriteFailed = true;
+      return -1;
+    }
+    if (spineEntry.href == href) return static_cast<int16_t>(i);
+  }
+  return -1;
 }
 
 // Note: for the LUT to be accurate, this **MUST** be called for all spine items before `addTocEntry` is ever called
@@ -698,47 +790,8 @@ void BookMetadataCache::createTocEntry(const std::string& title, const std::stri
     return;
   }
 
-  int16_t spineIndex = -1;
-
-  if (useSpineHrefIndex) {
-    uint64_t targetHash = fnvHash64(href);
-    uint16_t targetLen = static_cast<uint16_t>(href.size());
-
-    auto it =
-        std::lower_bound(spineHrefIndex.begin(), spineHrefIndex.end(), SpineHrefIndexEntry{targetHash, targetLen, 0},
-                         [](const SpineHrefIndexEntry& a, const SpineHrefIndexEntry& b) {
-                           return a.hrefHash < b.hrefHash || (a.hrefHash == b.hrefHash && a.hrefLen < b.hrefLen);
-                         });
-
-    while (it != spineHrefIndex.end() && it->hrefHash == targetHash && it->hrefLen == targetLen) {
-      spineIndex = it->spineIndex;
-      break;
-    }
-
-    if (spineIndex == -1) {
-      LOG_DBG("BMC", "createTocEntry: Could not find spine item for TOC href %s", href.c_str());
-    }
-  } else {
-    if (!spineFile.seek(0)) {
-      passWriteFailed = true;
-      return;
-    }
-    for (int i = 0; i < spineCount; i++) {
-      SpineEntry spineEntry;
-      if (!tryReadSpineEntryFrom(spineFile, spineEntry)) {
-        LOG_ERR("BMC", "Invalid or truncated spine tmp entry during TOC lookup");
-        passWriteFailed = true;
-        return;
-      }
-      if (spineEntry.href == href) {
-        spineIndex = static_cast<int16_t>(i);
-        break;
-      }
-    }
-    if (spineIndex == -1) {
-      LOG_DBG("BMC", "createTocEntry: Could not find spine item for TOC href %s", href.c_str());
-    }
-  }
+  const int16_t spineIndex = resolveSpineIndex(href);
+  if (spineIndex == -1) LOG_DBG("BMC", "Could not find spine item for TOC href %s", href.c_str());
 
   // Compose the title to NFC at index time so the cache stores precomposed glyphs;
   // device fonts have no combining-mark positioning, so NFD titles render broken.
@@ -751,6 +804,26 @@ void BookMetadataCache::createTocEntry(const std::string& title, const std::stri
     return;
   }
   tocCount++;
+}
+
+void BookMetadataCache::createPageListEntry(const std::string& label, const std::string& href,
+                                            const std::string& anchor) {
+  if (!buildMode || !pageListFile || !spineFile || pageListCount >= MAX_PAGE_LIST_COUNT || label.empty() ||
+      label.size() > MAX_METADATA_TEXT || href.size() > MAX_HREF_TEXT || anchor.size() > MAX_HREF_TEXT) {
+    return;
+  }
+  const int16_t spineIndex = resolveSpineIndex(href);
+  if (spineIndex < 0) {
+    LOG_DBG("BMC", "Could not find spine item for page-list href %s", href.c_str());
+    return;
+  }
+  const PageListEntry entry{utf8ComposeNfc(label), href, anchor, spineIndex};
+  if (!writePageListEntry(pageListFile, entry)) {
+    passWriteFailed = true;
+    LOG_ERR("BMC", "Short write while building page-list sidecar");
+    return;
+  }
+  ++pageListCount;
 }
 
 /* ============= READING / LOADING FUNCTIONS ================ */
@@ -932,4 +1005,37 @@ BookMetadataCache::TocEntry BookMetadataCache::getTocEntry(const int index) {
     return {};
   }
   return entry;
+}
+
+std::vector<BookMetadataCache::PageListEntry> BookMetadataCache::getPageListEntriesForSpine(
+    const int requestedSpineIndex) const {
+  std::vector<PageListEntry> result;
+  if (!loaded || requestedSpineIndex < 0 || requestedSpineIndex >= spineCount) return result;
+
+  HalFile pageFile;
+  if (!Storage.openFileForRead("BMC", cachePath + pageListBinFile, pageFile)) return result;
+  uint8_t version = 0;
+  uint16_t count = 0;
+  if (!serialization::tryReadPod(pageFile, version) || version != PAGE_LIST_VERSION ||
+      !serialization::tryReadPod(pageFile, count) || count > MAX_PAGE_LIST_COUNT) {
+    return {};
+  }
+
+  constexpr size_t MAX_MARKERS_PER_SPINE = 64;
+  for (uint16_t i = 0; i < count; ++i) {
+    PageListEntry entry;
+    if (!tryReadPageListEntryFrom(pageFile, entry) || entry.spineIndex < 0 || entry.spineIndex >= spineCount ||
+        entry.label.empty() || !utf8IsValid(entry.label)) {
+      LOG_ERR("BMC", "Invalid EPUB page-list sidecar entry");
+      return {};
+    }
+    if (entry.spineIndex == requestedSpineIndex && result.size() < MAX_MARKERS_PER_SPINE) {
+      result.push_back(std::move(entry));
+    }
+  }
+  if (pageFile.position() != pageFile.fileSize64()) {
+    LOG_ERR("BMC", "EPUB page-list sidecar has trailing data");
+    return {};
+  }
+  return result;
 }

@@ -22,7 +22,10 @@ struct KeyboardResult {
 struct MenuResult {
   int action = -1;
   uint8_t orientation = 0;
-  uint8_t pageTurnOption = 0;
+  uint16_t autoPageTurnSeconds = 0;
+  uint8_t wordSpacing = 0;
+  uint8_t repairParagraphIndent = 0;
+  uint8_t renderMode = 0;
 };
 
 struct ChapterResult {

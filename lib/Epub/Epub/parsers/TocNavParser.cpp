@@ -6,6 +6,24 @@
 
 #include "Epub/BookMetadataCache.h"
 
+namespace {
+std::string compactNavLabel(const std::string& source) {
+  std::string result;
+  result.reserve(source.size());
+  bool pendingSpace = false;
+  for (const unsigned char byte : source) {
+    if (byte == ' ' || byte == '\t' || byte == '\r' || byte == '\n') {
+      pendingSpace = !result.empty();
+      continue;
+    }
+    if (pendingSpace) result.push_back(' ');
+    pendingSpace = false;
+    result.push_back(static_cast<char>(byte));
+  }
+  return result;
+}
+}  // namespace
+
 bool TocNavParser::setup() {
   parser = XML_ParserCreate(nullptr);
   if (!parser) {
@@ -68,13 +86,18 @@ void XMLCALL TocNavParser::startElement(void* userData, const XML_Char* name, co
     return;
   }
 
-  // Look for <nav epub:type="toc"> anywhere in body (or nested elements)
+  // Look for TOC and publisher page-list nav blocks. epub:type is a token
+  // list, so values such as "page-list hidden" remain valid.
   if (self->state >= IN_BODY && strcmp(name, "nav") == 0) {
     for (int i = 0; atts[i]; i += 2) {
-      if ((strcmp(atts[i], "epub:type") == 0 || strcmp(atts[i], "type") == 0) && strcmp(atts[i + 1], "toc") == 0) {
-        self->state = IN_NAV_TOC;
-        LOG_DBG("NAV", "Found nav toc element");
-        return;
+      if (strcmp(atts[i], "epub:type") == 0 || strcmp(atts[i], "type") == 0) {
+        const std::string_view tokens(atts[i + 1]);
+        if (hasSpaceSeparatedToken(tokens, "toc") || hasSpaceSeparatedToken(tokens, "page-list")) {
+          self->currentNavIsPageList = hasSpaceSeparatedToken(tokens, "page-list");
+          self->state = IN_NAV_TOC;
+          LOG_DBG("NAV", "Found nav %s element", self->currentNavIsPageList ? "page-list" : "toc");
+          return;
+        }
       }
     }
     return;
@@ -137,8 +160,15 @@ void XMLCALL TocNavParser::endElement(void* userData, const XML_Char* name) {
       }
 
       if (self->cache) {
-        // olDepth gives us the nesting level (1-based from the outer ol)
-        self->cache->createTocEntry(self->currentLabel, href, anchor, self->olDepth);
+        const std::string label = compactNavLabel(self->currentLabel);
+        if (label.empty()) {
+          // Ignore whitespace-only navigation labels.
+        } else if (self->currentNavIsPageList) {
+          self->cache->createPageListEntry(label, href, anchor);
+        } else {
+          // olDepth gives us the nesting level (1-based from the outer ol)
+          self->cache->createTocEntry(label, href, anchor, self->olDepth);
+        }
       }
 
       self->currentLabel.clear();
@@ -165,7 +195,8 @@ void XMLCALL TocNavParser::endElement(void* userData, const XML_Char* name) {
 
   if (strcmp(name, "nav") == 0 && self->state >= IN_NAV_TOC) {
     self->state = IN_BODY;
-    LOG_DBG("NAV", "Finished parsing nav toc");
+    self->currentNavIsPageList = false;
+    LOG_DBG("NAV", "Finished parsing nav block");
     return;
   }
 }

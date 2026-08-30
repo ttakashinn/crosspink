@@ -381,7 +381,8 @@ void recordGrayscaleOutcome(const bool applied, const char* path, const uint16_t
 }
 
 [[noreturn]] void complete(const GfxRenderer& renderer, const int spineIndex, const int pageIndex, const int pageCount,
-                           const uint32_t visibleTextOffset, const EpubRenderMode renderMode) {
+                           const uint32_t visibleTextOffset, const EpubRenderMode renderMode,
+                           const char* publisherPageLabel) {
   if (!state.configured) failWithResult("render lab settings were not configured");
   if (!state.anchorResolutionRecorded || !state.anchorResolved) failWithResult("checkpoint anchor was not resolved");
   if (state.bw.empty()) failWithResult("no logical framebuffer was captured");
@@ -408,6 +409,10 @@ void recordGrayscaleOutcome(const bool applied, const char* path, const uint16_t
   result["page_index"] = pageIndex;
   result["page_count"] = pageCount;
   result["visible_text_offset"] = visibleTextOffset;
+  if (publisherPageLabel && publisherPageLabel[0] != '\0') {
+    JsonObject publisherPage = result["publisher_page"].to<JsonObject>();
+    publisherPage["label"] = publisherPageLabel;
+  }
   const char* sdFontFamily = envOr("CROSSPOINT_RENDER_LAB_SD_FONT_FAMILY");
   result["font_family"] = sdFontFamily[0] != '\0' ? sdFontFamily : "notoserif";
   result["font_point_size"] = envInt("CROSSPOINT_RENDER_LAB_FONT_SIZE", 14);

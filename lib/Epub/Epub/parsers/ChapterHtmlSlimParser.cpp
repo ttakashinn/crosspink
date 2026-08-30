@@ -417,6 +417,7 @@ void ChapterHtmlSlimParser::flushPendingAnchor() {
       }
       currentPageNextY = 0;
       currentPageVisibleOffsetSet = false;
+      currentPage->setPublisherPageLabel(activePublisherPageLabel);
     }
   }
 
@@ -431,6 +432,30 @@ void ChapterHtmlSlimParser::setCurrentPageVisibleOffset(const uint32_t offset) {
   // contains leading formatting whitespace before its first rendered word.
   currentPageVisibleOffset = completedPageCount == 0 ? 0 : offset;
   currentPageVisibleOffsetSet = true;
+}
+
+void ChapterHtmlSlimParser::addPublisherPageMarker(const uint32_t offset, const char* label) {
+  if (!label || label[0] == '\0' || publisherPageMarkerCount >= MAX_PUBLISHER_PAGE_MARKERS) return;
+  for (size_t i = 0; i < publisherPageMarkerCount; ++i) {
+    if (publisherPageMarkers[i].visibleOffset == offset) return;
+  }
+  auto& marker = publisherPageMarkers[publisherPageMarkerCount++];
+  marker.visibleOffset = offset;
+  const int bounded = std::min<int>(strlen(label), sizeof(marker.label) - 1);
+  const int safeLength = utf8SafeTruncateBuffer(label, bounded);
+  memcpy(marker.label, label, static_cast<size_t>(safeLength));
+  marker.label[safeLength] = '\0';
+}
+
+void ChapterHtmlSlimParser::applyPublisherPageLabel(Page& page, const uint32_t offset) {
+  while (nextPublisherPageMarker < publisherPageMarkerCount &&
+         publisherPageMarkers[nextPublisherPageMarker].visibleOffset <= offset) {
+    strncpy(activePublisherPageLabel, publisherPageMarkers[nextPublisherPageMarker].label,
+            sizeof(activePublisherPageLabel) - 1);
+    activePublisherPageLabel[sizeof(activePublisherPageLabel) - 1] = '\0';
+    ++nextPublisherPageMarker;
+  }
+  page.setPublisherPageLabel(activePublisherPageLabel);
 }
 
 // flush the contents of partWordBuffer to currentTextBlock
@@ -469,8 +494,15 @@ void ChapterHtmlSlimParser::flushPartWordBuffer() {
     fallbackTableRowToStacked();
   }
 
+  uint8_t linkId = 0;
+  if (insideFootnoteLink && currentFootnote.href[0] != '\0') {
+    if (!currentTextBlock->linkTargetMatches(currentFootnoteLinkId, currentFootnote.href)) {
+      currentFootnoteLinkId = currentTextBlock->addLinkTarget(currentFootnote.href);
+    }
+    linkId = currentFootnoteLinkId;
+  }
   currentTextBlock->addWord(partWordBuffer, fontStyle, false, nextWordContinues, partWordVisibleOffset,
-                            nextWordBreakWithoutSpace);
+                            nextWordBreakWithoutSpace, linkId);
   if (insideTableCell && !tableRowStacked) {
     tableCellTextBytes += wordBytes;
     if (currentTextBlock->size() > MAX_GRID_TABLE_CELL_WORDS) {
@@ -530,8 +562,8 @@ void ChapterHtmlSlimParser::startNewTextBlock(const BlockStyle& blockStyle) {
   // block is flushed so the chapter starts on a fresh page.
   flushPendingAnchor();
   if (lowMemoryFailure_) return;
-  currentTextBlock =
-      makeUniqueNoThrow<ParsedText>(extraParagraphSpacing, hyphenationEnabled, focusReadingEnabled, blockStyle);
+  currentTextBlock = makeUniqueNoThrow<ParsedText>(extraParagraphSpacing, hyphenationEnabled, focusReadingEnabled,
+                                                   blockStyle, wordSpacing);
   if (!currentTextBlock) {
     markLowMemoryFailure("text block allocation");
     return;
@@ -559,6 +591,7 @@ void ChapterHtmlSlimParser::emitHorizontalRule(const BlockStyle& blockStyle) {
       return;
     }
     currentPageNextY = 0;
+    currentPage->setPublisherPageLabel(activePublisherPageLabel);
   }
 
   const int16_t lineHeight = static_cast<int16_t>(renderer.getLineHeight(fontId, lineCompression));
@@ -587,6 +620,7 @@ void ChapterHtmlSlimParser::emitHorizontalRule(const BlockStyle& blockStyle) {
     }
     currentPageNextY = 0;
     currentPageVisibleOffsetSet = false;
+    currentPage->setPublisherPageLabel(activePublisherPageLabel);
   }
 
   currentPageNextY += topSpacing;
@@ -597,6 +631,7 @@ void ChapterHtmlSlimParser::emitHorizontalRule(const BlockStyle& blockStyle) {
     markLowMemoryFailure("horizontal-rule element");
     return;
   }
+  applyPublisherPageLabel(*currentPage, visibleTextOffset);
   currentPage->elements.push_back(pageRule);
   setCurrentPageVisibleOffset(visibleTextOffset);
   currentPageNextY = static_cast<int16_t>(currentPageNextY + ruleThickness + bottomSpacing);
@@ -778,6 +813,8 @@ void ChapterHtmlSlimParser::finishTableRow() {
       currentPageVisibleOffsetSet = false;
     }
 
+    applyPublisherPageLabel(*currentPage, lineVisibleOffset);
+
     const int16_t rowY = currentPageNextY;
     const size_t requiredCapacity = currentPage->elements.size() + columnCount;
     if (currentPage->elements.capacity() < requiredCapacity) {
@@ -862,9 +899,19 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
         // of thousands of them per chapter, exhausting the heap. TOC anchors are
         // always recorded regardless of element type, since they drive page breaks.
         const char* idValue = atts[i + 1];
+        const auto pageAnchor = std::find_if(self->publisherPageAnchors.begin(), self->publisherPageAnchors.end(),
+                                             [idValue](const auto& entry) { return entry.first == idValue; });
+        const bool isPublisherPageAnchor = pageAnchor != self->publisherPageAnchors.end();
+        if (isPublisherPageAnchor) {
+          self->addPublisherPageMarker(self->visibleTextOffset, pageAnchor->second.c_str());
+        }
         const bool isTocAnchor =
             std::find(self->tocAnchors.begin(), self->tocAnchors.end(), idValue) != self->tocAnchors.end();
-        if (isTocAnchor || (!isNonNavigableInlineElement(name) && self->anchorData.size() < MAX_ANCHORS_PER_CHAPTER)) {
+        // page-list targets are commonly empty inline spans. Preserve those
+        // known navigation anchors without reopening the heap risk from
+        // recording every converter-generated span ID.
+        if (isTocAnchor || isPublisherPageAnchor ||
+            (!isNonNavigableInlineElement(name) && self->anchorData.size() < MAX_ANCHORS_PER_CHAPTER)) {
           // Flush a displaced anchor before overwriting. Consecutive non-block elements
           // (e.g. <aside id="fn1">text</aside><aside id="fn2">) with no intervening block
           // never trigger startNewTextBlock, so fn1 gets silently overwritten. That leaves
@@ -889,7 +936,9 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
   // before tag-specific branches emit any content or metadata.
   CssStyle cssStyle;
   if (self->cssParser) {
-    cssStyle = self->cssParser->resolveStyle(name, classAttr, self->activeCssAncestorMask());
+    const CssParser::DescendantMask ancestorMask =
+        self->renderMode == EpubRenderMode::Simplified ? 0 : self->activeCssAncestorMask();
+    cssStyle = self->cssParser->resolveStyle(name, classAttr, ancestorMask);
     if (!styleAttr.empty()) {
       CssStyle inlineStyle = CssParser::parseInlineStyle(styleAttr);
       cssStyle.applyOver(inlineStyle);
@@ -917,6 +966,11 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     }
   }
   const bool specifiedDirection = cssStyle.hasDirection();
+
+  if (self->renderMode == EpubRenderMode::Simplified) {
+    cssStyle.defined.textDecoration = 0;
+    cssStyle.textDecoration = CssTextDecoration::None;
+  }
 
   // Direction is inherited in HTML/CSS. If this element does not define one, carry
   // the currently active inherited direction into its computed style.
@@ -1036,7 +1090,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
 #if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
     render_lab::recordTableRowStarted(static_cast<uint16_t>(self->completedPageCount));
 #endif
-    self->tableRowStacked = self->tableRowsSpannedRemaining > 0;
+    self->tableRowStacked = self->renderMode == EpubRenderMode::Simplified || self->tableRowsSpannedRemaining > 0;
     self->tableRowRtl = cssStyle.hasDirection() && cssStyle.direction == CssTextDirection::Rtl;
     if (self->tableRowsSpannedRemaining != UINT16_MAX && self->tableRowsSpannedRemaining > 0) {
       self->tableRowsSpannedRemaining--;
@@ -1080,8 +1134,9 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       tableCellBlockStyle.isRtl = cssStyle.direction == CssTextDirection::Rtl;
     }
 
-    self->currentTextBlock = makeUniqueNoThrow<ParsedText>(self->extraParagraphSpacing, self->hyphenationEnabled,
-                                                           self->focusReadingEnabled, tableCellBlockStyle);
+    self->currentTextBlock =
+        makeUniqueNoThrow<ParsedText>(self->extraParagraphSpacing, self->hyphenationEnabled, self->focusReadingEnabled,
+                                      tableCellBlockStyle, self->wordSpacing);
     if (!self->currentTextBlock) {
       self->markLowMemoryFailure("table cell allocation");
       return;
@@ -1347,6 +1402,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
                   }
                   self->currentPageNextY = 0;
                   self->currentPageVisibleOffsetSet = false;
+                  self->currentPage->setPublisherPageLabel(self->activePublisherPageLabel);
                 } else if (!self->currentPage) {
                   self->currentPage = makeUniqueNoThrow<Page>();
                   if (!self->currentPage) {
@@ -1355,6 +1411,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
                   }
                   self->currentPageNextY = 0;
                   self->currentPageVisibleOffsetSet = false;
+                  self->currentPage->setPublisherPageLabel(self->activePublisherPageLabel);
                 }
 
                 // Apply top margin from container block. Clamp it so the image never
@@ -1388,6 +1445,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
                   self->markLowMemoryFailure("page image allocation");
                   return;
                 }
+                self->applyPublisherPageLabel(*self->currentPage, self->visibleTextOffset);
                 self->currentPage->elements.push_back(pageImage);
                 self->setCurrentPageVisibleOffset(self->visibleTextOffset);
 #if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
@@ -1483,15 +1541,23 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     return;
   }
 
-  // Skip blocks with role="doc-pagebreak" and epub:type="pagebreak"
+  // EPUB pagebreak markers are non-visible, but retain their bounded label and
+  // content offset so the laid-out page can expose the publisher's numbering.
   if (atts != nullptr) {
+    bool isPublisherPageBreak = false;
     for (int i = 0; atts[i]; i += 2) {
-      if (strcmp(atts[i], "role") == 0 && strcmp(atts[i + 1], "doc-pagebreak") == 0 ||
-          strcmp(atts[i], "epub:type") == 0 && strcmp(atts[i + 1], "pagebreak") == 0) {
-        self->skipUntilDepth = self->depth;
-        self->depth += 1;
-        return;
-      }
+      if ((strcmp(atts[i], "role") == 0 && hasSpaceSeparatedToken(atts[i + 1], "doc-pagebreak")) ||
+          (strcmp(atts[i], "epub:type") == 0 && hasSpaceSeparatedToken(atts[i + 1], "pagebreak")))
+        isPublisherPageBreak = true;
+    }
+    if (isPublisherPageBreak) {
+      const char* label = getAttribute(atts, "aria-label");
+      if (!label || label[0] == '\0') label = getAttribute(atts, "title");
+      if (!label || label[0] == '\0') label = getAttribute(atts, "id");
+      self->addPublisherPageMarker(self->visibleTextOffset, label);
+      self->skipUntilDepth = self->depth;
+      self->depth += 1;
+      return;
     }
   }
 
@@ -1524,6 +1590,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       }
       self->insideFootnoteLink = true;
       self->footnoteLinkDepth = self->depth;
+      self->currentFootnoteLinkId = self->currentTextBlock ? self->currentTextBlock->addLinkTarget(href) : 0;
       strncpy(self->currentFootnote.href, href, sizeof(self->currentFootnote.href) - 1);
       self->currentFootnote.href[sizeof(self->currentFootnote.href) - 1] = '\0';
       self->currentFootnote.number[0] = '\0';
@@ -1540,8 +1607,20 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
   }
 
   const float emSize = static_cast<float>(self->renderer.getFontAscenderSize(self->fontId));
-  const auto userAlignmentBlockStyle = BlockStyle::fromCssStyle(
+  auto userAlignmentBlockStyle = BlockStyle::fromCssStyle(
       cssStyle, emSize, static_cast<CssTextAlign>(self->paragraphAlignment), self->viewportWidth);
+  // A number of Vietnamese EPUBs encode paragraphs as bare <p> elements and
+  // lose their first-line indent during conversion. Repair only that narrow
+  // case: explicit (including hanging) indents and centred/right-aligned text
+  // remain publisher-controlled.
+  if (self->repairParagraphIndent && strcmp(name, "p") == 0 &&
+      (!userAlignmentBlockStyle.textIndentDefined || userAlignmentBlockStyle.textIndent == 0) &&
+      (userAlignmentBlockStyle.alignment == CssTextAlign::Left ||
+       userAlignmentBlockStyle.alignment == CssTextAlign::Justify ||
+       userAlignmentBlockStyle.alignment == CssTextAlign::None)) {
+    userAlignmentBlockStyle.textIndentDefined = true;
+    userAlignmentBlockStyle.textIndent = static_cast<int16_t>(emSize);
+  }
 
   if (strcmp(name, "hr") == 0) {
     auto hrBlockStyle = BlockStyle::fromCssStyle(cssStyle, emSize, CssTextAlign::Left, self->viewportWidth);
@@ -1781,7 +1860,7 @@ void XMLCALL ChapterHtmlSlimParser::characterData(void* userData, const XML_Char
     const BlockStyle flowStyle =
         self->blockStyleStack.empty() ? BlockStyle() : self->blockStyleStack.back().withoutBottom();
     self->currentTextBlock = makeUniqueNoThrow<ParsedText>(self->extraParagraphSpacing, self->hyphenationEnabled,
-                                                           self->focusReadingEnabled, flowStyle);
+                                                           self->focusReadingEnabled, flowStyle, self->wordSpacing);
     if (!self->currentTextBlock) {
       self->markLowMemoryFailure("character-data text block");
       return;
@@ -2120,6 +2199,7 @@ void XMLCALL ChapterHtmlSlimParser::endElement(void* userData, const XML_Char* n
       self->pendingFootnotes.push_back({wordIndex, entry});
     }
     self->insideFootnoteLink = false;
+    self->currentFootnoteLinkId = 0;
   }
 
   // Leaving skip
@@ -2157,7 +2237,7 @@ void XMLCALL ChapterHtmlSlimParser::endElement(void* userData, const XML_Char* n
     const BlockStyle flowStyle =
         self->blockStyleStack.empty() ? BlockStyle() : self->blockStyleStack.back().withoutBottom();
     self->currentTextBlock = makeUniqueNoThrow<ParsedText>(self->extraParagraphSpacing, self->hyphenationEnabled,
-                                                           self->focusReadingEnabled, flowStyle);
+                                                           self->focusReadingEnabled, flowStyle, self->wordSpacing);
     if (!self->currentTextBlock) {
       self->markLowMemoryFailure("post-table text block");
     }
@@ -2227,6 +2307,12 @@ bool ChapterHtmlSlimParser::beginParse() {
   inlineStyleStack.resetStorage();
   cssAncestorMasks.fill(0);
   pageBreakAfterCount = 0;
+  publisherPageMarkerCount = 0;
+  nextPublisherPageMarker = 0;
+  activePublisherPageLabel[0] = '\0';
+  for (const auto& pageAnchor : publisherPageAnchors) {
+    if (pageAnchor.first.empty()) addPublisherPageMarker(0, pageAnchor.second.c_str());
+  }
   // Initialize block style stack with a root entry representing "no ancestor block elements".
   // The user's paragraph alignment is set as the default so child elements without explicit
   // text-align inherit it correctly through getCombinedBlockStyle.
@@ -2396,6 +2482,7 @@ void ChapterHtmlSlimParser::addLineToPage(std::shared_ptr<TextBlock> line, const
     }
     currentPageNextY = 0;
     currentPageVisibleOffsetSet = false;
+    currentPage->setPublisherPageLabel(activePublisherPageLabel);
   }
 
   if (currentPageNextY + lineHeight > viewportHeight) {
@@ -2409,8 +2496,10 @@ void ChapterHtmlSlimParser::addLineToPage(std::shared_ptr<TextBlock> line, const
     }
     currentPageNextY = 0;
     currentPageVisibleOffsetSet = false;
+    currentPage->setPublisherPageLabel(activePublisherPageLabel);
   }
   setCurrentPageVisibleOffset(visibleOffset);
+  applyPublisherPageLabel(*currentPage, visibleOffset);
 
   // Track cumulative words to assign footnotes to the page containing their anchor
   wordsExtractedInBlock += line->wordCount();
@@ -2425,6 +2514,14 @@ void ChapterHtmlSlimParser::addLineToPage(std::shared_ptr<TextBlock> line, const
   const int16_t xOffset =
       xOffsetOverride >= 0 ? xOffsetOverride
                            : resolveTextHorizontalLayout(line->getBlockStyle(), viewportWidth, baseLineHeight).xOffset;
+  const int rubyShift = line->getRubyShift(renderer.getFontAscenderSize(fontId));
+  for (const auto& link : line->takeLinkSpans()) {
+    if (!currentPage->addLink(link.href, static_cast<int16_t>(xOffset + link.x),
+                              static_cast<int16_t>(currentPageNextY + rubyShift - link.topLift), link.width,
+                              static_cast<int16_t>(baseLineHeight + link.topLift))) {
+      LOG_DBG("EHP", "Dropped page link: %.48s", link.href);
+    }
+  }
   auto pageLine = std::shared_ptr<PageLine>(new (std::nothrow) PageLine(std::move(line), xOffset, currentPageNextY));
   if (!pageLine) {
     markLowMemoryFailure("page-line allocation");
@@ -2449,6 +2546,7 @@ void ChapterHtmlSlimParser::makePages() {
     }
     currentPageNextY = 0;
     currentPageVisibleOffsetSet = false;
+    currentPage->setPublisherPageLabel(activePublisherPageLabel);
   }
 
   const int lineHeight = renderer.getLineHeight(fontId, lineCompression);

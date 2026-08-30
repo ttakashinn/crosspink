@@ -36,6 +36,9 @@ class XtcReaderActivity final : public ReaderActivity {
   std::string getBookThumbBmpPath() const override { return xtc ? xtc->getThumbBmpPath() : ""; }
   bool handleFormatInput() override;
   void renderBook() override;
+  std::pair<int32_t, int32_t> readerTelemetryPosition() const override {
+    return {static_cast<int32_t>(currentPage), -1};
+  }
   void applyInitialOrientation() override;
 
  public:

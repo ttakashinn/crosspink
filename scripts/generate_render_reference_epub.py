@@ -161,7 +161,7 @@ def xhtml_document(title: str, body: str, *, language: str = "vi") -> str:
     return f"""\
 <?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="{language}" lang="{language}">
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="{language}" lang="{language}">
 <head>
   <meta charset="utf-8"/>
   <title>{html.escape(title)}</title>
@@ -331,6 +331,7 @@ def pagination_chapter() -> str:
 <p>Ít nhất một dòng nội dung nên đi cùng tiêu đề khi còn đủ không gian hợp lý trên trang.</p>
 
 <div id="page-breaks" class="force-page-before">
+  <span id="publisher-page-101" epub:type="pagebreak marker" role="doc-pagebreak separator" aria-label="INLINE-101"></span>
   <h2>Điểm bắt đầu sau page-break-before</h2>
   <p>Dòng này phải bắt đầu ở trang mới khi thuộc tính page break được hỗ trợ.</p>
 </div>
@@ -627,6 +628,12 @@ def nav_xhtml() -> str:
     <h1>Mục lục</h1>
     <ol>
 {items}
+    </ol>
+  </nav>
+  <nav epub:type="landmarks page-list" id="publisher-pages">
+    <h1>Trang nhà xuất bản</h1>
+    <ol>
+      <li><a href="text/04-phan-trang.xhtml#publisher-page-101">101</a></li>
     </ol>
   </nav>
 </body>

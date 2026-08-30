@@ -14,24 +14,26 @@ TEST(VanNhanSoUpdatePolicy, GivesEachUpdateModeDistinctCacheAndSleepSemantics) {
   EXPECT_FALSE(policy::shouldSleepAfterUpdate(policy::UpdateTrigger::FIRST_START_OF_DAY));
 
   EXPECT_TRUE(policy::isAutomatic(policy::UpdateTrigger::ENTERING_SLEEP));
-  EXPECT_FALSE(policy::maySkipCurrentCache(policy::UpdateTrigger::ENTERING_SLEEP));
+  EXPECT_TRUE(policy::maySkipCurrentCache(policy::UpdateTrigger::ENTERING_SLEEP));
   EXPECT_TRUE(policy::shouldSleepAfterUpdate(policy::UpdateTrigger::ENTERING_SLEEP));
 }
 
-TEST(VanNhanSoUpdatePolicy, DailyModeSkipsOnlyWithAClockThatAdvancedAfterServerSuccess) {
+TEST(VanNhanSoUpdatePolicy, AutomaticModesSkipAProfileAlreadyConfirmedForTheCurrentDate) {
   EXPECT_TRUE(policy::shouldSkipCurrentCache(policy::UpdateTrigger::FIRST_START_OF_DAY, true, 20260829U, 601U,
                                              20260829U, 600U));
   EXPECT_FALSE(policy::shouldSkipCurrentCache(policy::UpdateTrigger::FIRST_START_OF_DAY, true, 20260829U, 600U,
                                               20260829U, 600U));
-  EXPECT_FALSE(policy::shouldSkipCurrentCache(policy::UpdateTrigger::FIRST_START_OF_DAY, true, 20260829U, 599U,
-                                              20260829U, 600U));
+  EXPECT_FALSE(policy::shouldSkipCurrentCache(policy::UpdateTrigger::ENTERING_SLEEP, true, 20260829U, UINT16_MAX,
+                                              20260829U, UINT16_MAX));
+  EXPECT_FALSE(
+      policy::shouldSkipCurrentCache(policy::UpdateTrigger::ENTERING_SLEEP, true, 20260829U, 599U, 20260829U, 600U));
   EXPECT_FALSE(
       policy::shouldSkipCurrentCache(policy::UpdateTrigger::FIRST_START_OF_DAY, true, 20260829U, 601U, 0U, UINT16_MAX));
+  EXPECT_FALSE(policy::shouldSkipCurrentCache(policy::UpdateTrigger::FIRST_START_OF_DAY, false, 20260829U, 601U,
+                                              20260829U, 600U));
 }
 
-TEST(VanNhanSoUpdatePolicy, SleepAndManualModesAlwaysCheckTheManifest) {
-  EXPECT_FALSE(
-      policy::shouldSkipCurrentCache(policy::UpdateTrigger::ENTERING_SLEEP, true, 20260829U, 601U, 20260829U, 600U));
+TEST(VanNhanSoUpdatePolicy, ManualModeAlwaysChecksTheManifest) {
   EXPECT_FALSE(policy::shouldSkipCurrentCache(policy::UpdateTrigger::MANUAL, true, 20260829U, 601U, 20260829U, 600U));
 }
 
@@ -48,9 +50,9 @@ TEST(VanNhanSoUpdatePolicy, TriggeringPowerButtonDoesNotCancelAutomaticUpdate) {
                                                   false, true));
 }
 
-TEST(VanNhanSoUpdatePolicy, MissingProfileOnlyAllowsExplicitBackCancellation) {
-  EXPECT_FALSE(policy::shouldCancelAutomaticUpdate(policy::UpdateTrigger::FIRST_START_OF_DAY, true, false, true, false,
-                                                   true, false));
+TEST(VanNhanSoUpdatePolicy, MissingProfileRefreshStillYieldsToNormalUse) {
+  EXPECT_TRUE(policy::shouldCancelAutomaticUpdate(policy::UpdateTrigger::FIRST_START_OF_DAY, true, false, true, false,
+                                                  true, false));
   EXPECT_TRUE(policy::shouldCancelAutomaticUpdate(policy::UpdateTrigger::FIRST_START_OF_DAY, true, true, false, false,
                                                   false, false));
 }
@@ -89,4 +91,17 @@ TEST(VanNhanSoUpdatePolicy, RepeatedFailuresRemainRecoverableAfterThreeHours) {
 TEST(VanNhanSoUpdatePolicy, MissingClockNeverPermanentlySuppressesAutomaticRecovery) {
   EXPECT_FALSE(policy::isBackoffActive(0x1111U, 0x1111U, true, 1, 0U, UINT16_MAX, 0U, UINT16_MAX));
   EXPECT_FALSE(policy::isBackoffActive(0x1111U, 0x1111U, false, 1, 0U, UINT16_MAX, 0U, UINT16_MAX));
+}
+
+TEST(VanNhanSoUpdatePolicy, MissingClockUsesBoundedTriggerBackoff) {
+  EXPECT_EQ(policy::automaticRetrySkipsAfterFailure(0), 0);
+  EXPECT_EQ(policy::automaticRetrySkipsAfterFailure(1), 1);
+  EXPECT_EQ(policy::automaticRetrySkipsAfterFailure(2), 3);
+  EXPECT_EQ(policy::automaticRetrySkipsAfterFailure(3), 7);
+  EXPECT_EQ(policy::automaticRetrySkipsAfterFailure(4), 7);
+
+  EXPECT_TRUE(policy::shouldSkipAutomaticRetry(0x1111U, 0x1111U, true, 1));
+  EXPECT_FALSE(policy::shouldSkipAutomaticRetry(0x1111U, 0x1111U, true, 0));
+  EXPECT_FALSE(policy::shouldSkipAutomaticRetry(0x2222U, 0x1111U, true, 7));
+  EXPECT_FALSE(policy::shouldSkipAutomaticRetry(0x1111U, 0x1111U, false, 7));
 }

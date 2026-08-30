@@ -16,11 +16,10 @@ void QrUtils::drawQrCode(const GfxRenderer& renderer, const Rect& bounds, const 
   size_t len = textPayload.length();
 
   // Truncate to max QR capacity at a UTF-8 safe boundary to avoid splitting multi-byte sequences
-  static constexpr size_t MAX_QR_CAPACITY = 2953;  // Version 40, ECC_LOW, byte mode
   std::string truncated;
   const char* payload = textPayload.c_str();
-  if (len > MAX_QR_CAPACITY) {
-    len = utf8SafeTruncateBuffer(textPayload.c_str(), static_cast<int>(MAX_QR_CAPACITY));
+  if (len > MAX_PAYLOAD_BYTES) {
+    len = utf8SafeTruncateBuffer(textPayload.c_str(), static_cast<int>(MAX_PAYLOAD_BYTES));
     truncated = textPayload.substr(0, len);
     payload = truncated.c_str();
   }

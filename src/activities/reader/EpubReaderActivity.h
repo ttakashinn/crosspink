@@ -2,6 +2,7 @@
 
 #include <Epub.h>
 #include <Epub/FootnoteEntry.h>
+#include <Epub/PageLink.h>
 #include <Epub/Section.h>
 
 #include <atomic>
@@ -17,6 +18,7 @@
 #include "ReaderProgressSaveDebouncer.h"
 #include "ReaderToolbarUi.h"
 #include "ReadingStats.h"
+#include "VnsReferencePosition.h"
 #include "clippings/ClippingCodec.h"
 #include "components/OptionPopup.h"
 #include "util/BoundedPageTurnQueue.h"
@@ -56,6 +58,7 @@ class EpubReaderActivity final : public ReaderActivity {
   int idlePrewarmPage = -1;
   int idlePrewarmFontId = 0;
   unsigned long lastRenderCompleteMs = 0;
+  bool renderedReadingPage = false;
   bool bookmarkRemoved = false;
   std::vector<BookmarkEntry> cachedBookmarks;
   std::vector<ClippingCodec::Record> cachedClippings;
@@ -108,6 +111,11 @@ class EpubReaderActivity final : public ReaderActivity {
 
   // Footnote support
   std::vector<FootnoteEntry> currentPageFootnotes;
+  std::vector<PageLink> currentPageLinks;
+  int currentPageLinkMarginLeft = 0;
+  int currentPageLinkMarginTop = 0;
+  std::string currentPublisherPageLabel;
+  uint32_t vnsContentSignature = 0;
   struct SavedPosition {
     int spineIndex;
     int pageNumber;
@@ -120,6 +128,7 @@ class EpubReaderActivity final : public ReaderActivity {
   uint16_t buildViewportHeight = 0;
   bool partialRebuildStartFailed = false;
   EpubRenderMode activeRenderMode = EpubRenderMode::Standard;
+  uint8_t pendingWorkingFallback = UINT8_MAX;
 
   int lastSavedSpineIndex = -1;
   int lastSavedPage = -1;
@@ -139,6 +148,7 @@ class EpubReaderActivity final : public ReaderActivity {
   bool buildTickHeapGate();
   ReaderRenderSpec activeReaderRenderSpec(uint16_t viewportWidth, uint16_t viewportHeight) const;
   bool retrySectionInSafeMode();
+  void rememberRenderedFallback();
   bool buildHeapPaused = false;
   static constexpr size_t RENDER_MIN_FREE_HEAP = 24 * 1024;
   static constexpr int BUILD_WINDOW_AHEAD = 5;
@@ -159,6 +169,7 @@ class EpubReaderActivity final : public ReaderActivity {
   void restoreReaderSettings() override;
   void saveBookReaderSettings();
   void jumpToPercent(int percent);
+  vns_reference::Position currentVnsReferencePosition() const;
   void onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction action);
   void openReaderMenu();
   // Toolbar reader menu (see Overlay above).
@@ -189,7 +200,9 @@ class EpubReaderActivity final : public ReaderActivity {
   void toggleClipping(const ClippingSelectionResult& selection);
   bool launchKOReaderSync();
   unsigned long confirmLongPressThreshold() const;
-  void toggleAutoPageTurn(uint8_t selectedPageTurnOption);
+  void toggleAutoPageTurn(uint16_t seconds);
+  void applyExtendedReaderSettings(uint8_t wordSpacing, bool repairParagraphIndent, uint8_t preferredRenderMode,
+                                   bool retryPreferredRender = false);
   void loadCachedBookmarks();
   void addBookmark();
   void updateBookmarkFlag();
@@ -200,6 +213,8 @@ class EpubReaderActivity final : public ReaderActivity {
   BookReadingStats readingStatsSnapshot() const;
   GlobalReadingStats globalReadingStatsSnapshot() const;
   int currentBookProgressPercent() const;
+  uint32_t estimatedTimeLeftForCurrentPosition(const BookReadingStats& stats) const;
+  bool pageTurnInternal(bool isForward, bool countForwardPace);
 
   void navigateToHref(const std::string& href, bool savePosition = false);
   void restoreSavedPosition();
@@ -220,6 +235,10 @@ class EpubReaderActivity final : public ReaderActivity {
   std::string getBookAuthor() const override { return epub ? epub->getAuthor() : ""; }
   std::string getBookThumbBmpPath() const override { return epub ? epub->getThumbBmpPath() : ""; }
   void renderBook() override;
+  bool renderedReadingPageThisFrame() const override { return renderedReadingPage; }
+  std::pair<int32_t, int32_t> readerTelemetryPosition() const override {
+    return {currentSpineIndex, section ? section->currentPage : nextPageNumber};
+  }
   void onEndOfBookRendered() override;
 
  public:

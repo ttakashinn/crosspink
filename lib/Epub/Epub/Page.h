@@ -1,12 +1,15 @@
 #pragma once
 #include <HalStorage.h>
+#include <Utf8.h>
 
 #include <algorithm>
+#include <cstring>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "FootnoteEntry.h"
+#include "PageLink.h"
 #include "blocks/ImageBlock.h"
 #include "blocks/TextBlock.h"
 
@@ -73,10 +76,14 @@ class PageHorizontalRule final : public PageElement {
 
 class Page {
  public:
+  static constexpr size_t PUBLISHER_PAGE_LABEL_LEN = 32;
   // the list of block index and line numbers on this page
   std::vector<std::shared_ptr<PageElement>> elements;
   std::vector<FootnoteEntry> footnotes;
   static constexpr uint16_t MAX_FOOTNOTES_PER_PAGE = 16;
+  std::vector<PageLink> links;
+  static constexpr uint16_t MAX_LINKS_PER_PAGE = 32;
+  char publisherPageLabel[PUBLISHER_PAGE_LABEL_LEN]{};
 
   // Zero-based visible-codepoint offset where this page starts. Not part of the serialized page
   // body (it lives in the section's visible-offset LUT); Section::loadPage* fills it in from the
@@ -92,6 +99,29 @@ class Page {
     strncpy(entry.href, href, sizeof(entry.href) - 1);
     entry.href[sizeof(entry.href) - 1] = '\0';
     footnotes.push_back(entry);
+  }
+
+  bool addLink(const char* href, int16_t x, int16_t y, int16_t width, int16_t height) {
+    if (!href || href[0] == '\0' || strlen(href) >= sizeof(PageLink::href) || width <= 0 || height <= 0 ||
+        links.size() >= MAX_LINKS_PER_PAGE) {
+      return false;
+    }
+    links.emplace_back();
+    auto& link = links.back();
+    strcpy(link.href, href);
+    link.x = x;
+    link.y = y;
+    link.width = width;
+    link.height = height;
+    return true;
+  }
+
+  void setPublisherPageLabel(const char* label) {
+    if (!label) return;
+    const int bounded = std::min<int>(strlen(label), sizeof(publisherPageLabel) - 1);
+    const int safeLength = utf8SafeTruncateBuffer(label, bounded);
+    memcpy(publisherPageLabel, label, static_cast<size_t>(safeLength));
+    publisherPageLabel[safeLength] = '\0';
   }
 
   void render(GfxRenderer& renderer, int fontId, int xOffset, int yOffset) const;

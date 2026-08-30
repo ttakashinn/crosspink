@@ -39,6 +39,10 @@ class ParsedText {
   // 0 = none. An annotation rather than a token split, so the hyphenator and line breaker still
   // see whole words; TextBlock stores emphasis the same way, so extractLine passes it through.
   std::vector<uint8_t> wordFocusBoundary;
+  // Temporary link identity that follows tokens through hyphenation and BiDi.
+  // Zero is plain text; non-zero indexes linkTargets.
+  std::vector<uint8_t> wordLinkIds;
+  std::vector<std::string> linkTargets;
   // Zero-based visible Unicode-codepoint offsets in the spine body, stored as
   // uint16_t deltas from a shared base to keep this layout-only metadata small.
   // Pathological spans wider than uint16_t use sparse rebases; rendered
@@ -55,6 +59,7 @@ class ParsedText {
   bool extraParagraphSpacing;
   bool hyphenationEnabled;
   bool focusReadingEnabled;
+  uint8_t wordSpacing;
   bool isNaturalAlign;
   bool hasRtlWord;
   // A soft flush leaves the final line buffered in the same logical paragraph.
@@ -101,17 +106,21 @@ class ParsedText {
 
  public:
   explicit ParsedText(const bool extraParagraphSpacing, const bool hyphenationEnabled = false,
-                      const bool focusReadingEnabled = false, const BlockStyle& blockStyle = BlockStyle())
+                      const bool focusReadingEnabled = false, const BlockStyle& blockStyle = BlockStyle(),
+                      const uint8_t wordSpacing = 0)
       : blockStyle(blockStyle),
         extraParagraphSpacing(extraParagraphSpacing),
         hyphenationEnabled(hyphenationEnabled),
         focusReadingEnabled(focusReadingEnabled),
+        wordSpacing(wordSpacing > 2 ? 2 : wordSpacing),
         isNaturalAlign(false),
         hasRtlWord(false) {}
   ~ParsedText() = default;
 
   void addWord(std::string word, EpdFontFamily::Style fontStyle, bool underline = false, bool attachToPrevious = false,
-               uint32_t visibleTextOffset = 0, bool breakWithoutSpaceBefore = false);
+               uint32_t visibleTextOffset = 0, bool breakWithoutSpaceBefore = false, uint8_t linkId = 0);
+  uint8_t addLinkTarget(const char* href);
+  bool linkTargetMatches(uint8_t linkId, const char* href) const;
   void setRubyForWordAt(size_t index, const std::string& ruby);
   void setRubyGroupAt(size_t startIndex, size_t count, const std::string& ruby);
   EpdFontFamily::Style getWordStyleAt(size_t index) const {
