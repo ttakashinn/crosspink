@@ -175,6 +175,10 @@ void ButtonRemapActivity::buildScreen(UiScreen& screen) {
   if (!mappedInput.hasTouch()) {
     props.rowHeight = uiScaledListMetric(metrics.listRowHeight);
   }
+  // Label at the value's font size: both sides of the row read as one unit.
+  // maxLines=2 also marks the style caller-owned (see textStyleUnset).
+  props.labelText = screen.theme().smallText;
+  props.labelText.maxLines = 2;
   screen.list(props);
 }
 
