@@ -6,9 +6,9 @@
 
 /**
  * HTTP client utility for fetching content and downloading files. The default
- * STANDARD mode preserves legacy callers, including local plain-http servers.
- * Hard-coded update services opt into VERIFIED_TLS, which requires HTTPS and
- * validates the certificate and hostname against ESP-IDF's CA bundle.
+ * STANDARD mode preserves legacy callers, including local plain-http servers,
+ * and uses the configured low-memory TLS stack. VERIFIED_TLS is available to
+ * callers that can afford ESP-IDF's larger CA-verified handshake.
  */
 class HttpDownloader {
  public:

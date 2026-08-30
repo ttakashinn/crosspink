@@ -21,12 +21,36 @@
 
 #include "FirmwareBoardTag.h"
 #include "FirmwareFlasher.h"
+#include "OtaUpdatePolicy.h"
 
 namespace {
 constexpr char latestReleaseUrl[] = "https://api.github.com/repos/ttakashinn/crosspoint-reader/releases/latest";
 constexpr char trustedAssetPrefix[] = "https://github.com/ttakashinn/crosspoint-reader/releases/download/";
 constexpr char OTA_TEMP_PATH[] = "/.crosspoint-ota.tmp";
 constexpr size_t SHA256_HEX_LENGTH = 64;
+// X3/X4 release builds use wolfSSL for normal HTTPS because its handshake has
+// a substantially lower contiguous-heap requirement than ESP-IDF/mbedTLS. The
+// latter intermittently fails before headers on the C3, especially after the
+// release API request has fragmented heap. OTA URLs remain hard-coded and
+// allow-listed; size, release SHA-256, image SHA/checksum, chip and board tag
+// are all verified before the inactive partition is touched.
+constexpr auto OTA_TRANSPORT = HttpDownloader::TransportSecurity::STANDARD;
+
+class WifiPowerSaveGuard {
+  wifi_ps_type_t previousMode = WIFI_PS_MIN_MODEM;
+  bool havePreviousMode = false;
+
+ public:
+  WifiPowerSaveGuard() {
+    havePreviousMode = esp_wifi_get_ps(&previousMode) == ESP_OK;
+    if (esp_wifi_set_ps(WIFI_PS_NONE) != ESP_OK) LOG_ERR("OTA", "Could not disable WiFi power save");
+  }
+
+  ~WifiPowerSaveGuard() {
+    const wifi_ps_type_t restoreMode = havePreviousMode ? previousMode : WIFI_PS_MIN_MODEM;
+    if (esp_wifi_set_ps(restoreMode) != ESP_OK) LOG_ERR("OTA", "Could not restore WiFi power save");
+  }
+};
 
 bool isTrustedReleaseAssetUrl(const std::string& url) { return url.rfind(trustedAssetPrefix, 0) == 0; }
 
@@ -79,8 +103,8 @@ OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
   // Stream the ~32KB release JSON straight into the parser as it arrives.
   // Buffering the whole body in a std::string would add a growing allocation
   // on top of the TLS session's heap during the fetch; with -fno-exceptions an
-  // OOM there aborts. fetchUrl handles the verified-https GET, redirects, and
-  // User-Agent (see HttpDownloader).
+  // OOM there aborts. fetchUrl handles the HTTPS GET, redirects, and User-Agent
+  // (see HttpDownloader).
   ReleaseJsonParser releaseParser;
   // Each board updates from its own release asset: plain firmware.bin for the
   // combined C3 X4/X3 binary, firmware-<board>.bin otherwise.
@@ -91,13 +115,24 @@ OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
              board_tag::boardName());
   }
   releaseParser.setFirmwareAssetName(assetName);
-  const bool ok = HttpDownloader::fetchUrl(
-      latestReleaseUrl,
-      [&releaseParser](const uint8_t* data, size_t len) {
-        releaseParser.feed(reinterpret_cast<const char*>(data), len);
-        return true;
-      },
-      "", "", HttpDownloader::TransportSecurity::VERIFIED_TLS);
+  bool ok = false;
+  {
+    WifiPowerSaveGuard wifiPowerSave;
+    for (unsigned attempt = 1; attempt <= ota_update_policy::HTTP_ATTEMPTS; ++attempt) {
+      releaseParser.reset();
+      ok = HttpDownloader::fetchUrl(
+          latestReleaseUrl,
+          [&releaseParser](const uint8_t* data, size_t len) {
+            releaseParser.feed(reinterpret_cast<const char*>(data), len);
+            return true;
+          },
+          "", "", OTA_TRANSPORT);
+      if (ok) break;
+      LOG_ERR("OTA", "Release check attempt %u/%u failed", attempt, ota_update_policy::HTTP_ATTEMPTS);
+      if (!ota_update_policy::hasAnotherHttpAttempt(attempt)) break;
+      delay(250);  // let TLS/socket cleanup complete before allocating again
+    }
+  }
   if (!ok) {
     LOG_ERR("OTA", "Release check fetch failed");
     return HTTP_ERROR;
@@ -186,48 +221,86 @@ OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback onProgres
     return INVALID_IMAGE_ERROR;
   }
 
-  std::string checksumSidecar;
-  bool checksumTooLarge = false;
-  const bool checksumFetched = HttpDownloader::fetchUrl(
-      checksumUrl,
-      [&checksumSidecar, &checksumTooLarge](const uint8_t* data, const size_t length) {
-        constexpr size_t MAX_CHECKSUM_SIDECAR_SIZE = 256;
-        if (checksumSidecar.size() + length > MAX_CHECKSUM_SIDECAR_SIZE) {
-          checksumTooLarge = true;
-          return false;
-        }
-        checksumSidecar.append(reinterpret_cast<const char*>(data), length);
-        return true;
-      },
-      "", "", HttpDownloader::TransportSecurity::VERIFIED_TLS);
-  if (!checksumFetched || checksumTooLarge) {
-    LOG_ERR("OTA", "Could not download release checksum");
-    return HTTP_ERROR;
-  }
   std::string expectedChecksum;
-  if (!firmware_release::parseSha256Sidecar(checksumSidecar, expectedChecksum)) {
-    LOG_ERR("OTA", "Invalid firmware checksum contents");
-    return CHECKSUM_ERROR;
-  }
-
-  Storage.remove(OTA_TEMP_PATH);
-  esp_wifi_set_ps(WIFI_PS_NONE);
   installPhase = InstallPhase::DOWNLOADING;
   processedSize = 0;
   int lastReportedPct = -1;
-  const auto downloadResult = HttpDownloader::downloadToFile(
-      otaUrl, OTA_TEMP_PATH,
-      [this, onProgress, ctx, &lastReportedPct](const size_t downloaded, const size_t) {
-        processedSize = std::min(downloaded, otaSize);
-        const size_t progressTotal = totalSize.load();
-        const int pct = progressTotal > 0 ? static_cast<int>(processedSize.load() * 100 / progressTotal) : 0;
-        if (onProgress && pct != lastReportedPct) {
-          lastReportedPct = pct;
-          onProgress(ctx);
-        }
-      },
-      nullptr, "", "", nullptr, 60000, HttpDownloader::TransportSecurity::VERIFIED_TLS);
-  esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+  if (onProgress) onProgress(ctx);
+
+  HttpDownloader::DownloadError downloadResult = HttpDownloader::HTTP_ERROR;
+  {
+    // Keep the radio fully awake for the checksum request and the large
+    // firmware transfer. The guard restores the caller's exact prior mode on
+    // success and every early return.
+    WifiPowerSaveGuard wifiPowerSave;
+
+    std::string checksumSidecar;
+    bool checksumFetched = false;
+    bool checksumTooLarge = false;
+    for (unsigned attempt = 1; attempt <= ota_update_policy::HTTP_ATTEMPTS; ++attempt) {
+      checksumSidecar.clear();
+      checksumTooLarge = false;
+      checksumFetched = HttpDownloader::fetchUrl(
+          checksumUrl,
+          [&checksumSidecar, &checksumTooLarge](const uint8_t* data, const size_t length) {
+            constexpr size_t MAX_CHECKSUM_SIDECAR_SIZE = 256;
+            if (checksumSidecar.size() + length > MAX_CHECKSUM_SIDECAR_SIZE) {
+              checksumTooLarge = true;
+              return false;
+            }
+            checksumSidecar.append(reinterpret_cast<const char*>(data), length);
+            return true;
+          },
+          "", "", OTA_TRANSPORT);
+      if (checksumFetched || checksumTooLarge) break;
+      LOG_ERR("OTA", "Checksum download attempt %u/%u failed", attempt, ota_update_policy::HTTP_ATTEMPTS);
+      if (!ota_update_policy::hasAnotherHttpAttempt(attempt)) break;
+      delay(250);
+    }
+    if (checksumTooLarge) {
+      LOG_ERR("OTA", "Release checksum response is too large");
+      installPhase = InstallPhase::IDLE;
+      return CHECKSUM_ERROR;
+    }
+    if (!checksumFetched) {
+      LOG_ERR("OTA", "Could not download release checksum");
+      installPhase = InstallPhase::IDLE;
+      return HTTP_ERROR;
+    }
+    if (!firmware_release::parseSha256Sidecar(checksumSidecar, expectedChecksum)) {
+      LOG_ERR("OTA", "Invalid firmware checksum contents");
+      installPhase = InstallPhase::IDLE;
+      return CHECKSUM_ERROR;
+    }
+
+    for (unsigned attempt = 1; attempt <= ota_update_policy::HTTP_ATTEMPTS; ++attempt) {
+      Storage.remove(OTA_TEMP_PATH);
+      processedSize = 0;
+      if (attempt > 1) {
+        lastReportedPct = -1;
+        if (onProgress) onProgress(ctx);
+      }
+      downloadResult = HttpDownloader::downloadToFile(
+          otaUrl, OTA_TEMP_PATH,
+          [this, onProgress, ctx, &lastReportedPct](const size_t downloaded, const size_t) {
+            processedSize = std::min(downloaded, otaSize);
+            const size_t progressTotal = totalSize.load();
+            const int pct = progressTotal > 0 ? static_cast<int>(processedSize.load() * 100 / progressTotal) : 0;
+            if (onProgress && ota_update_policy::shouldPublishProgress(lastReportedPct, pct)) {
+              lastReportedPct = pct;
+              onProgress(ctx);
+            }
+          },
+          nullptr, "", "", nullptr, 60000, OTA_TRANSPORT);
+      if (downloadResult == HttpDownloader::OK || downloadResult == HttpDownloader::FILE_ERROR ||
+          downloadResult == HttpDownloader::ABORTED) {
+        break;
+      }
+      LOG_ERR("OTA", "Firmware download attempt %u/%u failed", attempt, ota_update_policy::HTTP_ATTEMPTS);
+      if (!ota_update_policy::hasAnotherHttpAttempt(attempt)) break;
+      delay(250);
+    }
+  }
   if (downloadResult != HttpDownloader::OK) {
     Storage.remove(OTA_TEMP_PATH);
     installPhase = InstallPhase::IDLE;
@@ -281,7 +354,7 @@ OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback onProgres
     const size_t progressTotal = progress->updater->totalSize.load();
     const int pct =
         progressTotal > 0 ? static_cast<int>(progress->updater->processedSize.load() * 100 / progressTotal) : 0;
-    if (progress->callback && pct != progress->lastPercent) {
+    if (progress->callback && ota_update_policy::shouldPublishProgress(progress->lastPercent, pct)) {
       progress->lastPercent = pct;
       progress->callback(progress->callbackContext);
     }

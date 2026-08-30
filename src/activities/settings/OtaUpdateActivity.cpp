@@ -148,12 +148,18 @@ void OtaUpdateActivity::render(RenderLock&&) {
   float updaterProgress = 0;
   if (state == UPDATE_IN_PROGRESS) {
     LOG_DBG("OTA", "Update progress: %d / %d", updater.getProcessedSize(), updater.getTotalSize());
-    updaterProgress = static_cast<float>(updater.getProcessedSize()) / static_cast<float>(updater.getTotalSize());
-    // Only update every 2% at the most
-    if (static_cast<int>(updaterProgress * 50) == lastUpdaterPercentage / 2) {
+    const size_t totalSize = updater.getTotalSize();
+    updaterProgress =
+        totalSize > 0 ? static_cast<float>(updater.getProcessedSize()) / static_cast<float>(totalSize) : 0;
+    const unsigned int currentPercentage = static_cast<unsigned int>(updaterProgress * 100);
+    const auto currentPhase = updater.getInstallPhase();
+    // OtaUpdater already limits callbacks to 5% steps. Suppress only exact
+    // duplicates here; phase transitions at the same percentage must render.
+    if (currentPercentage == lastUpdaterPercentage && currentPhase == lastInstallPhase) {
       return;
     }
-    lastUpdaterPercentage = static_cast<int>(updaterProgress * 100);
+    lastUpdaterPercentage = currentPercentage;
+    lastInstallPhase = currentPhase;
   }
 
   if (state == CHECKING_FOR_UPDATE) {
@@ -194,7 +200,7 @@ void OtaUpdateActivity::render(RenderLock&&) {
     if (failedDetail != nullptr) {
       renderer.drawCenteredText(UI_10_FONT_ID, top + height + metrics.verticalSpacing, failedDetail);
     }
-    const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
+    const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_RETRY), "", "");
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   } else if (state == FINISHED) {
     renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_UPDATE_COMPLETE), true, EpdFontFamily::BOLD);
@@ -209,6 +215,9 @@ void OtaUpdateActivity::runUpdateInstall() {
   {
     RenderLock lock(*this);
     state = UPDATE_IN_PROGRESS;
+    failedDetail = nullptr;
+    lastUpdaterPercentage = UNINITIALIZED_PERCENTAGE;
+    lastInstallPhase = OtaUpdater::InstallPhase::IDLE;
   }
   requestUpdateAndWait();
   const auto res = updater.installUpdate(
@@ -244,6 +253,20 @@ void OtaUpdateActivity::runUpdateInstall() {
   }
 }
 
+void OtaUpdateActivity::retryAfterFailure() {
+  failedDetail = nullptr;
+  lastUpdaterPercentage = UNINITIALIZED_PERCENTAGE;
+  lastInstallPhase = OtaUpdater::InstallPhase::IDLE;
+  if (WiFi.status() == WL_CONNECTED) {
+    onWifiSelectionComplete(true);
+    return;
+  }
+  state = WIFI_SELECTION;
+  requestUpdate();
+  startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput),
+                         [this](const ActivityResult& result) { onWifiSelectionComplete(!result.isCancelled); });
+}
+
 void OtaUpdateActivity::loop() {
   if (state == WAITING_CONFIRMATION) {
     if (confirmPopup.handleInput(mappedInput, [this] { requestUpdate(); })) return;
@@ -255,8 +278,17 @@ void OtaUpdateActivity::loop() {
   if (state == FAILED) {
     int x = 0;
     int y = 0;
-    if (mappedInput.wasPressed(MappedInputManager::Button::Back) || mappedInput.wasScreenTapped(x, y)) {
+    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
       finish();
+    } else if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+      retryAfterFailure();
+    } else if (mappedInput.wasScreenTapped(x, y)) {
+      const auto rects = getOtaActionRects(renderer);
+      if (contains(rects.update, x, y)) {
+        retryAfterFailure();
+      } else if (contains(rects.cancel, x, y)) {
+        finish();
+      }
     }
     return;
   }

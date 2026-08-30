@@ -21,6 +21,7 @@ class OtaUpdateActivity : public Activity {
 
   State state = WIFI_SELECTION;
   unsigned int lastUpdaterPercentage = UNINITIALIZED_PERCENTAGE;
+  OtaUpdater::InstallPhase lastInstallPhase = OtaUpdater::InstallPhase::IDLE;
   OtaUpdater updater;
   // Optional detail line shown under the generic "Update failed" heading.
   // Points into the i18n string table (flash-resident, so no lifetime concern);
@@ -32,6 +33,7 @@ class OtaUpdateActivity : public Activity {
 
   void onWifiSelectionComplete(bool success);
   void runUpdateInstall();
+  void retryAfterFailure();
 
  public:
   explicit OtaUpdateActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
