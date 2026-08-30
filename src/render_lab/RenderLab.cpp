@@ -66,6 +66,11 @@ struct State {
   uint16_t focusLtrSplitCount = 0;
   uint16_t focusRtlSplitCount = 0;
   uint16_t focusZeroOffsetCount = 0;
+  bool grayscaleOutcomeRecorded = false;
+  bool grayscaleApplied = false;
+  uint16_t grayscaleStripRows = 0;
+  const char* grayscalePath = "none";
+  const char* grayscaleFallbackReason = "none";
 };
 
 State state;
@@ -216,6 +221,8 @@ int targetPageOffset() { return std::max(0, envInt("CROSSPOINT_RENDER_LAB_PAGE_O
 
 bool requiresFullBuild() { return envBool("CROSSPOINT_RENDER_LAB_FULL_BUILD", false); }
 
+int maxGrayscaleStripRows() { return std::max(0, envInt("CROSSPOINT_RENDER_LAB_MAX_GRAYSCALE_STRIP_ROWS", 0)); }
+
 void configureSettings(CrossPointSettings& settings) {
   if (!enabled()) return;
 
@@ -363,6 +370,16 @@ void recordTimings(const unsigned long prewarmMs, const unsigned long bwRenderMs
   state.totalMs = totalMs;
 }
 
+void recordGrayscaleOutcome(const bool applied, const char* path, const uint16_t stripRows,
+                            const char* fallbackReason) {
+  if (!enabled()) return;
+  state.grayscaleOutcomeRecorded = true;
+  state.grayscaleApplied = applied;
+  state.grayscaleStripRows = stripRows;
+  state.grayscalePath = path ? path : "none";
+  state.grayscaleFallbackReason = fallbackReason ? fallbackReason : "none";
+}
+
 [[noreturn]] void complete(const GfxRenderer& renderer, const int spineIndex, const int pageIndex, const int pageCount,
                            const uint32_t visibleTextOffset, const EpubRenderMode renderMode) {
   if (!state.configured) failWithResult("render lab settings were not configured");
@@ -412,6 +429,15 @@ void recordTimings(const unsigned long prewarmMs, const unsigned long bwRenderMs
   }
   result["grayscale_lsb_captured"] = state.lsbValid;
   result["grayscale_msb_captured"] = state.msbValid;
+  if (maxGrayscaleStripRows() > 0) {
+    JsonObject grayscale = result["grayscale_quality"].to<JsonObject>();
+    grayscale["outcome_recorded"] = state.grayscaleOutcomeRecorded;
+    grayscale["applied"] = state.grayscaleApplied;
+    grayscale["path"] = state.grayscalePath;
+    grayscale["strip_rows"] = state.grayscaleStripRows;
+    grayscale["forced_max_strip_rows"] = maxGrayscaleStripRows();
+    grayscale["fallback_reason"] = state.grayscaleFallbackReason;
+  }
   result["prewarm_ms"] = state.prewarmMs;
   result["bw_render_ms"] = state.bwRenderMs;
   result["total_render_ms"] = state.totalMs;

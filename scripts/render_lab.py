@@ -135,6 +135,13 @@ def load_and_validate_manifest() -> dict[str, Any]:
             raise RenderLabError(f"Profile {profile['id']} có focus_reading không hợp lệ")
         if "extra_paragraph_spacing" in profile and not isinstance(profile["extra_paragraph_spacing"], bool):
             raise RenderLabError(f"Profile {profile['id']} có extra_paragraph_spacing không hợp lệ")
+        max_strip_rows = profile.get("max_grayscale_strip_rows", 0)
+        if (
+            not isinstance(max_strip_rows, int)
+            or isinstance(max_strip_rows, bool)
+            or max_strip_rows not in {0, 10, 20, 40, 80}
+        ):
+            raise RenderLabError(f"Profile {profile['id']} có max_grayscale_strip_rows không hợp lệ")
         sd_font_fixture = profile.get("sd_font_fixture")
         sd_font_family = profile.get("sd_font_family")
         if (sd_font_fixture is None) != (sd_font_family is None):
@@ -152,6 +159,11 @@ def load_and_validate_manifest() -> dict[str, Any]:
                 f"Viewport {profile['id']} là {actual_viewport[0]}x{actual_viewport[1]}, "
                 f"phải là {expected_viewport[0]}x{expected_viewport[1]}"
             )
+
+    for profile in manifest["render_profiles"]:
+        equivalent = profile.get("visual_equivalent_profile")
+        if equivalent is not None and equivalent not in profile_ids:
+            raise RenderLabError(f"Profile {profile['id']} tham chiếu visual_equivalent_profile không tồn tại")
 
     required_table_metrics = {
         "tables",
@@ -330,6 +342,9 @@ def render_process(case: RenderCase, sd_root: Path, output_dir: Path, cache_stat
             "CROSSPOINT_RENDER_LAB_FORCE_BUILD_LOW_MEMORY": (
                 "1" if profile.get("force_build_low_memory", False) else "0"
             ),
+            "CROSSPOINT_RENDER_LAB_MAX_GRAYSCALE_STRIP_ROWS": str(
+                profile.get("max_grayscale_strip_rows", 0)
+            ),
             "SDL_VIDEODRIVER": child_env.get("SDL_VIDEODRIVER", "dummy"),
             "SDL_RENDER_DRIVER": child_env.get("SDL_RENDER_DRIVER", "software"),
         }
@@ -372,6 +387,25 @@ def render_process(case: RenderCase, sd_root: Path, output_dir: Path, cache_stat
 
 
 def assert_structural_expectations(case: RenderCase, result: dict[str, Any]) -> None:
+    max_strip_rows = case.profile.get("max_grayscale_strip_rows", 0)
+    if max_strip_rows:
+        quality = result.get("grayscale_quality")
+        if not isinstance(quality, dict):
+            raise RenderLabError(f"{case.case_id}: thiếu grayscale_quality cho profile heap thấp")
+        if quality.get("outcome_recorded") is not True or quality.get("applied") is not True:
+            raise RenderLabError(f"{case.case_id}: AA không được giữ lại khi giảm dải grayscale")
+        rows = quality.get("strip_rows")
+        if not isinstance(rows, int) or isinstance(rows, bool) or rows <= 0 or rows > max_strip_rows:
+            raise RenderLabError(
+                f"{case.case_id}: grayscale strip_rows={rows!r}, phải trong khoảng 1..{max_strip_rows}"
+            )
+        if quality.get("fallback_reason") != "none":
+            raise RenderLabError(
+                f"{case.case_id}: fallback grayscale ngoài dự kiến: {quality.get('fallback_reason')}"
+            )
+        if result.get("grayscale_lsb_captured") is not True or result.get("grayscale_msb_captured") is not True:
+            raise RenderLabError(f"{case.case_id}: thiếu một trong hai mặt phẳng grayscale")
+
     by_profile = case.checkpoint.get("structural_expectations", {})
     expected = by_profile.get(case.profile["id"])
     if expected is None:
@@ -396,6 +430,33 @@ def run_once(case: RenderCase, run_dir: Path) -> tuple[dict[str, Any], Path]:
             prime_dir = run_dir / "warm-prime"
             render_process(case, sd_root, prime_dir, "cold")
         result = render_process(case, sd_root, run_dir, case.cache_state)
+
+    equivalent_profile = case.profile.get("visual_equivalent_profile")
+    if equivalent_profile:
+        reference_profile = dict(case.profile)
+        reference_profile["id"] = equivalent_profile
+        reference_profile.pop("max_grayscale_strip_rows", None)
+        reference_profile.pop("visual_equivalent_profile", None)
+        reference_case = RenderCase(reference_profile, case.checkpoint, case.cache_state)
+        reference_dir = run_dir / "visual-reference"
+        with tempfile.TemporaryDirectory(prefix="crosspoint-render-lab-reference-") as temp_name:
+            sd_root = Path(temp_name)
+            prepare_sd_root(sd_root, reference_profile)
+            if case.cache_state == "warm":
+                render_process(reference_case, sd_root, reference_dir / "warm-prime", "cold")
+            render_process(reference_case, sd_root, reference_dir, case.cache_state)
+
+        mismatches = [
+            name
+            for name in ("framebuffer.pbm", "framebuffer.pgm")
+            if (reference_dir / name).read_bytes() != (run_dir / name).read_bytes()
+        ]
+        if mismatches:
+            create_diff_artifacts(reference_dir / "framebuffer.pgm", run_dir / "framebuffer.pgm", run_dir)
+            raise RenderLabError(
+                f"{case.case_id}: dải AA thích ứng khác lần render {equivalent_profile} hiện tại ở "
+                f"{', '.join(mismatches)}"
+            )
     return result, run_dir
 
 
@@ -414,6 +475,11 @@ def create_diff_artifacts(expected_pgm: Path, actual_pgm: Path, output_dir: Path
 
 
 def compare_or_accept(case: RenderCase, actual_dir: Path, result: dict[str, Any], accept: bool) -> None:
+    equivalent_profile = case.profile.get("visual_equivalent_profile")
+    if equivalent_profile:
+        print(f"[render-lab] Pixel-equivalent to {equivalent_profile}: {case.case_id}")
+        return
+
     golden_dir = GOLDEN_ROOT / case.profile["id"] / case.checkpoint["id"] / case.cache_state
     if accept:
         golden_dir.mkdir(parents=True, exist_ok=True)
@@ -494,7 +560,9 @@ def parse_args() -> argparse.Namespace:
     subparsers.add_parser("validate", help="Kiểm tra fixture, schema và simulator pin")
 
     verify = subparsers.add_parser("verify", help="Build simulator và so sánh golden")
-    verify.add_argument("--suite", choices=("smoke", "full", "css", "font", "safe", "focus"), default="smoke")
+    verify.add_argument(
+        "--suite", choices=("smoke", "full", "css", "font", "safe", "focus", "aa-low-memory"), default="smoke"
+    )
     verify.add_argument("--accept", action="store_true", help="Ghi output đã review thành golden mới")
     verify.add_argument("--runs", type=int, default=2, help="Số lần chạy độc lập để kiểm tra tính tất định")
     verify.add_argument("--no-build", action="store_true", help="Dùng simulator binary đã build")

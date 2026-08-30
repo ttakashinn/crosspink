@@ -1,0 +1,4 @@
+add_executable(AdaptiveGrayscaleStripTest AdaptiveGrayscaleStripTest.cpp)
+target_link_libraries(AdaptiveGrayscaleStripTest PRIVATE GTest::gtest_main crosspoint_test_common)
+target_include_directories(AdaptiveGrayscaleStripTest PRIVATE ${REPO_ROOT}/src)
+gtest_discover_tests(AdaptiveGrayscaleStripTest)

@@ -50,6 +50,7 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "saved_items/SavedItemsCatalog.h"
+#include "util/AdaptiveGrayscaleStrip.h"
 #include "util/BookCacheUtils.h"
 #include "util/BookmarkUtil.h"
 #include "util/ButtonNavigator.h"
@@ -2092,17 +2093,19 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
     ReaderUtils::displayWithRefreshCycle(renderer, pagesUntilFullRefresh, overlapRefresh);
   }
   const auto tDisplay = millis();
+  const uint32_t grayscaleFreeBefore = ESP.getFreeHeap();
+  const uint32_t grayscaleLargestBefore = ESP.getMaxAllocHeap();
 
   if (tiledGrayscale) {
-    constexpr int STRIP_ROWS = 80;
+    constexpr int DEFAULT_STRIP_ROWS = adaptive_grayscale_strip::DEFAULT_ROWS;
     const int gh = renderer.getDisplayHeight();
     const int gwBytes = renderer.getDisplayWidthBytes();
     const size_t planeBytes = static_cast<size_t>(gwBytes) * gh;
 
     auto renderPlaneToBuffer = [&](const bool lsbPlane, uint8_t* buf) {
       renderer.setRenderMode(lsbPlane ? GfxRenderer::GRAYSCALE_LSB : GfxRenderer::GRAYSCALE_MSB);
-      for (int y = 0; y < gh; y += STRIP_ROWS) {
-        const int rows = (gh - y < STRIP_ROWS) ? (gh - y) : STRIP_ROWS;
+      for (int y = 0; y < gh; y += DEFAULT_STRIP_ROWS) {
+        const int rows = (gh - y < DEFAULT_STRIP_ROWS) ? (gh - y) : DEFAULT_STRIP_ROWS;
         renderer.beginStripTarget(buf + static_cast<size_t>(y) * gwBytes, y, rows);
         renderer.clearScreen(0x00);
         renderGrayscalePass();
@@ -2116,7 +2119,12 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
       return ESP.getFreeHeap() >= planeBytes + PLANE_BUF_HEADROOM &&
              ESP.getMaxAllocHeap() >= planeBytes + PLANE_BUF_MAX_ALLOC_RESERVE;
     };
-    auto lsbPlaneBuf = (overlapRefresh && planeBufFits()) ? makeUniqueNoThrow<uint8_t[]>(planeBytes) : nullptr;
+    bool forceAdaptiveStrip = false;
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+    forceAdaptiveStrip = render_lab::maxGrayscaleStripRows() > 0;
+#endif
+    auto lsbPlaneBuf =
+        (overlapRefresh && !forceAdaptiveStrip && planeBufFits()) ? makeUniqueNoThrow<uint8_t[]>(planeBytes) : nullptr;
     auto msbPlaneBuf = (lsbPlaneBuf && planeBufFits()) ? makeUniqueNoThrow<uint8_t[]>(planeBytes) : nullptr;
 
     if (lsbPlaneBuf) {
@@ -2152,16 +2160,36 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
       renderer.cleanupGrayscaleWithFrameBuffer();
       const auto tEnd = millis();
 
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+      render_lab::recordGrayscaleOutcome(true, "buffered-planes", DEFAULT_STRIP_ROWS, "none");
+#endif
+
       LOG_DBG("ERS",
               "Page render (tiled async): prewarm=%lums bw_render=%lums display=%lums gray_render=%lums "
-              "wait=%lums gray_write=%lums gray_display=%lums cleanup=%lums total=%lums (planes buffered: %d)",
+              "wait=%lums gray_write=%lums gray_display=%lums cleanup=%lums total=%lums "
+              "(planes buffered: %d free=%u largest=%u)",
               tPrewarm - t0, tBwRender - tPrewarm, tDisplay - tBwRender, tGrayRender - tDisplay, tWait - tGrayRender,
-              tGrayWrite - tWait, tGrayDisplay - tGrayWrite, tEnd - tGrayDisplay, tEnd - t0, msbPlaneBuf ? 2 : 1);
+              tGrayWrite - tWait, tGrayDisplay - tGrayWrite, tEnd - tGrayDisplay, tEnd - t0, msbPlaneBuf ? 2 : 1,
+              static_cast<unsigned>(grayscaleFreeBefore), static_cast<unsigned>(grayscaleLargestBefore));
     } else {
-      auto scratch = makeUniqueNoThrow<uint8_t[]>(static_cast<size_t>(gwBytes) * STRIP_ROWS);
+      uint16_t stripRows = 0;
+      auto scratch = adaptive_grayscale_strip::allocate(
+          static_cast<size_t>(gwBytes), stripRows, [gwBytes](const size_t bytes) -> std::unique_ptr<uint8_t[]> {
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+            const int forcedRows = render_lab::maxGrayscaleStripRows();
+            if (forcedRows > 0 && bytes > static_cast<size_t>(gwBytes) * forcedRows) return nullptr;
+#endif
+            return makeUniqueNoThrow<uint8_t[]>(bytes);
+          });
       renderer.waitRefreshComplete();
       if (!scratch) {
-        LOG_ERR("ERS", "OOM: grayscale strip scratch (%d bytes); skipping AA this page", gwBytes * STRIP_ROWS);
+        LOG_ERR("ERS", "Grayscale applied=0 path=strip reason=scratch-oom free=%u largest=%u min_rows=%u min_bytes=%u",
+                static_cast<unsigned>(grayscaleFreeBefore), static_cast<unsigned>(grayscaleLargestBefore),
+                static_cast<unsigned>(adaptive_grayscale_strip::ROW_CANDIDATES.back()),
+                static_cast<unsigned>(gwBytes * adaptive_grayscale_strip::ROW_CANDIDATES.back()));
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+        render_lab::recordGrayscaleOutcome(false, "strip", 0, "scratch-oom");
+#endif
         if (overlapRefresh || combinedGrayscaleBase) {
           // The BW refresh ran the shadow-free async path, so controller RAM's
           // differential baseline was never rebuilt. Even with AA skipped it must
@@ -2172,9 +2200,18 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
           renderer.cleanupGrayscaleWithFrameBuffer();
         }
       } else {
+        if (stripRows < adaptive_grayscale_strip::DEFAULT_ROWS) {
+          LOG_INF("ERS", "Grayscale applied=1 path=strip rows=%u bytes=%u free=%u largest=%u degraded_memory=1",
+                  static_cast<unsigned>(stripRows), static_cast<unsigned>(gwBytes * stripRows),
+                  static_cast<unsigned>(grayscaleFreeBefore), static_cast<unsigned>(grayscaleLargestBefore));
+        } else {
+          LOG_DBG("ERS", "Grayscale applied=1 path=strip rows=%u bytes=%u free=%u largest=%u",
+                  static_cast<unsigned>(stripRows), static_cast<unsigned>(gwBytes * stripRows),
+                  static_cast<unsigned>(grayscaleFreeBefore), static_cast<unsigned>(grayscaleLargestBefore));
+        }
         renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
-        for (int y = 0; y < gh; y += STRIP_ROWS) {
-          const int rows = (gh - y < STRIP_ROWS) ? (gh - y) : STRIP_ROWS;
+        for (int y = 0; y < gh; y += stripRows) {
+          const int rows = (gh - y < stripRows) ? (gh - y) : stripRows;
           renderer.beginStripTarget(scratch.get(), y, rows);
           renderer.clearScreen(0x00);
           renderGrayscalePass();
@@ -2187,8 +2224,8 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
         const auto tGrayLsb = millis();
 
         renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
-        for (int y = 0; y < gh; y += STRIP_ROWS) {
-          const int rows = (gh - y < STRIP_ROWS) ? (gh - y) : STRIP_ROWS;
+        for (int y = 0; y < gh; y += stripRows) {
+          const int rows = (gh - y < stripRows) ? (gh - y) : stripRows;
           renderer.beginStripTarget(scratch.get(), y, rows);
           renderer.clearScreen(0x00);
           renderGrayscalePass();
@@ -2208,18 +2245,24 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
         const auto tCleanup = millis();
 
         const auto tEnd = millis();
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+        render_lab::recordGrayscaleOutcome(true, "strip", stripRows, "none");
+#endif
         LOG_DBG("ERS",
                 "Page render (tiled): prewarm=%lums bw_render=%lums display=%lums gray_lsb=%lums "
-                "gray_msb=%lums gray_display=%lums cleanup=%lums total=%lums",
+                "gray_msb=%lums gray_display=%lums cleanup=%lums total=%lums rows=%u free=%u largest=%u",
                 tPrewarm - t0, tBwRender - tPrewarm, tDisplay - tBwRender, tGrayLsb - tDisplay, tGrayMsb - tGrayLsb,
-                tGrayDisplay - tGrayMsb, tCleanup - tGrayDisplay, tEnd - t0);
+                tGrayDisplay - tGrayMsb, tCleanup - tGrayDisplay, tEnd - t0, static_cast<unsigned>(stripRows),
+                static_cast<unsigned>(grayscaleFreeBefore), static_cast<unsigned>(grayscaleLargestBefore));
       }
     }
   } else {
     if (needsAnyGrayscale) {
       if (!renderer.storeBwBuffer()) {
-        LOG_ERR("ERS", "Failed to store BW buffer for grayscale render; skipping grayscale this page");
+        LOG_ERR("ERS", "Grayscale applied=0 path=framebuffer-copy reason=bw-store-oom free=%u largest=%u",
+                static_cast<unsigned>(grayscaleFreeBefore), static_cast<unsigned>(grayscaleLargestBefore));
 #if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+        render_lab::recordGrayscaleOutcome(false, "framebuffer-copy", 0, "bw-store-oom");
         render_lab::recordTimings(tPrewarm - t0, tBwRender - tPrewarm, millis() - t0);
 #endif
         return;
@@ -2243,6 +2286,10 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
       renderer.setRenderMode(GfxRenderer::BW);
       renderer.restoreBwBuffer();
       const auto tBwRestore = millis();
+
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+      render_lab::recordGrayscaleOutcome(true, "framebuffer-copy", 0, "none");
+#endif
 
       const auto tEnd = millis();
       LOG_DBG("ERS",

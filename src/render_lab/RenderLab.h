@@ -15,6 +15,7 @@ const char* bookPath();
 const char* targetHref();
 int targetPageOffset();
 bool requiresFullBuild();
+int maxGrayscaleStripRows();
 
 void configureSettings(CrossPointSettings& settings);
 void recordAnchorResolution(const char* anchor, bool resolved);
@@ -31,6 +32,7 @@ void beginFrame(const GfxRenderer& renderer);
 void captureGrayscalePlaneStrip(bool lsbPlane, const uint8_t* rows, uint16_t yStart, uint16_t numRows,
                                 uint16_t rowBytes);
 void recordTimings(unsigned long prewarmMs, unsigned long bwRenderMs, unsigned long totalMs);
+void recordGrayscaleOutcome(bool applied, const char* path, uint16_t stripRows, const char* fallbackReason);
 
 [[noreturn]] void complete(const GfxRenderer& renderer, int spineIndex, int pageIndex, int pageCount,
                            uint32_t visibleTextOffset, EpubRenderMode renderMode);

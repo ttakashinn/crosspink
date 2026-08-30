@@ -9,6 +9,7 @@ import sys
 SCRIPT_DIR = Path(__file__).resolve().parent
 FONT_DIR = SCRIPT_DIR.parent / "builtinFonts"
 SYMBOLS = (
+    0x2190, 0x2192,
     0x25A0, 0x25A1, 0x25C6, 0x25C7, 0x25CB, 0x25CF,
     0x2605, 0x2606, 0x2661, 0x2665, 0x2713, 0x2717,
 )
@@ -59,7 +60,7 @@ def main() -> int:
         for error in errors:
             print(f"  - {error}", file=sys.stderr)
         return 1
-    print("Verified 12 curated symbols in all 32 Noto reader font faces.")
+    print(f"Verified {len(SYMBOLS)} curated symbols in all 32 Noto reader font faces.")
     return 0
 
 

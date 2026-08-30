@@ -5,10 +5,15 @@
 #include <HalGPIO.h>
 #include <HalTiltSensor.h>
 #include <Logging.h>
+#include <Memory.h>
 #include <components/bars/tap-zones.h>
+#include <esp_system.h>
+
+#include <algorithm>
 
 #include "MappedInputManager.h"
 #include "activities/ActivityManager.h"
+#include "util/AdaptiveGrayscaleStrip.h"
 
 namespace ReaderUtils {
 
@@ -199,13 +204,68 @@ inline void displayBaseWithRefreshCycle(const GfxRenderer& renderer, int& pagesU
 // and other overlays should be drawn before calling this.
 // Kept as a template to avoid std::function overhead; instantiated once per reader type.
 template <typename RenderFn>
-void renderAntiAliased(GfxRenderer& renderer, RenderFn&& renderFn) {
+bool renderAntiAliased(GfxRenderer& renderer, RenderFn&& renderFn) {
+  if (renderer.supportsStripGrayscale()) {
+    const int displayHeight = renderer.getDisplayHeight();
+    const int rowBytes = renderer.getDisplayWidthBytes();
+    const uint32_t freeBefore = ESP.getFreeHeap();
+    const uint32_t largestBefore = ESP.getMaxAllocHeap();
+    uint16_t stripRows = 0;
+    auto scratch = adaptive_grayscale_strip::allocate(static_cast<size_t>(rowBytes), stripRows, [](const size_t bytes) {
+      return makeUniqueNoThrow<uint8_t[]>(bytes);
+    });
+
+    renderer.waitRefreshComplete();
+    if (!scratch) {
+      LOG_ERR("READER", "Grayscale applied=0 path=strip reason=scratch-oom free=%u largest=%u min_rows=%u min_bytes=%u",
+              static_cast<unsigned>(freeBefore), static_cast<unsigned>(largestBefore),
+              static_cast<unsigned>(adaptive_grayscale_strip::ROW_CANDIDATES.back()),
+              static_cast<unsigned>(rowBytes * adaptive_grayscale_strip::ROW_CANDIDATES.back()));
+      // A combined-base panel may still hold a deferred B/W activation; flush
+      // it so the page reaches the panel even after every bounded retry fails.
+      if (renderer.combinesGrayscaleBase()) renderer.cleanupGrayscaleWithFrameBuffer();
+      return false;
+    }
+
+    if (stripRows < adaptive_grayscale_strip::DEFAULT_ROWS) {
+      LOG_INF("READER", "Grayscale applied=1 path=strip rows=%u bytes=%u free=%u largest=%u degraded_memory=1",
+              static_cast<unsigned>(stripRows), static_cast<unsigned>(rowBytes * stripRows),
+              static_cast<unsigned>(freeBefore), static_cast<unsigned>(largestBefore));
+    } else {
+      LOG_DBG("READER", "Grayscale applied=1 path=strip rows=%u bytes=%u free=%u largest=%u",
+              static_cast<unsigned>(stripRows), static_cast<unsigned>(rowBytes * stripRows),
+              static_cast<unsigned>(freeBefore), static_cast<unsigned>(largestBefore));
+    }
+
+    const auto renderPlane = [&](const bool lsbPlane) {
+      renderer.setRenderMode(lsbPlane ? GfxRenderer::GRAYSCALE_LSB : GfxRenderer::GRAYSCALE_MSB);
+      for (int y = 0; y < displayHeight; y += stripRows) {
+        const int rows = std::min<int>(stripRows, displayHeight - y);
+        renderer.beginStripTarget(scratch.get(), y, rows);
+        renderer.clearScreen(0x00);
+        renderFn();
+        renderer.endStripTarget();
+        renderer.writeGrayscalePlaneStrip(lsbPlane, scratch.get(), y, rows);
+      }
+    };
+
+    renderPlane(true);
+    renderPlane(false);
+    renderer.setRenderMode(GfxRenderer::BW);
+    renderer.displayGrayBuffer();
+    renderer.cleanupGrayscaleWithFrameBuffer();
+    return true;
+  }
+
+  const uint32_t freeBefore = ESP.getFreeHeap();
+  const uint32_t largestBefore = ESP.getMaxAllocHeap();
   if (!renderer.storeBwBuffer()) {
-    LOG_ERR("READER", "Failed to store BW buffer for anti-aliasing");
+    LOG_ERR("READER", "Grayscale applied=0 path=framebuffer-copy reason=bw-store-oom free=%u largest=%u",
+            static_cast<unsigned>(freeBefore), static_cast<unsigned>(largestBefore));
     // A combined-base panel may still hold a deferred B/W activation; flush it
     // so the page reaches the panel even without its grays.
     if (renderer.combinesGrayscaleBase()) renderer.cleanupGrayscaleWithFrameBuffer();
-    return;
+    return false;
   }
 
   renderer.clearScreen(0x00);
@@ -222,6 +282,9 @@ void renderAntiAliased(GfxRenderer& renderer, RenderFn&& renderFn) {
   renderer.setRenderMode(GfxRenderer::BW);
 
   renderer.restoreBwBuffer();
+  LOG_DBG("READER", "Grayscale applied=1 path=framebuffer-copy free=%u largest=%u", static_cast<unsigned>(freeBefore),
+          static_cast<unsigned>(largestBefore));
+  return true;
 }
 
 struct BackNavCallback {
