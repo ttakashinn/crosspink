@@ -274,22 +274,30 @@ const char* TextSettingsActivity::confirmLabelText() const {
 void TextSettingsActivity::render(RenderLock&&) {
   if (optionPopup_.processRender(renderer, mappedInput)) return;  // picker draws over everything
 
-  renderer.clearScreen();
-
-  GUI.drawHeader(renderer, Rect{safeArea_.x, safeArea_.y + metrics_.topPadding, safeArea_.width, metrics_.headerHeight},
-                 tr(STR_TEXT_SETTINGS));
-
   const char* familyName = (currentFamilyIndex_ >= 0 && currentFamilyIndex_ < static_cast<int>(fonts_.size()))
                                ? fonts_[currentFamilyIndex_].name.c_str()
                                : "";
   const char* sizeName = (currentSizeIndex_ >= 0 && currentSizeIndex_ < static_cast<int>(sizes_.size()))
                              ? sizes_[currentSizeIndex_].name.c_str()
                              : "";
-  textsettings::renderPreview(renderer, previewLayout_, safeArea_.x, safeArea_.width, metrics_.previewPadding,
-                              metrics_.verticalSpacing, afterHeader, previewHeight, familyName, sizeName);
+  const auto renderPage = [this, familyName, sizeName] {
+    renderer.clearScreen();
+    GUI.drawHeader(renderer,
+                   Rect{safeArea_.x, safeArea_.y + metrics_.topPadding, safeArea_.width, metrics_.headerHeight},
+                   tr(STR_TEXT_SETTINGS));
+    textsettings::renderPreview(renderer, previewLayout_, safeArea_.x, safeArea_.width, metrics_.previewPadding,
+                                metrics_.verticalSpacing, afterHeader, previewHeight, familyName, sizeName);
+    // Tab bar + active tab's list draw inside the screen builder.
+    renderUi();
+  };
 
-  // Tab bar + active tab's list draw inside the screen builder.
-  renderUi();
+  renderPage();
+  // Keep the custom preview render path consistent with UiListActivity's
+  // variable-height-row protocol. This is normally one pass and only repeats
+  // when a wrapped row clipped the button-followed selection.
+  for (int pass = 0; activeNav().consumeRebuildNeeded() && pass < 8; ++pass) {
+    renderPage();
+  }
 
   if (focusedRowHasNoPreview()) {
     const int captionHeight = renderer.getTextHeight(UI_10_FONT_ID) + metrics_.verticalSpacing;

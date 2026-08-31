@@ -567,19 +567,27 @@ void SettingsActivity::buildScreen(UiScreen& screen) {
 void SettingsActivity::render(RenderLock&&) {
   if (optionPopup.processRender(renderer, mappedInput)) return;
 
-  renderer.clearScreen();
-
   const auto pageWidth = renderer.getScreenWidth();
   const auto& metrics = UITheme::getInstance().getMetrics();
+  const auto renderPage = [this, pageWidth, &metrics] {
+    renderer.clearScreen();
+    // Header via GUI.drawHeader (already FreeInkUI-themed) for the battery
+    // indicator; the rest of the screen renders through the app.
+    // Version rides in the header's trailing label slot: the footer position
+    // conflicts with button hints on non-touch devices.
+    GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_SETTINGS_TITLE),
+                   CROSSPOINT_VERSION);
+    renderUi();
+  };
 
-  // Header via GUI.drawHeader (already FreeInkUI-themed) for the battery
-  // indicator; the rest of the screen renders through the app.
-  // Version rides in the header's trailing label slot: the footer position
-  // conflicts with button hints on non-touch devices.
-  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_SETTINGS_TITLE),
-                 CROSSPOINT_VERSION);
-
-  renderUi();
+  renderPage();
+  // Long translated labels can wrap, so fewer rows may fit than the fixed-row
+  // estimate used when button navigation first follows the selection. Honor
+  // ListNav's layout feedback before presenting the framebuffer; otherwise a
+  // row just below the viewport becomes selected without its focus being drawn.
+  for (int pass = 0; activeNav().consumeRebuildNeeded() && pass < 8; ++pass) {
+    renderPage();
+  }
 
   const int ring = ringPos();
   const auto confirmLabel =
