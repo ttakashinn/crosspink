@@ -24,8 +24,8 @@
 #include "OtaUpdatePolicy.h"
 
 namespace {
-constexpr char latestReleaseUrl[] = "https://api.github.com/repos/ttakashinn/crosspoint-reader/releases/latest";
-constexpr char trustedAssetPrefix[] = "https://github.com/ttakashinn/crosspoint-reader/releases/download/";
+constexpr char latestReleaseUrl[] = "https://api.github.com/repos/ttakashinn/crosspink/releases/latest";
+constexpr char trustedAssetPrefix[] = "https://github.com/ttakashinn/crosspink/releases/download/";
 constexpr char OTA_TEMP_PATH[] = "/.crosspoint-ota.tmp";
 constexpr size_t SHA256_HEX_LENGTH = 64;
 // X3/X4 release builds use wolfSSL for normal HTTPS because its handshake has

@@ -1,6 +1,6 @@
 name: Compile Release
 
-# Builds the supported Văn Nhân Số release targets on tag push: plain
+# Builds the supported CrossPink release targets on tag push: plain
 # firmware.bin for the combined C3 X3/X4 binary and firmware-x4pro.bin for
 # X4 Pro. Attach the artifacts' .bin files to the release as-is.
 
@@ -73,7 +73,7 @@ jobs:
           key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
           restore-keys: pio-${{ runner.os }}-
 
-      - name: Build CrossPoint
+      - name: Build CrossPink
         run: pio run -e ${{ matrix.pio_env }} -j1
 
       - name: Name release asset
@@ -135,7 +135,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          upstream_version="${GITHUB_REF_NAME%%-vns.*}"
+          upstream_version="${GITHUB_REF_NAME%%-cp.*}"
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             for stale in firmware-sticky.bin firmware-sticky.bin.sha256 \
               firmware-papermono.bin firmware-papermono.bin.sha256; do
@@ -145,6 +145,6 @@ jobs:
           else
             gh release create "$GITHUB_REF_NAME" publish/* \
               --verify-tag \
-              --title "CrossPoint Văn Nhân Số $GITHUB_REF_NAME" \
+              --title "CrossPink $GITHUB_REF_NAME" \
               --notes "Custom firmware based on CrossPoint Reader stable $upstream_version."
           fi

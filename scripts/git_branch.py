@@ -1,9 +1,9 @@
 """
 PlatformIO pre-build script: inject git branch and short SHA into
-CROSSPOINT_VERSION for development environments.
+the firmware-version macro for development environments.
 
 Results in a version string like:  1.1.0-dev-feat-kosync-xpath-05c6cf8
-Release environments are unaffected; they set CROSSPOINT_VERSION in the ini.
+Release environments are unaffected; they set the version macro in the ini.
 """
 
 import configparser
@@ -89,7 +89,7 @@ def inject_version(env):
     version_string = f'{base_version}-dev-{branch}-{short_sha}'
 
     env.Append(CPPDEFINES=[('CROSSPOINT_VERSION', f'\\"{version_string}\\"')])
-    print(f'CrossPoint build version: {version_string}')
+    print(f'CrossPink build version: {version_string}')
 
 
 # PlatformIO/SCons entry point — Import and env are SCons builtins injected at runtime.

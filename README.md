@@ -1,308 +1,127 @@
-# CrossPoint Reader
+# CrossPink
 
-[![Fund contributors](https://img.shields.io/badge/%F0%9F%91%91_Fund_contributors-royalty.dev-BB953A?style=for-the-badge&labelColor=1a1a1a)](https://app.royalty.dev/crosspoint-reader/crosspoint-reader)
+CrossPink là firmware đọc sách mã nguồn mở cho thiết bị e-ink ESP32. Đây là fork cá nhân của [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader), tập trung vào trải nghiệm đọc tiếng Việt, EPUB khó và các tính năng Văn Nhân Số nhưng vẫn giữ thay đổi nhỏ, có kiểm thử và phù hợp với giới hạn RAM của thiết bị.
 
-CrossPoint is open-source e-reader firmware - community-built, fully hackable, free forever. It's maintained by a growing community of developers and readers who believe your device should do what you want - not what a manufacturer decided for you.
+## Thiết bị hỗ trợ
 
-## Bản CrossPoint Văn Nhân Số
+- Xteink X3 và X4 dùng chung firmware ESP32-C3.
+- Seeed Studio Sticky dùng firmware ESP32-S3 riêng.
+- Xteink X4 Pro, X4 Classic và M5Stack Paper Mono có profile build riêng. Release tự động hiện phát hành C3 và X4 Pro; X4 Classic/Paper Mono cần build từ source cho tới khi có asset chính thức tương ứng.
 
-Nhánh firmware này được phát triển trực tiếp trên nền [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader), giữ kiến trúc activity, renderer, cache EPUB, lớp phần cứng và khả năng tương thích thiết bị của CrossPoint. Phần mở rộng Văn Nhân Số được triển khai chọn lọc, có kiểm thử và có đường lui phù hợp với giới hạn RAM của ESP32-C3; đây không phải một renderer hoặc firmware độc lập được viết lại từ đầu.
+## Điểm khác biệt của CrossPink
 
-Các phần mở rộng và cải tiến chính gồm:
+CrossPink không thay renderer hoặc SDK bằng một nhánh riêng. Nó kế thừa kiến trúc activity, cache EPUB, lớp phần cứng và cơ chế an toàn của CrossPoint, sau đó bổ sung có chọn lọc các cải tiến cho việc đọc hàng ngày.
 
-- Màn hình ngủ Văn Nhân Số có nội dung được quản lý, chế độ cập nhật khi khởi động/lúc ngủ/thủ công, cache ngoại tuyến và backoff để lỗi mạng không lặp lại ở mỗi lần sử dụng. Mọi thao tác của người dùng đều có quyền hủy cập nhật tự động.
-- Chế độ màn hình ngủ **Ôn từ đã tra**: chọn ngẫu nhiên từ lịch sử tra cứu và chỉ bắt buộc có từ cùng phần giải nghĩa. Phiên âm, ví dụ và collocation được thêm khi nguồn thực sự có; chế độ hoạt động ngoại tuyến và tự dùng màn mặc định nếu không thể tạo thẻ ôn tập an toàn.
-- Reader EPUB có telemetry phát triển cho vòng đời lật trang, khoảng yên tĩnh sau khi trang hiện, 3 cấp dàn trang `Standard / Simplified / Safe`, fallback chỉ khi thiếu bộ nhớ và hành động thử lại chất lượng đầy đủ.
-- Tùy chọn theo từng sách gồm khoảng cách từ, sửa thụt đầu dòng bị thiếu và tự lật trang theo khoảng 5–120 giây. Bấm dừng tự lật sẽ lưu trạng thái tắt, không tự bật lại ở lần mở sách sau.
-- Menu reader dạng 3 nhóm trên thiết bị dùng nút, liên kết/footnote có vùng chạm, số trang nhà xuất bản, vị trí tham chiếu VNS không phụ thuộc font/margin/orientation và ước lượng thời gian đọc còn lại chỉ khi đủ dữ liệu.
-- Các cơ chế lưu trữ có version, validation và phục hồi file tạm/backup; cache dàn trang được invalid đúng khi format hoặc setting ảnh hưởng layout thay đổi.
+### Các điểm chính
 
-[CrossInk](https://github.com/uxjulia/CrossInk) và [CrossVi](https://github.com/tvhdc/crossvi) là 2 nguồn tham khảo quan trọng cho typography, render fallback, tổ chức menu, page reference, telemetry và idle guard. Mã được chọn lọc hoặc viết lại theo kiến trúc CrossPoint/Văn Nhân Số thay vì nhập nguyên khối từ các fork. Chi tiết phạm vi và căn cứ kỹ thuật nằm trong [kế hoạch `vns.7`](./docs/contributing/vns-7-plan.md).
+- Màn hình ngủ Văn Nhân Số có cache ngoại tuyến, cập nhật khi cần và backoff khi mạng lỗi.
+- Màn hình ngủ ôn từ đã tra, lấy ngẫu nhiên từ lịch sử StarDict khi có đủ từ và nghĩa; thiếu dữ liệu sẽ quay về màn mặc định an toàn.
+- EPUB có 3 cấp dàn trang `Standard`, `Simplified`, `Safe`; chỉ hạ cấp khi thiếu bộ nhớ và cho phép thử lại chất lượng đầy đủ.
+- Tùy chọn theo từng sách: khoảng cách từ, sửa thụt đầu dòng, tự lật trang 5–120 giây và lưu trạng thái tắt tự lật.
+- Liên kết/footnote chạm được, số trang nhà xuất bản, vị trí tham chiếu độc lập với font và hướng màn hình, cùng ước lượng thời gian đọc còn lại khi dữ liệu đủ tin cậy.
+- Cache và dữ liệu tạm có version, validation và phục hồi backup sau khi ghi bị gián đoạn.
 
-**Now running on:** ESP32C3-based Xteink [X4](https://www.xteink.com/products/xteink-x4) and [X3](https://www.xteink.com/products/xteink-x3).
+CrossInk và CrossVi là nguồn tham khảo cho một số cơ chế typography, fallback, menu và telemetry. Mã được đưa vào CrossPink được đối chiếu và điều chỉnh theo kiến trúc CrossPoint thay vì chép nguyên fork.
 
-![CrossPoint Reader running on Xteink device](./docs/images/cover.jpg)
+## Khả năng đọc sách
 
-> If you're planning to buy an Xteink device, consider purchasing an **X3/X4 Developer Edition** through https://crosspointreader.com. CrossPoint receives a small share of each sale, helping fund development costs.
+- Đọc `.epub`, `.xtc/.xtch`, `.txt` và `.bmp`.
+- EPUB 2/3 với CSS nhúng, hyphenation, kerning, ảnh, bookmark, footnote, từ điển StarDict, chuyển chương và đi tới phần trăm.
+- Font tích hợp và font `.cpfont` từ thẻ SD.
+- Đồng bộ tiến độ KOReader, OPDS có máy chủ đã lưu, Calibre Wireless và WebDAV.
+- Screenshot, recent books, xóa cache sách, ẩn file và xoay màn hình.
+- Theme, màn ngủ tùy chỉnh, thanh trạng thái, ánh xạ nút, chế độ refresh, hành vi nút nguồn và lật trang bằng nghiêng trên X3.
+- Giao diện nhiều ngôn ngữ, bao gồm tiếng Việt và hỗ trợ RTL.
 
-## What can CrossPoint do?
+## Mẹo để đọc ổn định
 
-- **Reader engine**: EPUB 2/3 rendering with embedded-style option, image handling, hyphenation, kerning, chapter navigation, footnotes, bookmarks, dictionary lookups ([StarDict](docs/dictionary.md)), go-to-percent, auto page turn, orientation control, focus reading, KOReader progress sync and more.
+ESP32-C3 có khoảng 380 KB RAM khả dụng, vì vậy CrossPink ưu tiên cache trên thẻ SD hơn là giữ dữ liệu EPUB lớn trong RAM.
 
-- **Various formats**: native handling for `.epub`, `.xtc/.xtch`, `.txt`, and `.bmp`.
+- Chia thư viện thành các thư mục nhỏ thay vì để hàng trăm sách trong thư mục gốc.
+- EPUB chủ yếu là văn bản hoạt động tốt nhất. Sách scan, comic, ảnh độ phân giải cao hoặc file có hàng nghìn section có thể tải chậm hoặc thiếu bộ nhớ.
+- Dùng thẻ SD ổn định và giữ dung lượng trống cho cache, tiến độ, setting và dữ liệu màn ngủ.
+- Khi EPUB nặng, mở File Transfer để tối ưu ảnh hoặc tách omnibus thành các phần nhỏ hơn.
 
-- **Screenshots.**
+## Cài đặt
 
-- **Custom fonts**: install your favorite fonts on the SD card.
-
-- **Tilt page turn (X3 only)**.
-
-- **Library workflow**: folder browser, hidden-file toggle, long-press delete, recent books, SD-cache management.
-
-- **Wireless workflows**:
-  
-  - File transfer web UI
-  - EPUB Optimizer
-  - Web settings UI/API (edit many device settings from browser)
-  - WebSocket fast uploads
-  - WebDAV handler
-  - AP mode (hotspot) and STA mode (join existing Wi-Fi), both with QR helpers
-  - Calibre wireless connect flow
-  - OPDS browser with saved servers (up to 8), search, pagination, and direct download
-  - OTA update checks and installs from GitHub releases
-
-- **Customization**: multiple themes (Classic, Lyra, Lyra Extended, RoundedRaff), sleep screen modes including transparent overlays, front/side button remapping, status bar controls, power-button behavior, refresh cadence, and more.
-
-- **Localization**: 32 UI languages and counting. RTL support.
-
-### Coming soon:
-
-- More themes.
-
-- Much more! stay tuned.
-
----
-
-## USB-locked devices (Xteink Unlocker)
-
-Some Xteink units purchased from third-party stores (e.g. AliExpress) ship with USB flashing locked from the factory.
-If your device is locked, you will need to use the **Xteink Unlocker** tool available at
-https://crosspointreader.com/#unlock-tool before you can flash CrossPoint.
-
-**You do not need this tool if you bought your device directly from xteink.com.** Those units are not locked.
-
-**Not sure if your device is locked?** Power it on, connect the USB-C cable, and try flashing via the web flasher first (see
-[Install firmware](#install-firmware) below). If the browser's serial device picker does not show your device, try a different
-USB port or browser before assuming the device is locked. Only reach for the unlocker if the device still doesn't appear.
-
-> ### ⚠️ WARNING: READ THIS BEFORE USING THE UNLOCKER ⚠️
-> 
-> **The only officially supported firmwares in the unlock tool are CrossPoint and CrossInk.**
-> 
-> Flashing any other firmware on a USB-locked device may **permanently brick the device** or leave it **permanently
-> stuck on that firmware with no recovery path**. Once USB flashing is re-locked, your only way back is via OTA, and if
-> the firmware you flashed doesn't support OTA, **there is no way out**.
-
-## Install firmware
-
-### Web installer (recommended)
-
-1. Connect your device to your computer via USB-C and wake/unlock the device
-2. Go to https://crosspointreader.com/#flash-tools, select device (X3 or X4), and choose an official CrossPoint release.
-
-### Web installer (specific version)
-
-1. Connect your device to your computer via USB-C and wake/unlock the device
-2. Download a `firmware.bin` from [Releases](https://github.com/crosspoint-reader/crosspoint-reader/releases), local build, or continuous integration artifact.
-3. Go to https://crosspointreader.com/#flash-tools, select device (X3 or X4), click "Custom .bin" and upload a `firmware.bin`.
-
-### Revert to Official Firmware
-
-To revert to the official firmware, you can also flash the latest official firmware using https://crosspointreader.com/#flash-tools.
-
-### Command line
-
-1. Install [`esptool`](https://github.com/espressif/esptool):
-
-```bash
-pip install esptool
-```
-
-2. Download `firmware.bin` from the [releases page](https://github.com/crosspoint-reader/crosspoint-reader/releases).
-3. Connect your device via USB-C.
-4. Find the device port. On Linux, run `dmesg` after connecting. On macOS:
-
-```bash
-log stream --predicate 'subsystem == "com.apple.iokit"' --info
-```
-
-5. Flash:
-
-```bash
-esptool.py --chip esp32c3 --port /dev/ttyACM0 --baud 921600 write_flash 0x10000 /path/to/firmware.bin
-```
-
-Adjust `/dev/ttyACM0` to match your system.
-
-### Manual
-
-See [Development quick start](#development-quick-start) below.
-
----
-
-## Custom SD-card fonts
-
-Convert your own TTF/OTF files into `.cpfont` files that load from the SD card. No firmware reflash is needed.
-
-1. Go to https://crosspointreader.com/fonts and open the "SD-card font builder" form.
-2. Upload up to four styles (regular, bold, italic, bold-italic), set the family name, point sizes, and Unicode range.
-3. Download the generated `.cpfont` files.
-4. Copy them to your SD card under `/fonts/YourFont/` (or `/.fonts/YourFont/` to hide the folder).
-5. Select the font on the device from the font settings.
-
-Conversion runs the firmware repo's `lib/EpdFont/scripts/fontconvert_sdcard.py` script unmodified, so output matches a local host build.
-
----
-
-## Documentation
-
-- [User Guide](./USER_GUIDE.md)
-- [Web server usage](./docs/webserver.md)
-- [Web server endpoints](./docs/webserver-endpoints.md)
-- [Project scope](./SCOPE.md)
-- [Contributing docs](./docs/contributing/README.md)
-- [Touch and UI development](./docs/contributing/touch-and-ui.md) - how to build new screens on the FreeInkUI activity bases (UiListActivity and friends), plus build envs for the non-Xteink touch devices
-- [Thiết kế màn ngủ ôn từ đã tra](./docs/features/dictionary-review-sleep.md)
-- [Đặc tả vị trí tham chiếu VNS](./docs/contributing/vns-reference-position.md)
-- [Ghi chú phát hành `1.6.0-vns.8.1`](./docs/releases/1.6.0-vns.8.1.md)
-- [Ghi chú phát hành `1.6.0-vns.8.2`](./docs/releases/1.6.0-vns.8.2.md)
-- [Ghi chú phát hành `1.6.0-vns.8.3`](./docs/releases/1.6.0-vns.8.3.md)
-
----
-
-## Development quick start
-
-### Prerequisites
-
-- [pioarduino](https://github.com/pioarduino/pioarduino) or VS Code + pioarduino plugin
-- Python 3.8+
-- `clang-format` 21
-- USB-C cable supporting data transfer
-
-### Setup
-
-```bash
-git clone --recursive https://github.com/crosspoint-reader/crosspoint-reader
-cd crosspoint-reader
-
-# if cloned without --recursive:
-git submodule update --init --recursive
-```
-
-### Nix/NixOS
-
-Nix/NixOS users can enter the development shell with either `nix develop` (flakes) or `nix-shell`:
-
-```bash
-nix develop -f nix
-# or
-nix-shell nix
-```
-
-To flash a connected ESP32-C3 device, enable PlatformIO's udev rules in your NixOS configuration:
-
-```nix
-services.udev.packages = with pkgs; [ platformio-core.udev ];
-```
-
-After rebuilding the system configuration, reconnect the device or reload udev rules.
-
-### Build / flash / monitor
-
-```bash
-pio run --target upload
-```
-
-### Contributor pre-PR checks
-
-```bash
-./bin/clang-format-fix
-pio check -e default
-pio run -e default
-```
-
-### Debugging
-
-After flashing the new features, it’s recommended to capture detailed logs from the serial port.
-
-First, make sure all required Python packages are installed:
-
-```python
-python3 -m pip install pyserial colorama matplotlib
-```
-
-After that run the script:
+Tải image đúng thiết bị từ [Releases](https://github.com/ttakashinn/crosspink/releases), rồi flash bằng công cụ web hỗ trợ nạp file `.bin` tùy chỉnh hoặc bằng `esptool`.
 
 ```sh
-# For Linux
-# This was tested on Debian and should work on most Linux systems.
-python3 scripts/debugging_monitor.py
-
-# For macOS
-python3 scripts/debugging_monitor.py /dev/cu.usbmodem2101
+esptool.py --chip esp32c3 --port /dev/ttyACM0 --baud 921600 \
+  write_flash 0x10000 firmware.bin
 ```
 
-Minor adjustments may be required for Windows.
+Thay `/dev/ttyACM0` bằng cổng thiết bị của bạn. Dùng `firmware.bin` cho X3/X4; X4 Pro dùng `firmware-x4pro.bin`. X4 Classic/Paper Mono hiện cần build image từ source.
 
----
+### Thiết bị bị khóa USB
 
-## Internals
+Không flash CrossPink bằng Xteink Unlocker trừ khi nhà cung cấp unlocker xác nhận rõ image này được hỗ trợ. Công cụ đó hiện chỉ công bố hỗ trợ các firmware chính thức mà họ nêu tên; nạp fork ngoài danh sách có thể khiến máy không còn đường khôi phục qua USB.
 
-CrossPoint Reader is pretty aggressive about caching data down to the SD card to minimise RAM usage. The ESP32-C3 only has ~380KB of usable RAM, so we have to be careful. A lot of the decisions made in the design of the firmware were based on this constraint.
+## Cập nhật OTA
 
-### Data caching
+CrossPink nhận OTA từ GitHub Releases của chính repository này. Phiên bản phát hành có dạng `1.6.0-cp.1.0`; OTA chỉ so sánh các bản cùng nhánh `cp`, do đó không tự chuyển qua lại giữa CrossPink, VNS và CrossPoint.
 
-The first time chapters of a book are loaded, they are cached to the SD card. Subsequent loads are served from the
-cache. This cache directory exists at `.crosspoint` on the SD card. The structure is as follows:
+Lần chuyển từ firmware VNS/CrossPoint sang CrossPink cần flash thủ công một lần, vì firmware cũ không biết format phiên bản `-cp.N.M` và không truy vấn release repository CrossPink.
 
-```text
-.crosspoint/
-├── epub_<hash>/         # one directory per book, named by content hash
-│   ├── progress.bin     # reading position (chapter, page, etc.)
-│   ├── cover.bmp        # generated cover image
-│   ├── book.bin         # metadata: title, author, spine, TOC
-│   ├── page-list.bin    # optional EPUB publisher-page navigation entries
-│   ├── css_rules.cache  # parsed CSS rule cache
-│   ├── img_*            # rendered image cache files
-│   └── sections/        # per-chapter layout cache
-│       ├── 0.bin
-│       ├── 1.bin
-│       └── ...
-├── settings.json        # device settings
-├── state.json           # resume/runtime state
-└── recent.json          # recent books list
+## Font từ thẻ SD
+
+Bạn có thể chuyển TTF/OTF thành `.cpfont` mà không phải build lại firmware.
+
+1. Tạo font bằng công cụ SD-card font builder của CrossPoint hoặc script `lib/EpdFont/scripts/fontconvert_sdcard.py`.
+2. Chép font vào `/fonts/TenFont/` hoặc `/.fonts/TenFont/` trên thẻ SD.
+3. Chọn font trong cài đặt đọc sách.
+
+CrossPink vẫn dùng manifest font công khai của CrossPoint; không có kho font CrossPink riêng.
+
+## Tài liệu
+
+- [Tài liệu đóng góp và kiến trúc](./docs/contributing/README.md)
+- [Màn ngủ ôn từ đã tra](./docs/features/dictionary-review-sleep.md)
+- [Vị trí tham chiếu VNS](./docs/contributing/vns-reference-position.md)
+- [Web server](./docs/webserver.md) và [API/endpoints](./docs/webserver-endpoints.md)
+- [Font từ thẻ SD](./docs/sd-card-fonts.md)
+- [Định dạng file và cache](./docs/file-formats.md)
+- [Khắc phục thiết bị Xteink bị brick](./docs/fix-bricked-xteink.md)
+- [Ghi chú phát hành 1.6.0-vns.8](./docs/releases/1.6.0-vns.8.md)
+
+## Phát triển nhanh
+
+```sh
+git clone --recursive git@github.com:ttakashinn/crosspink.git
+cd crosspink
+python3 scripts/codex_setup.py bootstrap
+python3 scripts/codex_setup.py doctor
+python3 scripts/codex_setup.py test
+python3 scripts/codex_setup.py build --env default
 ```
 
-Removing `/.crosspoint` clears all cached metadata and forces a full regeneration on next open. Book deletes, overwrites, and moves done through the firmware or web UI clear or re-key matching caches; manual SD-card edits may leave stale cache directories behind.
+Build `default` dùng cho X3/X4; Sticky cần build riêng:
 
-For more details on the internal file structures, see the [file formats document](./docs/file-formats.md).
+```sh
+python3 scripts/codex_setup.py build --env sticky
+```
 
----
+Trước khi bàn giao thay đổi firmware, chạy:
 
-## Contributing
+```sh
+python3 scripts/codex_setup.py verify --level quick
+```
 
-Contributions are welcome. If you're new to the codebase, start with the [contributing docs](./docs/contributing/README.md). For things to work on, check the [ideas discussion board](https://github.com/crosspoint-reader/crosspoint-reader/discussions/categories/ideas) — leave a comment before starting so we don't duplicate effort.
+## Cấu trúc repository
 
-Everyone here is a volunteer, so please be respectful and patient. For governance and community expectations, see [GOVERNANCE.md](./GOVERNANCE.md).
+- `src/`: ứng dụng, activity, state, network, boot và sleep.
+- `lib/`: EPUB/layout, font, i18n, parser, lưu trữ và HAL dùng chung.
+- `freeink-sdk/`: SDK display, input, storage, nguồn và board support.
+- `test/`: host unit tests, fixture EPUB và regression test.
+- `docs/`: tài liệu thiết kế, vận hành và phát hành.
+- `scripts/`: build, codegen, render lab, kiểm thử và công cụ phát hành.
 
----
+## Dữ liệu trên thẻ SD
 
-## Community forks
+CrossPink giữ thư mục `/.crosspoint` của CrossPoint để thiết bị nâng cấp không mất setting, lịch sử đọc và cache. Không đổi tên hoặc xóa thư mục này chỉ vì rebrand; xóa nó sẽ buộc firmware dựng lại cache và mất dữ liệu cục bộ liên quan.
 
-One of the best things about open source is that anyone can take the code in a different direction. If you need something outside CrossPoint's [scope](./SCOPE.md), check out the community forks:
+## Đóng góp
 
-- [CrossInk](https://github.com/uxjulia/CrossInk) — Typography and reading tracking: Bionic Reading (bolds word stems to create fixation points), guide dots between words, improved paragraph indents, and replaces the default fonts with ChareInk/Lexend/Bitter.
+CrossPink là fork cá nhân. Nếu bạn có lỗi tái lập được, hãy mở issue kèm thiết bị, phiên bản `cp`, sách/fixture tối thiểu và log serial khi có thể. Thay đổi kiến trúc lớn nên được thảo luận trước, đặc biệt nếu chúng ảnh hưởng RAM ESP32-C3, cache nhị phân hoặc tương thích với CrossPoint upstream.
 
-- [papyrix-reader](https://github.com/bigbag/papyrix-reader) — Adds FB2 and MD format support. Actively maintained with Arabic script support. Custom themes via SD card.
-
-- ~~[crosspet](https://github.com/trilwu/crosspet) — A Vietnamese fork that adds a Tamagotchi-style virtual chicken that grows based on your reading milestones (pages read, streaks, care). Also: Flashcards, Weather, Pomodoro timer, and mini-games.~~ (Unmaintained)
-
-- [crosspoint-reader-cjk](https://github.com/aBER0724/crosspoint-reader-cjk) — Purpose-built for Chinese, Japanese, and Korean reading.
-
-- [inx](https://github.com/obijuankenobiii/inx) — Completely reimagines the user interface with tabbed navigation.
-
-- ~~[PlusPoint](https://github.com/ngxson/pluspoint-reader) — custom JS apps support.~~ (Unmaintained)
-
-- [crosspoint-reader-papers3](https://github.com/juicecultus/crosspoint-reader-papers3) — Crosspoint port for M5Stack Paper S3. 
-
-- [t5s3-reader](https://github.com/ShallowGreen123/t5s3-reader) — Crosspoint port for LilyGo T5 ePaper S3 / T5S3 4.7-inch e-paper device.
-
-**Note:** Many of these features will make their way into CrossPoint over time. We maintain a slower pace to ensure rock-solid stability and squash bugs before they reach your device.
-
-Want to build your own device? Be sure to check out the [de-link](https://github.com/iandchasse/de-link) project.
-
----
-
-CrossPoint Reader is **not affiliated with Xteink or any device manufacturer**.
-
-Huge shoutout to [diy-esp32-epub-reader](https://github.com/atomic14/diy-esp32-epub-reader), which inspired this project.
+CrossPink không liên kết với Xteink hay bất kỳ nhà sản xuất thiết bị nào.

@@ -34,25 +34,32 @@ bool parseVersion(const char* value, Version& version) {
     return false;
   }
 
-  constexpr char VNS_SUFFIX[] = "-vns.";
   if (*value == '\0') return true;
-  if (strncmp(value, VNS_SUFFIX, sizeof(VNS_SUFFIX) - 1) != 0) return false;
-  value += sizeof(VNS_SUFFIX) - 1;
 
-  if (!parseNonNegativeInt(value, version.vanNhanSoRevision)) return false;
-  if (*value == '\0') return true;
-  if (*value++ != '.') return false;
-  return parseNonNegativeInt(value, version.vanNhanSoPatch) && *value == '\0';
+  constexpr char VNS_SUFFIX[] = "-vns.";
+  constexpr char CROSSPINK_SUFFIX[] = "-cp.";
+  const bool isVns = strncmp(value, VNS_SUFFIX, sizeof(VNS_SUFFIX) - 1) == 0;
+  const bool isCrossPink = strncmp(value, CROSSPINK_SUFFIX, sizeof(CROSSPINK_SUFFIX) - 1) == 0;
+  if (!isVns && !isCrossPink) return false;
+
+  version.edition = isVns ? Edition::VAN_NHAN_SO : Edition::CROSSPINK;
+  value += isVns ? sizeof(VNS_SUFFIX) - 1 : sizeof(CROSSPINK_SUFFIX) - 1;
+  if (!parseNonNegativeInt(value, version.editionRevision)) return false;
+
+  if (*value == '\0') return isVns;
+  if (*value++ != '.' || !parseNonNegativeInt(value, version.editionPatch)) return false;
+  return *value == '\0';
 }
 
 bool isNewerVersion(const Version& candidate, const Version& current) {
+  if (candidate.edition != current.edition) return false;
   if (candidate.major != current.major) return candidate.major > current.major;
   if (candidate.minor != current.minor) return candidate.minor > current.minor;
   if (candidate.patch != current.patch) return candidate.patch > current.patch;
-  if (candidate.vanNhanSoRevision != current.vanNhanSoRevision) {
-    return candidate.vanNhanSoRevision > current.vanNhanSoRevision;
+  if (candidate.editionRevision != current.editionRevision) {
+    return candidate.editionRevision > current.editionRevision;
   }
-  return candidate.vanNhanSoPatch > current.vanNhanSoPatch;
+  return candidate.editionPatch > current.editionPatch;
 }
 
 bool parseSha256Sidecar(const std::string& sidecar, std::string& checksum) {

@@ -571,14 +571,21 @@ TEST(FirmwareReleaseValidation, VersionSyntaxIsStrict) {
   firmware_release::Version version;
   EXPECT_TRUE(firmware_release::parseVersion("1.5.0", version));
   EXPECT_TRUE(firmware_release::parseVersion("v1.5.0-vns.3", version));
-  EXPECT_EQ(version.vanNhanSoRevision, 3);
-  EXPECT_EQ(version.vanNhanSoPatch, 0);
+  EXPECT_EQ(version.edition, firmware_release::Edition::VAN_NHAN_SO);
+  EXPECT_EQ(version.editionRevision, 3);
+  EXPECT_EQ(version.editionPatch, 0);
   EXPECT_TRUE(firmware_release::parseVersion("1.6.0-vns.7.1", version));
-  EXPECT_EQ(version.vanNhanSoRevision, 7);
-  EXPECT_EQ(version.vanNhanSoPatch, 1);
+  EXPECT_EQ(version.editionRevision, 7);
+  EXPECT_EQ(version.editionPatch, 1);
+  EXPECT_TRUE(firmware_release::parseVersion("1.6.0-cp.1.0", version));
+  EXPECT_EQ(version.edition, firmware_release::Edition::CROSSPINK);
+  EXPECT_EQ(version.editionRevision, 1);
+  EXPECT_EQ(version.editionPatch, 0);
   EXPECT_FALSE(firmware_release::parseVersion("1.5.0-vns.3-garbage", version));
   EXPECT_FALSE(firmware_release::parseVersion("1.5.0-vns.3.1.2", version));
   EXPECT_FALSE(firmware_release::parseVersion("1.5.0-vns.3.", version));
+  EXPECT_FALSE(firmware_release::parseVersion("1.5.0-cp.1", version));
+  EXPECT_FALSE(firmware_release::parseVersion("1.5.0-cp.1.0.0", version));
   EXPECT_FALSE(firmware_release::parseVersion("1.5.0-dev-main", version));
   EXPECT_FALSE(firmware_release::parseVersion("1.5", version));
   EXPECT_FALSE(firmware_release::parseVersion(" 1.5.0", version));
@@ -602,6 +609,21 @@ TEST(FirmwareReleaseValidation, ComparesMaintenanceVersionsInPrecedenceOrder) {
 
   ASSERT_TRUE(firmware_release::parseVersion("1.6.1-vns.1", candidate));
   EXPECT_TRUE(firmware_release::isNewerVersion(candidate, current));
+}
+
+TEST(FirmwareReleaseValidation, ComparesCrossPinkVersionsAndRejectsOtherEditions) {
+  firmware_release::Version current;
+  firmware_release::Version candidate;
+
+  ASSERT_TRUE(firmware_release::parseVersion("1.6.0-cp.1.0", current));
+  ASSERT_TRUE(firmware_release::parseVersion("1.6.0-cp.1.1", candidate));
+  EXPECT_TRUE(firmware_release::isNewerVersion(candidate, current));
+
+  ASSERT_TRUE(firmware_release::parseVersion("1.6.0-vns.9", candidate));
+  EXPECT_FALSE(firmware_release::isNewerVersion(candidate, current));
+
+  ASSERT_TRUE(firmware_release::parseVersion("1.6.1", candidate));
+  EXPECT_FALSE(firmware_release::isNewerVersion(candidate, current));
 }
 
 TEST(FirmwareReleaseValidation, ParsesOnlyFirmwareChecksumSidecar) {

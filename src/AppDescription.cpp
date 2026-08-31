@@ -14,7 +14,7 @@ constexpr esp_app_desc_t makeAppDescription() {
   description.magic_word = ESP_APP_DESC_MAGIC_WORD;
   description.secure_version = 0;
   copyString(description.version, CROSSPOINT_VERSION);
-  copyString(description.project_name, "crosspoint-reader");
+  copyString(description.project_name, "crosspink");
   copyString(description.time, __TIME__);
   copyString(description.date, __DATE__);
   copyString(description.idf_ver, IDF_VER);
