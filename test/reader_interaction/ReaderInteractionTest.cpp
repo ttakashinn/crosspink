@@ -5,6 +5,17 @@
 using reader_interaction::PostVisibleIdleGuard;
 using reader_interaction::TurnTelemetry;
 
+TEST(ReadingAnchor, UsesTheMiddleOfTheVisibleTextRange) {
+  EXPECT_EQ(reader_interaction::readingAnchorAtPageCenter(100U, 300U), 200U);
+  EXPECT_EQ(reader_interaction::readingAnchorAtPageCenter(101U, 200U), 150U);
+}
+
+TEST(ReadingAnchor, FallsBackToThePageStartWhenTheNextBoundaryIsUnavailable) {
+  EXPECT_EQ(reader_interaction::readingAnchorAtPageCenter(500U, std::nullopt), 500U);
+  EXPECT_EQ(reader_interaction::readingAnchorAtPageCenter(500U, 500U), 500U);
+  EXPECT_FALSE(reader_interaction::readingAnchorAtPageCenter(std::nullopt, 700U).has_value());
+}
+
 TEST(PostVisibleIdleGuard, RequiresAVisiblePageAndAFullQuietWindow) {
   PostVisibleIdleGuard guard;
   EXPECT_FALSE(guard.canRunDeferredWork(5000));

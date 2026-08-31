@@ -1213,7 +1213,10 @@ void EpubReaderActivity::loop() {
   const bool turnGuardActive = RenderLock::peek() || (millis() - lastPageTurnTime) < kMinManualTurnGapMs;
   if (!pendingManualTurns.empty() && !turnGuardActive) {
     if (!section) {
-      pendingManualTurns.clear();
+      // A turn across a spine boundary deliberately releases Section while the
+      // next spine is opened.  Do not drop input in that window: it is exactly
+      // when a reader is most likely to press Next again after a short chapter.
+      // The pending intent is drained as soon as the new Section is available.
       return;
     }
     const bool forward = pendingManualTurns.pop() > 0;
@@ -1261,6 +1264,14 @@ void EpubReaderActivity::loop() {
   }
 
   if (!section) {
+    // Page turns used to be silently discarded while a new spine was opening.
+    // Keep the same bounded, cancelling queue used while rendering so every
+    // manual press has one deterministic outcome once pagination is ready.
+    const int pendingDepth = pendingManualTurns.pending();
+    beginReaderTurn(prevTriggered ? -1 : 1, (pendingDepth < 0 ? -pendingDepth : pendingDepth) + 1);
+    pendingManualTurns.push(!prevTriggered);
+    const int queuedDepth = pendingManualTurns.pending();
+    updateReaderTurnQueueDepth(queuedDepth < 0 ? -queuedDepth : queuedDepth);
     requestUpdate();
     return;
   }
@@ -2245,8 +2256,15 @@ void EpubReaderActivity::onEndOfBookRendered() {
 }
 
 bool EpubReaderActivity::applyDeferredReposition() {
-  if ((!cachedVisibleTextOffset.has_value() && cachedChapterTotalPageCount == 0) || !section || section->isBuilding()) {
-    return false;
+  if ((!cachedVisibleTextOffset.has_value() && cachedChapterTotalPageCount == 0) || !section) return false;
+
+  // A content anchor can be resolved from the live LUT before the rest of a
+  // long spine finishes building.  Waiting for the complete chapter renders a
+  // transient page at the old numeric index first, which looks like a jump.
+  if (section->isBuilding()) {
+    if (!cachedVisibleTextOffset.has_value() || !section->buildReachedVisibleTextOffset(*cachedVisibleTextOffset)) {
+      return false;
+    }
   }
   bool changed = false;
   if (currentSpineIndex == cachedSpineIndex) {
@@ -2335,9 +2353,16 @@ void EpubReaderActivity::requestProgressSaveIfDue() {
 
 void EpubReaderActivity::rememberCurrentContentOffset() {
   cachedVisibleTextOffset.reset();
-  if (section && section->currentPage >= 0 && section->currentPage < section->pageCount) {
-    cachedVisibleTextOffset = section->getVisibleTextOffsetForPage(static_cast<uint16_t>(section->currentPage));
+  if (!section || section->currentPage < 0 || section->currentPage >= section->pageCount) return;
+
+  const uint16_t currentPage = static_cast<uint16_t>(section->currentPage);
+  const std::optional<uint32_t> pageStart =
+      currentPageVisibleOffset.has_value() ? currentPageVisibleOffset : section->getVisibleTextOffsetForPage(currentPage);
+  std::optional<uint32_t> nextPageStart;
+  if (section->currentPage + 1 < section->pageCount) {
+    nextPageStart = section->getVisibleTextOffsetForPage(static_cast<uint16_t>(section->currentPage + 1));
   }
+  cachedVisibleTextOffset = reader_interaction::readingAnchorAtPageCenter(pageStart, nextPageStart);
 }
 
 void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int orientedMarginTop,

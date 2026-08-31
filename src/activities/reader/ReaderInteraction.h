@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 
 namespace reader_interaction {
 
@@ -12,6 +13,18 @@ namespace reader_interaction {
 #define CROSSPOINT_POST_VISIBLE_IDLE_MS 1000
 #endif
 constexpr uint32_t POST_VISIBLE_IDLE_MS = CROSSPOINT_POST_VISIBLE_IDLE_MS;
+
+// A page number is not a stable reading position: changing a font or a line
+// setting moves every following page boundary.  Keep an anchor inside the
+// visible page instead.  The midpoint is intentional: on a reflow it keeps
+// the text being read in view, whereas anchoring the page start invariably
+// makes a larger font appear to jump backwards.
+inline std::optional<uint32_t> readingAnchorAtPageCenter(const std::optional<uint32_t> pageStart,
+                                                         const std::optional<uint32_t> nextPageStart) {
+  if (!pageStart.has_value()) return std::nullopt;
+  if (!nextPageStart.has_value() || *nextPageStart <= *pageStart) return pageStart;
+  return *pageStart + (*nextPageStart - *pageStart) / 2U;
+}
 
 // Optional reader work may run only after a real page has reached the panel
 // and neither a later input edge nor another visible page restarted the quiet
