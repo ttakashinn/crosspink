@@ -44,6 +44,10 @@ class VanNhanSoUpdateActivity final : public Activity {
   const vannhanso_update_policy::UpdateTrigger trigger;
   const bool automatic;
   const bool returnToVanNhanSoSettings;
+  // Văn Nhân Số is always shown by SleepActivity on the portrait canvas. An
+  // updater entered from a landscape reader must use that same cache profile
+  // and UI canvas, then restore the reader orientation on exit.
+  GfxRenderer::Orientation previousOrientation = GfxRenderer::Orientation::Portrait;
   bool shouldTearDownWifiOnExit = false;
   bool cancelDownload = false;
   bool pendingProfileRequired = false;

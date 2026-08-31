@@ -231,6 +231,13 @@ std::string formatDateTime(const uint32_t dateKey, const uint16_t minuteOfDay) {
 
 void VanNhanSoUpdateActivity::onEnter() {
   Activity::onEnter();
+  // SleepActivity resets to portrait before it renders the Văn Nhân Số image.
+  // Without the same normalization here, waking from a landscape book probes
+  // a non-existent 800x480 cache profile instead of today's 480x800 image,
+  // unnecessarily starts Wi-Fi, and lets portrait button hints overlap the
+  // landscape Connecting view.
+  previousOrientation = renderer.getOrientation();
+  renderer.setOrientation(GfxRenderer::Orientation::Portrait);
   vannhanso_cache::recoverInterruptedInstall(renderer.getScreenWidth(), renderer.getScreenHeight());
   syncPendingProfile();
 
@@ -260,6 +267,8 @@ void VanNhanSoUpdateActivity::onExit() {
       }
     }
   }
+
+  renderer.setOrientation(previousOrientation);
 }
 
 void VanNhanSoUpdateActivity::beginManualUpdate() {

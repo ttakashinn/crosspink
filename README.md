@@ -155,6 +155,8 @@ Conversion runs the firmware repo's `lib/EpdFont/scripts/fontconvert_sdcard.py` 
 - [Thiết kế màn ngủ ôn từ đã tra](./docs/features/dictionary-review-sleep.md)
 - [Đặc tả vị trí tham chiếu VNS](./docs/contributing/vns-reference-position.md)
 - [Ghi chú phát hành `1.6.0-vns.8.1`](./docs/releases/1.6.0-vns.8.1.md)
+- [Ghi chú phát hành `1.6.0-vns.8.2`](./docs/releases/1.6.0-vns.8.2.md)
+- [Ghi chú phát hành `1.6.0-vns.8.3`](./docs/releases/1.6.0-vns.8.3.md)
 
 ---
 
