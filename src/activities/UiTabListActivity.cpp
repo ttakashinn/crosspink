@@ -48,15 +48,17 @@ void UiTabListActivity::onRowAction(const fui::ActionEvent& event) {
 
 void UiTabListActivity::moveRingTo(const int ringIndex) {
   auto& n = activeNav();
-  n.selected = ringIndex;
-  if (ringIndex == 0) {
+  const int count = listCount();
+  const int clampedRing = ringIndex < 0 ? 0 : (ringIndex > count ? count : ringIndex);
+  n.selected = clampedRing;
+  if (clampedRing == 0) {
     n.top = 0;
+    n.cancelFollow();
   } else {
-    // Pull the viewport to the row (ring - 1); ListNav::follow reads
-    // n.selected as a row index, so compute directly here.
-    const uint16_t rows = n.visibleRows > 0 ? static_cast<uint16_t>(n.visibleRows) : 1;
-    n.top = fui::listTopIndexFor(static_cast<int16_t>(ringIndex - 1), static_cast<uint16_t>(n.top < 0 ? 0 : n.top),
-                                 rows, static_cast<uint16_t>(listCount()));
+    // ListNav selection is a ring position here, but its layout feedback is
+    // indexed by list row. Follow the zero-based row explicitly so a wrapped
+    // item clipped below the viewport can request the corrective rebuild.
+    n.followIndex(clampedRing - 1, count);
   }
   requestUpdate();
 }
@@ -87,21 +89,30 @@ void UiTabListActivity::syncTabListViewport(UiScreen& screen, fui::ListProps& pr
   }
   const uint16_t rows = fui::listVisibleRows(screen.body(), rowHeight, screen.theme().listRowGap);
   n.visibleRows = rows > 0 ? rows : 1;
+  // listCount() may shrink between passes (ring: 0 = tab band, 1..count = rows);
+  // keep a stale ring selection from indexing past the new row count.
+  if (n.selected < 0) n.selected = 0;
+  if (n.selected > count) n.selected = count;
   if (n.followOnBuild) {
     // Screen entry / tab switch: show the tab's remembered selection, or the
     // top when the tab bar holds the focus.
     n.followOnBuild = false;
-    n.top = n.selected > 0 ? static_cast<int>(fui::listTopIndexFor(
-                                 static_cast<int16_t>(n.selected - 1), static_cast<uint16_t>(n.top < 0 ? 0 : n.top),
-                                 static_cast<uint16_t>(n.visibleRows), static_cast<uint16_t>(count)))
-                           : 0;
+    if (n.selected > 0) {
+      n.followIndex(n.selected - 1, count);
+    } else {
+      n.top = 0;
+      n.cancelFollow();
+    }
+  } else if (n.selected == 0) {
+    // A Back/tap may return focus to the tab band before a pending row-follow
+    // gets rendered. Do not let stale row feedback scroll the tab-focused UI.
+    n.top = 0;
+    n.cancelFollow();
   }
   n.scrollBy(0, count);  // clamp to range
-  // listCount() may shrink between passes (ring: 0 = tab band, 1..count = rows);
-  // keep a stale ring selection from indexing past the new row count.
-  if (n.selected > count) n.selected = count;
   props.topIndex = static_cast<uint16_t>(n.top);
   props.selectedIndex = static_cast<int16_t>(n.selected - 1);  // -1 = tab band focused
+  props.nav = &n;  // list() reports measured variable-height layout feedback
 }
 
 void UiTabListActivity::buildTabBar(UiScreen& screen) {

@@ -372,10 +372,19 @@ void EpubReaderMenuActivity::drawFooter() {
 void EpubReaderMenuActivity::render(RenderLock&&) {
   if (optionPopup.processRender(renderer, mappedInput)) return;
 
-  renderer.clearScreen();
-  drawChrome();
+  const auto renderPage = [this] {
+    renderer.clearScreen();
+    drawChrome();
+    renderUi();
+  };
 
-  renderUi();
+  renderPage();
+  // Tab lists report the actual number of variable-height rows that fit. If a
+  // button-followed selection was clipped, redraw after the measured viewport
+  // correction before displaying the framebuffer.
+  for (int pass = 0; activeNav().consumeRebuildNeeded() && pass < 8; ++pass) {
+    renderPage();
+  }
 
   drawFooter();
   renderer.displayBuffer();

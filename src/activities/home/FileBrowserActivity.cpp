@@ -120,13 +120,6 @@ void FileBrowserActivity::rebuildRowItems() {
       &prewarmCtx, static_cast<uint32_t>(rowNames.size()) + 1);
 }
 
-void FileBrowserActivity::refreshStorageUsage() {
-  storageUsage = storage_usage::read();
-  if (!storage_usage::format(storageUsage, storageUsageText, sizeof(storageUsageText))) {
-    storageUsageText[0] = '\0';
-  }
-}
-
 void FileBrowserActivity::onEnter() {
   UiListActivity::onEnter();
 
@@ -152,7 +145,6 @@ void FileBrowserActivity::onEnter() {
   } else {
     loadFiles();
   }
-  refreshStorageUsage();
 }
 
 void FileBrowserActivity::onExit() {
@@ -304,8 +296,6 @@ void FileBrowserActivity::activateSelected(const bool forceDelete) {
             }
             nav.follow(listCount());
           }
-
-          refreshStorageUsage();
 
           requestUpdate(true);
         } else {
@@ -463,30 +453,6 @@ void FileBrowserActivity::buildScreen(UiScreen& screen) {
       pathDisplay = leftTruncBuf;
     }
     renderer.drawText(SMALL_FONT_ID, band.x + metrics.contentSidePadding, pathY, pathDisplay);
-  }
-
-  // One cached FAT scan per browser entry, rendered in a compact band so the
-  // value never changes underneath the render task during list repaints.
-  if (mode == Mode::Books && storageUsage.available() && storageUsageText[0] != '\0') {
-    const int16_t textHeight = static_cast<int16_t>(screen.target().lineHeight(screen.theme().smallText.font));
-    constexpr int16_t BAR_HEIGHT = 5;
-    const int16_t bandHeight = static_cast<int16_t>(textHeight + BAR_HEIGHT + screen.theme().spaceSm);
-    const fui::Rect band = screen.takeBottom(bandHeight);
-
-    fui::TextStyle usageText = screen.theme().smallText;
-    usageText.align = fui::TextAlign::Center;
-    screen.target().text(fui::Rect{band.x, band.y, band.width, textHeight}, storageUsageText, usageText);
-
-    const int16_t sidePadding = static_cast<int16_t>(metrics.contentSidePadding);
-    const fui::Rect bar{static_cast<int16_t>(band.x + sidePadding),
-                        static_cast<int16_t>(band.y + textHeight + screen.theme().spaceSm),
-                        static_cast<int16_t>(band.width - sidePadding * 2), BAR_HEIGHT};
-    fui::ProgressBarProps progress;
-    progress.value = storage_usage::percent(storageUsage);
-    progress.max = 100;
-    progress.border = fui::Paint::solid(fui::Color::Black);
-    progress.borderWidth = 1;
-    fui::progressBar(screen.frame(), bar, progress);
   }
 
   if (files.empty()) {

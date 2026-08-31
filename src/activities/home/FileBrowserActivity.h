@@ -5,8 +5,6 @@
 #include <vector>
 
 #include "activities/UiListActivity.h"
-#include "util/StorageUsage.h"
-
 class FileBrowserActivity final : public UiListActivity {
  public:
   // Books = standard reader browser; PickFirmware = filter to .bin only and return path via ActivityResult.
@@ -36,11 +34,7 @@ class FileBrowserActivity final : public UiListActivity {
   // paused underneath (e.g. a Settings screen reached via a picker flow)
   // invalidates the cached rows on return instead of rendering stale ones.
   bool rowsUseFileIcons = false;
-  storage_usage::Snapshot storageUsage;
-  char storageUsageText[48] = {};
-
   void rebuildRowItems();
-  void refreshStorageUsage();
 
   int listCount() const override { return static_cast<int>(files.size()); }
   void buildScreen(UiScreen& screen) override;
