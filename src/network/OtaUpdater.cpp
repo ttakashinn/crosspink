@@ -197,10 +197,7 @@ bool OtaUpdater::isUpdateNewer() const {
     return false;
   }
 
-  if (latest.major != current.major) return latest.major > current.major;
-  if (latest.minor != current.minor) return latest.minor > current.minor;
-  if (latest.patch != current.patch) return latest.patch > current.patch;
-  return latest.vanNhanSoRevision > current.vanNhanSoRevision;
+  return firmware_release::isNewerVersion(latest, current);
 }
 
 const std::string& OtaUpdater::getLatestVersion() const { return latestVersion; }

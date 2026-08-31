@@ -39,7 +39,20 @@ bool parseVersion(const char* value, Version& version) {
   if (strncmp(value, VNS_SUFFIX, sizeof(VNS_SUFFIX) - 1) != 0) return false;
   value += sizeof(VNS_SUFFIX) - 1;
 
-  return parseNonNegativeInt(value, version.vanNhanSoRevision) && *value == '\0';
+  if (!parseNonNegativeInt(value, version.vanNhanSoRevision)) return false;
+  if (*value == '\0') return true;
+  if (*value++ != '.') return false;
+  return parseNonNegativeInt(value, version.vanNhanSoPatch) && *value == '\0';
+}
+
+bool isNewerVersion(const Version& candidate, const Version& current) {
+  if (candidate.major != current.major) return candidate.major > current.major;
+  if (candidate.minor != current.minor) return candidate.minor > current.minor;
+  if (candidate.patch != current.patch) return candidate.patch > current.patch;
+  if (candidate.vanNhanSoRevision != current.vanNhanSoRevision) {
+    return candidate.vanNhanSoRevision > current.vanNhanSoRevision;
+  }
+  return candidate.vanNhanSoPatch > current.vanNhanSoPatch;
 }
 
 bool parseSha256Sidecar(const std::string& sidecar, std::string& checksum) {

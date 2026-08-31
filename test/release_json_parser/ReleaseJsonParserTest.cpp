@@ -572,7 +572,13 @@ TEST(FirmwareReleaseValidation, VersionSyntaxIsStrict) {
   EXPECT_TRUE(firmware_release::parseVersion("1.5.0", version));
   EXPECT_TRUE(firmware_release::parseVersion("v1.5.0-vns.3", version));
   EXPECT_EQ(version.vanNhanSoRevision, 3);
+  EXPECT_EQ(version.vanNhanSoPatch, 0);
+  EXPECT_TRUE(firmware_release::parseVersion("1.6.0-vns.7.1", version));
+  EXPECT_EQ(version.vanNhanSoRevision, 7);
+  EXPECT_EQ(version.vanNhanSoPatch, 1);
   EXPECT_FALSE(firmware_release::parseVersion("1.5.0-vns.3-garbage", version));
+  EXPECT_FALSE(firmware_release::parseVersion("1.5.0-vns.3.1.2", version));
+  EXPECT_FALSE(firmware_release::parseVersion("1.5.0-vns.3.", version));
   EXPECT_FALSE(firmware_release::parseVersion("1.5.0-dev-main", version));
   EXPECT_FALSE(firmware_release::parseVersion("1.5", version));
   EXPECT_FALSE(firmware_release::parseVersion(" 1.5.0", version));
@@ -580,6 +586,22 @@ TEST(FirmwareReleaseValidation, VersionSyntaxIsStrict) {
   EXPECT_FALSE(firmware_release::parseVersion("1.5.0-vns.+3", version));
   EXPECT_FALSE(firmware_release::parseVersion("99999999999999999999.5.0", version));
   EXPECT_FALSE(firmware_release::parseVersion("", version));
+}
+
+TEST(FirmwareReleaseValidation, ComparesMaintenanceVersionsInPrecedenceOrder) {
+  firmware_release::Version current;
+  firmware_release::Version candidate;
+
+  ASSERT_TRUE(firmware_release::parseVersion("1.6.0-vns.7", current));
+  ASSERT_TRUE(firmware_release::parseVersion("1.6.0-vns.7.1", candidate));
+  EXPECT_TRUE(firmware_release::isNewerVersion(candidate, current));
+  EXPECT_FALSE(firmware_release::isNewerVersion(current, candidate));
+
+  ASSERT_TRUE(firmware_release::parseVersion("1.6.0-vns.8", candidate));
+  EXPECT_TRUE(firmware_release::isNewerVersion(candidate, current));
+
+  ASSERT_TRUE(firmware_release::parseVersion("1.6.1-vns.1", candidate));
+  EXPECT_TRUE(firmware_release::isNewerVersion(candidate, current));
 }
 
 TEST(FirmwareReleaseValidation, ParsesOnlyFirmwareChecksumSidecar) {

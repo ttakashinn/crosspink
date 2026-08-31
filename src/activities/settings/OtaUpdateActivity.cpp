@@ -33,6 +33,7 @@ const char* otaErrorDetail(const OtaUpdater::OtaUpdaterError error) {
       return tr(STR_FIRMWARE_WRONG_DEVICE);
     case OtaUpdater::CHECKSUM_ERROR:
     case OtaUpdater::INVALID_IMAGE_ERROR:
+    case OtaUpdater::JSON_PARSE_ERROR:
       return tr(STR_INVALID_FIRMWARE);
     case OtaUpdater::STORAGE_ERROR:
       return tr(STR_FIRMWARE_FILE_OPEN_FAILED);
