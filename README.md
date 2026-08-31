@@ -154,7 +154,7 @@ Conversion runs the firmware repo's `lib/EpdFont/scripts/fontconvert_sdcard.py` 
 - [Touch and UI development](./docs/contributing/touch-and-ui.md) - how to build new screens on the FreeInkUI activity bases (UiListActivity and friends), plus build envs for the non-Xteink touch devices
 - [Thiết kế màn ngủ ôn từ đã tra](./docs/features/dictionary-review-sleep.md)
 - [Đặc tả vị trí tham chiếu VNS](./docs/contributing/vns-reference-position.md)
-- [Ghi chú phát hành `1.6.0-vns.7`](./docs/releases/1.6.0-vns.7.md)
+- [Ghi chú phát hành `1.6.0-vns.8.1`](./docs/releases/1.6.0-vns.8.1.md)
 
 ---
 

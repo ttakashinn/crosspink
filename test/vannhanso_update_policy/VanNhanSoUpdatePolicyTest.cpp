@@ -4,64 +4,37 @@
 
 namespace policy = vannhanso_update_policy;
 
-TEST(VanNhanSoUpdatePolicy, GivesEachUpdateModeDistinctCacheAndSleepSemantics) {
+TEST(VanNhanSoUpdatePolicy, OnlyDailyAutomaticUpdatesMayTrustTheCache) {
   EXPECT_FALSE(policy::isAutomatic(policy::UpdateTrigger::MANUAL));
   EXPECT_FALSE(policy::maySkipCurrentCache(policy::UpdateTrigger::MANUAL));
-  EXPECT_FALSE(policy::shouldSleepAfterUpdate(policy::UpdateTrigger::MANUAL));
 
   EXPECT_TRUE(policy::isAutomatic(policy::UpdateTrigger::FIRST_START_OF_DAY));
   EXPECT_TRUE(policy::maySkipCurrentCache(policy::UpdateTrigger::FIRST_START_OF_DAY));
-  EXPECT_FALSE(policy::shouldSleepAfterUpdate(policy::UpdateTrigger::FIRST_START_OF_DAY));
-
-  EXPECT_TRUE(policy::isAutomatic(policy::UpdateTrigger::ENTERING_SLEEP));
-  EXPECT_TRUE(policy::maySkipCurrentCache(policy::UpdateTrigger::ENTERING_SLEEP));
-  EXPECT_TRUE(policy::shouldSleepAfterUpdate(policy::UpdateTrigger::ENTERING_SLEEP));
 }
 
-TEST(VanNhanSoUpdatePolicy, AutomaticModesSkipAProfileAlreadyConfirmedForTheCurrentDate) {
-  EXPECT_TRUE(policy::shouldSkipCurrentCache(policy::UpdateTrigger::FIRST_START_OF_DAY, true, 20260829U, 601U,
-                                             20260829U, 600U));
-  EXPECT_FALSE(policy::shouldSkipCurrentCache(policy::UpdateTrigger::FIRST_START_OF_DAY, true, 20260829U, 600U,
-                                              20260829U, 600U));
-  EXPECT_FALSE(policy::shouldSkipCurrentCache(policy::UpdateTrigger::ENTERING_SLEEP, true, 20260829U, UINT16_MAX,
-                                              20260829U, UINT16_MAX));
-  EXPECT_FALSE(
-      policy::shouldSkipCurrentCache(policy::UpdateTrigger::ENTERING_SLEEP, true, 20260829U, 599U, 20260829U, 600U));
-  EXPECT_FALSE(
-      policy::shouldSkipCurrentCache(policy::UpdateTrigger::FIRST_START_OF_DAY, true, 20260829U, 601U, 0U, UINT16_MAX));
-  EXPECT_FALSE(policy::shouldSkipCurrentCache(policy::UpdateTrigger::FIRST_START_OF_DAY, false, 20260829U, 601U,
-                                              20260829U, 600U));
+TEST(VanNhanSoUpdatePolicy, DailyUpdateSkipsAValidCacheForTheCurrentDateWithoutMinuteGates) {
+  EXPECT_TRUE(policy::shouldSkipCurrentCache(policy::UpdateTrigger::FIRST_START_OF_DAY, true, 20260829U));
+  EXPECT_FALSE(policy::shouldSkipCurrentCache(policy::UpdateTrigger::FIRST_START_OF_DAY, false, 20260829U));
+  EXPECT_FALSE(policy::shouldSkipCurrentCache(policy::UpdateTrigger::FIRST_START_OF_DAY, true, 0U));
 }
 
 TEST(VanNhanSoUpdatePolicy, ManualModeAlwaysChecksTheManifest) {
-  EXPECT_FALSE(policy::shouldSkipCurrentCache(policy::UpdateTrigger::MANUAL, true, 20260829U, 601U, 20260829U, 600U));
+  EXPECT_FALSE(policy::shouldSkipCurrentCache(policy::UpdateTrigger::MANUAL, true, 20260829U));
 }
 
-TEST(VanNhanSoUpdatePolicy, TriggeringPowerButtonDoesNotCancelAutomaticUpdate) {
-  EXPECT_FALSE(policy::shouldCancelAutomaticUpdate(policy::UpdateTrigger::ENTERING_SLEEP, false, false, true, true,
-                                                   false, true));
-  EXPECT_TRUE(policy::shouldCancelAutomaticUpdate(policy::UpdateTrigger::ENTERING_SLEEP, false, false, true, true,
-                                                  false, false));
-  EXPECT_TRUE(policy::shouldCancelAutomaticUpdate(policy::UpdateTrigger::ENTERING_SLEEP, false, false, true, false,
-                                                  false, false));
-  EXPECT_TRUE(policy::shouldCancelAutomaticUpdate(policy::UpdateTrigger::ENTERING_SLEEP, false, false, false, false,
-                                                  true, false));
-  EXPECT_TRUE(policy::shouldCancelAutomaticUpdate(policy::UpdateTrigger::ENTERING_SLEEP, false, true, false, false,
-                                                  false, true));
+TEST(VanNhanSoUpdatePolicy, RejectsOnlyManifestDatesOlderThanTheInstalledServerDate) {
+  EXPECT_TRUE(policy::isManifestDateOlderThanCache(20260828U, 20260829U));
+  EXPECT_FALSE(policy::isManifestDateOlderThanCache(20260829U, 20260829U));
+  EXPECT_FALSE(policy::isManifestDateOlderThanCache(20260830U, 20260829U));
+  EXPECT_FALSE(policy::isManifestDateOlderThanCache(0U, 20260829U));
+  EXPECT_FALSE(policy::isManifestDateOlderThanCache(20260829U, 0U));
 }
 
-TEST(VanNhanSoUpdatePolicy, MissingProfileRefreshStillYieldsToNormalUse) {
-  EXPECT_TRUE(policy::shouldCancelAutomaticUpdate(policy::UpdateTrigger::FIRST_START_OF_DAY, true, false, true, false,
-                                                  true, false));
-  EXPECT_TRUE(policy::shouldCancelAutomaticUpdate(policy::UpdateTrigger::FIRST_START_OF_DAY, true, true, false, false,
-                                                  false, false));
-}
-
-TEST(VanNhanSoUpdatePolicy, SleepCanBeCancelledEvenWhenTheCurrentProfileHasNoImageYet) {
-  EXPECT_TRUE(policy::shouldCancelAutomaticUpdate(policy::UpdateTrigger::ENTERING_SLEEP, true, false, true, false,
-                                                  false, false));
-  EXPECT_TRUE(policy::shouldCancelAutomaticUpdate(policy::UpdateTrigger::ENTERING_SLEEP, true, false, false, false,
-                                                  true, false));
+TEST(VanNhanSoUpdatePolicy, DailyRefreshYieldsToNormalUse) {
+  EXPECT_FALSE(policy::shouldCancelAutomaticUpdate(false, false, false));
+  EXPECT_TRUE(policy::shouldCancelAutomaticUpdate(true, false, false));
+  EXPECT_TRUE(policy::shouldCancelAutomaticUpdate(false, true, false));
+  EXPECT_TRUE(policy::shouldCancelAutomaticUpdate(false, false, true));
 }
 
 TEST(VanNhanSoUpdatePolicy, MarksOnlyMissingCurrentProfileAsPending) {

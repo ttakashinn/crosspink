@@ -17,7 +17,6 @@ class VanNhanSoUpdateActivity final : public Activity {
       : Activity("VanNhanSoUpdate", renderer, mappedInput),
         trigger(trigger),
         automatic(vannhanso_update_policy::isAutomatic(trigger)),
-        sleepAfterUpdate(vannhanso_update_policy::shouldSleepAfterUpdate(trigger)),
         returnToVanNhanSoSettings(returnToVanNhanSoSettings) {}
 
   void onEnter() override;
@@ -44,13 +43,10 @@ class VanNhanSoUpdateActivity final : public Activity {
   std::atomic<State> state{STATUS};
   const vannhanso_update_policy::UpdateTrigger trigger;
   const bool automatic;
-  const bool sleepAfterUpdate;
   const bool returnToVanNhanSoSettings;
   bool shouldTearDownWifiOnExit = false;
   bool cancelDownload = false;
   bool pendingProfileRequired = false;
-  bool ignoreTriggerPowerUntilRelease = false;
-  bool sleepCancelledByUser = false;
   unsigned long connectionStartTime = 0;
   unsigned long lastConnectionStatusLogTime = 0;
   int lastLoggedWifiStatus = -1;

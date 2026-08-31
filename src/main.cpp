@@ -31,7 +31,6 @@
 #include "OpdsServerStore.h"
 #include "RecentBooksStore.h"
 #include "SdCardFontSystem.h"
-#include "VanNhanSoUpdateHooks.h"
 #include "activities/Activity.h"
 #include "activities/ActivityManager.h"
 #include "activities/settings/SdFirmwareUpdateActivity.h"
@@ -159,10 +158,6 @@ static bool deepSleepInProgress = false;
 static bool bootedFromLowMemoryRestart = false;
 
 bool bootWasLowMemoryRestart() { return bootedFromLowMemoryRestart; }
-
-void vanNhanSoUpdateFinishedBeforeSleep(const bool continueSleeping) {
-  vanNhanSoUpdateCoordinator.markSleepUpdateFinished(continueSleeping);
-}
 
 #if FREEINK_CAP_TOUCH
 static bool finishWifiSessionWithoutRestart() {
@@ -297,10 +292,6 @@ static bool loadSleepFrameBuffer() {
 
 // Enter deep sleep mode
 void enterDeepSleep(bool fromTimeout = false) {
-#if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3 || FREEINK_DEVICE_X4PRO
-  if (vanNhanSoUpdateCoordinator.interceptSleepForUpdate(fromTimeout)) return;
-#endif
-
   HalPowerManager::Lock powerLock;  // Ensure we are at normal CPU frequency for sleep preparation
   APP_STATE.lastSleepFromReader = activityManager.isReaderActivity();
 
@@ -635,10 +626,10 @@ void setup() {
   // 1.6.0rc made showBootScreen/isPersistedSleepWake one-shot presentation
   // state. The daily update deliberately keys off a verified user power start
   // instead: using the presentation flag would skip a genuine cold start.
-  const bool eligibleForFirstBootVanNhanSoUpdate = !isSilentReboot && !recoveryFirmwareMode &&
-                                                   !HalSystem::isRebootFromPanic() &&
-                                                   wakeupReason == HalGPIO::WakeupReason::PowerButton;
-  vanNhanSoUpdateCoordinator.startFirstBootUpdateIfEligible(eligibleForFirstBootVanNhanSoUpdate);
+  const bool eligibleForDailyVanNhanSoUpdate = !isSilentReboot && !recoveryFirmwareMode &&
+                                               !HalSystem::isRebootFromPanic() &&
+                                               wakeupReason == HalGPIO::WakeupReason::PowerButton;
+  vanNhanSoUpdateCoordinator.startDailyUpdateIfEligible(eligibleForDailyVanNhanSoUpdate);
 #endif
 
   if (resume == BootResume::Silent) {
@@ -770,11 +761,7 @@ void loop() {
 #endif
 
   const unsigned long sleepTimeoutMs = SETTINGS.getSleepTimeoutMs();
-  if (
-#if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3 || FREEINK_DEVICE_X4PRO
-      !vanNhanSoUpdateCoordinator.isSleepUpdateInProgress() &&
-#endif
-      sleepTimeoutMs > 0 && millis() - lastActivityTime >= sleepTimeoutMs) {
+  if (sleepTimeoutMs > 0 && millis() - lastActivityTime >= sleepTimeoutMs) {
     LOG_DBG("SLP", "Auto-sleep triggered after %lu ms of inactivity", sleepTimeoutMs);
     enterDeepSleep(true);
     // This should never be hit as `enterDeepSleep` calls esp_deep_sleep_start
@@ -787,11 +774,7 @@ void loop() {
   static bool powerReleasedSinceWake = false;
   if (!gpio.isPressed(HalGPIO::BTN_POWER)) powerReleasedSinceWake = true;
 
-  if (powerReleasedSinceWake &&
-#if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3 || FREEINK_DEVICE_X4PRO
-      !vanNhanSoUpdateCoordinator.isSleepUpdateInProgress() &&
-#endif
-      millis() >= allowSleepAt && gpio.isPressed(HalGPIO::BTN_POWER) &&
+  if (powerReleasedSinceWake && millis() >= allowSleepAt && gpio.isPressed(HalGPIO::BTN_POWER) &&
       gpio.getPowerButtonHeldTime() > SETTINGS.getPowerButtonDuration()) {
     // If the screenshot combination is potentially being pressed, don't sleep
     if (gpio.isPressed(HalGPIO::BTN_DOWN)) {
@@ -834,24 +817,6 @@ void loop() {
   const unsigned long activityStartTime = millis();
   activityManager.loop();
   const unsigned long activityDuration = millis() - activityStartTime;
-
-#if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3 || FREEINK_DEVICE_X4PRO
-  bool sleepFromTimeout = false;
-  bool continueSleeping = true;
-  if (vanNhanSoUpdateCoordinator.consumeFinishedSleepUpdate(sleepFromTimeout, continueSleeping)) {
-    if (continueSleeping) {
-      enterDeepSleep(sleepFromTimeout);
-    } else {
-      // The update consumed an input edge while running synchronously, so make
-      // the cancellation a real wake interaction and require a fresh power
-      // release before another long-hold sleep can fire.
-      lastActivityTime = millis();
-      powerReleasedSinceWake = false;
-      LOG_INF("VNS", "Sleep cancelled by user activity during refresh");
-    }
-    return;
-  }
-#endif
 
   const unsigned long loopDuration = millis() - loopStartTime;
   if (loopDuration > maxLoopDuration) {

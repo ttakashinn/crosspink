@@ -57,6 +57,8 @@ class SDCardManager {
 
   bool begin() { return true; }
   bool ready() const { return true; }
+  uint64_t sdTotalBytes() const { return 32ULL * 1024ULL * 1024ULL; }
+  uint64_t sdUsedBytes() { return 8ULL * 1024ULL * 1024ULL; }
   std::vector<String> listFiles(const char*, int) { return {}; }
   String readFile(const char*) { return {}; }
   bool readFileToStream(const char*, Print&, size_t) { return false; }

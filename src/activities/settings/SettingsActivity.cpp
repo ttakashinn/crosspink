@@ -72,8 +72,7 @@ void SettingsActivity::rebuildSettingsLists() {
 
   for (auto& setting : getSettingsList(&sdFontSystem.registry(), &dictionaries)) {
     if (setting.category == StrId::STR_NONE_OPT) continue;
-    const bool isVanNhanSoSetting = setting.valuePtr == &CrossPointSettings::vanNhanSoUpdateMode ||
-                                    setting.valuePtr == &CrossPointSettings::vanNhanSoLayout ||
+    const bool isVanNhanSoSetting = setting.valuePtr == &CrossPointSettings::vanNhanSoLayout ||
                                     setting.valuePtr == &CrossPointSettings::vanNhanSoFontSize ||
                                     setting.valuePtr == &CrossPointSettings::vanNhanSoVocabularyLevel ||
                                     setting.valuePtr == &CrossPointSettings::vanNhanSoWeatherLocation ||

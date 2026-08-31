@@ -17,3 +17,8 @@ TEST(HalFileClose, OpenHandleCanStillBeClosedNormally) {
   EXPECT_TRUE(file.close());
   EXPECT_FALSE(file.isOpen());
 }
+
+TEST(HalStorageCapacity, ForwardsCapacityThroughTheThreadSafeStorageLayer) {
+  EXPECT_EQ(Storage.totalBytes(), 32ULL * 1024ULL * 1024ULL);
+  EXPECT_EQ(Storage.usedBytes(), 8ULL * 1024ULL * 1024ULL);
+}

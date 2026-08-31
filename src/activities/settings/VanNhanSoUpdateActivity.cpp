@@ -21,7 +21,6 @@
 
 #include "MappedInputManager.h"
 #include "SilentRestart.h"
-#include "VanNhanSoUpdateHooks.h"
 #include "WifiCredentialStore.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "components/UITheme.h"
@@ -236,10 +235,6 @@ void VanNhanSoUpdateActivity::onEnter() {
   syncPendingProfile();
 
   if (automatic) {
-    // An explicit sleep starts while the power button may still be held. Ignore
-    // only that original hold; a later power press is new user activity and
-    // must be able to cancel the pending sleep.
-    ignoreTriggerPowerUntilRelease = sleepAfterUpdate && mappedInput.isPressed(MappedInputManager::Button::Power);
     startAutomaticUpdate();
     return;
   }
@@ -265,8 +260,6 @@ void VanNhanSoUpdateActivity::onExit() {
       }
     }
   }
-
-  if (automatic && sleepAfterUpdate) vanNhanSoUpdateFinishedBeforeSleep(!sleepCancelledByUser);
 }
 
 void VanNhanSoUpdateActivity::beginManualUpdate() {
@@ -296,9 +289,7 @@ void VanNhanSoUpdateActivity::startAutomaticUpdate() {
   state = WIFI_SELECTION;
 
   const bool haveCurrentDate = resolveCurrentDate(false);
-  if (haveCurrentDate && vannhanso_update_policy::shouldSkipCurrentCache(
-                             trigger, isCurrentCache(), currentDateKey, currentMinute,
-                             APP_STATE.vanNhanSoLastSuccessDate, APP_STATE.vanNhanSoLastSuccessMinute)) {
+  if (haveCurrentDate && vannhanso_update_policy::shouldSkipCurrentCache(trigger, isCurrentCache(), currentDateKey)) {
     LOG_INF("VNS", "Sleep screen already current for %lu", static_cast<unsigned long>(currentDateKey));
     clearPendingProfile();
     state = SKIPPED;
@@ -378,9 +369,7 @@ void VanNhanSoUpdateActivity::checkAutomaticConnection() {
   if (outcome == wifi_connection_policy::Outcome::CONNECTED) {
     wifi_connection_diagnostics::endAttempt();
     const bool haveCurrentDate = resolveCurrentDate(false);
-    if (haveCurrentDate && vannhanso_update_policy::shouldSkipCurrentCache(
-                               trigger, isCurrentCache(), currentDateKey, currentMinute,
-                               APP_STATE.vanNhanSoLastSuccessDate, APP_STATE.vanNhanSoLastSuccessMinute)) {
+    if (haveCurrentDate && vannhanso_update_policy::shouldSkipCurrentCache(trigger, isCurrentCache(), currentDateKey)) {
       LOG_INF("VNS", "Sleep screen already current for %lu", static_cast<unsigned long>(currentDateKey));
       clearPendingProfile();
       state = SKIPPED;
@@ -406,21 +395,12 @@ void VanNhanSoUpdateActivity::checkAutomaticConnection() {
 }
 
 bool VanNhanSoUpdateActivity::automaticCancellationRequested() {
-  if (ignoreTriggerPowerUntilRelease && !mappedInput.isPressed(MappedInputManager::Button::Power)) {
-    ignoreTriggerPowerUntilRelease = false;
-  }
-
   int x = 0;
   int y = 0;
   const bool backPressed = mappedInput.wasPressed(MappedInputManager::Button::Back);
   const bool anyButtonPressed = mappedInput.wasAnyPressed();
-  const bool powerButtonPressed = mappedInput.wasPressed(MappedInputManager::Button::Power);
   const bool screenTapped = mappedInput.wasScreenTapped(x, y);
-  const bool shouldCancel = vannhanso_update_policy::shouldCancelAutomaticUpdate(
-      trigger, pendingProfileRequired, backPressed, anyButtonPressed, powerButtonPressed, screenTapped,
-      ignoreTriggerPowerUntilRelease);
-  if (shouldCancel && sleepAfterUpdate) sleepCancelledByUser = true;
-  return shouldCancel;
+  return vannhanso_update_policy::shouldCancelAutomaticUpdate(backPressed, anyButtonPressed, screenTapped);
 }
 
 void VanNhanSoUpdateActivity::onWifiSelectionComplete(const bool connected) {
@@ -683,6 +663,17 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
     return;
   }
 
+  uint32_t installedDateKey = 0;
+  if (!vannhanso_cache::readCurrentDate(renderer.getScreenWidth(), renderer.getScreenHeight(), installedDateKey)) {
+    readDateMarker(installedDateKey);
+  }
+  if (vannhanso_update_policy::isManifestDateOlderThanCache(responseDateKey, installedDateKey)) {
+    LOG_ERR("VNS", "Rejecting stale manifest date %lu; installed cache is %lu",
+            static_cast<unsigned long>(responseDateKey), static_cast<unsigned long>(installedDateKey));
+    fail(CrossPointState::VanNhanSoUpdateError::METADATA);
+    return;
+  }
+
   const std::string expectedChecksum(checksum);
   const std::string resolvedAssetUrl(assetUrl);
   const std::string serverDate = manifestResponse.serverDate;
@@ -728,10 +719,9 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
   }
 #endif
 
-  // "When entering sleep" means checking the manifest on every sleep, not
-  // rewriting an identical immutable asset every time. Hash the active
-  // profile image and avoid the second HTTP request when the server checksum
-  // has not changed.
+  // A manual check or a new-day refresh may receive a manifest that points to
+  // the already-installed immutable asset. Hash the active profile image and
+  // avoid the second HTTP request when the server checksum has not changed.
   char currentImagePath[vannhanso_profile::PATH_MAX_LENGTH];
   HalFile currentImage;
   const bool unchanged = vannhanso_profile::buildImagePath(renderer.getScreenWidth(), renderer.getScreenHeight(),

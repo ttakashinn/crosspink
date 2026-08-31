@@ -206,12 +206,6 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     QUICK_RESUME_SLEEP_SCREEN_COUNT
   };
 
-  enum VANNHANSO_UPDATE_MODE {
-    VANNHANSO_UPDATE_FIRST_BOOT = 0,
-    VANNHANSO_UPDATE_ON_SLEEP = 1,
-    VANNHANSO_UPDATE_MANUAL = 2,
-    VANNHANSO_UPDATE_MODE_COUNT
-  };
   enum VANNHANSO_LAYOUT { VANNHANSO_LAYOUT_MINIMAL = 0, VANNHANSO_LAYOUT_FULL = 1, VANNHANSO_LAYOUT_COUNT };
   enum VANNHANSO_FONT_SIZE { VANNHANSO_FONT_STANDARD = 0, VANNHANSO_FONT_LARGE = 1, VANNHANSO_FONT_SIZE_COUNT };
   enum VANNHANSO_VOCABULARY_LEVEL {
@@ -236,8 +230,6 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
 
   // Sleep screen settings
   uint8_t sleepScreen = DARK;
-  // When Văn Nhân Số may contact the server for a new daily sleep screen.
-  uint8_t vanNhanSoUpdateMode = VANNHANSO_UPDATE_FIRST_BOOT;
   uint8_t vanNhanSoLayout = VANNHANSO_LAYOUT_FULL;
   // Large is the safer default on the low-density X3/X4 panels.
   uint8_t vanNhanSoFontSize = VANNHANSO_FONT_LARGE;

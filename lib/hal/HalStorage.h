@@ -4,6 +4,7 @@
 #include <common/FsApiConstants.h>  // for oflag_t
 #include <freertos/semphr.h>
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -24,6 +25,10 @@ class HalStorage {
   HalStorage();
   bool begin();
   bool ready() const;
+  // Capacity is cached when the SD card mounts. Used bytes comes from the
+  // SD manager's bounded-TTL FAT scan; callers should cache it per screen.
+  uint64_t totalBytes() const;
+  uint64_t usedBytes();
   // USB Drive exclusively owns the SD card while active. Callers must stop
   // all filesystem work before beginUsbDrive(), then reboot after endUsbDrive().
   bool beginUsbDrive();

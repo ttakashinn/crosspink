@@ -44,6 +44,16 @@ class HalStorage::StorageLock {
   ~StorageLock() { xSemaphoreGiveRecursive(HalStorage::getInstance().storageMutex); }
 };
 
+uint64_t HalStorage::totalBytes() const {
+  StorageLock lock;
+  return SDCard.sdTotalBytes();
+}
+
+uint64_t HalStorage::usedBytes() {
+  StorageLock lock;
+  return SDCard.sdUsedBytes();
+}
+
 #if FREEINK_CAP_USB_MSC && !FREEINK_SD_SDMMC
 #error "USB Drive requires an SDMMC-backed storage profile"
 #endif

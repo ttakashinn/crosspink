@@ -14,7 +14,7 @@ class VanNhanSoSettingsActivity final : public UiListActivity {
   void render(RenderLock&&) override;
 
  private:
-  static constexpr int MAX_ITEM_COUNT = 7;
+  static constexpr int MAX_ITEM_COUNT = 6;
 
   OptionPopup optionPopup;
   const bool returnToSettingsOnBack;

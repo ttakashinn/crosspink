@@ -9,42 +9,17 @@ bool isAutomatic(const UpdateTrigger trigger) { return trigger != UpdateTrigger:
 
 bool maySkipCurrentCache(const UpdateTrigger trigger) { return isAutomatic(trigger); }
 
-bool shouldSleepAfterUpdate(const UpdateTrigger trigger) { return trigger == UpdateTrigger::ENTERING_SLEEP; }
-
-bool shouldSkipCurrentCache(const UpdateTrigger trigger, const bool cacheMatchesCurrentDate, const uint32_t currentDate,
-                            const uint16_t currentMinute, const uint32_t lastSuccessDate,
-                            const uint16_t lastSuccessMinute) {
-  if (!maySkipCurrentCache(trigger) || !cacheMatchesCurrentDate || currentDate == 0 || currentMinute >= 24U * 60U ||
-      lastSuccessMinute >= 24U * 60U) {
-    return false;
-  }
-  // A matching date alone is unsafe when an X3 RTC has stopped. Require
-  // observable forward clock movement since the server-confirmed image. A
-  // second trigger in the same minute performs one harmless manifest check.
-  return lastSuccessDate == currentDate && currentMinute > lastSuccessMinute;
+bool shouldSkipCurrentCache(const UpdateTrigger trigger, const bool cacheMatchesCurrentDate,
+                            const uint32_t currentDate) {
+  return maySkipCurrentCache(trigger) && cacheMatchesCurrentDate && currentDate != 0;
 }
 
-bool shouldCancelAutomaticUpdate(const UpdateTrigger trigger, const bool pendingProfileRequired, const bool backPressed,
-                                 const bool anyButtonPressed, const bool powerButtonPressed, const bool screenTapped,
-                                 const bool ignoreTriggerPowerButton) {
-  (void)pendingProfileRequired;
-  if (backPressed) return true;
+bool isManifestDateOlderThanCache(const uint32_t manifestDate, const uint32_t cachedDate) {
+  return manifestDate != 0 && cachedDate != 0 && manifestDate < cachedDate;
+}
 
-  // A sleep update runs between a user action and deep sleep. Any new input
-  // means the user wants to stay awake. The one exception is the still-held
-  // power press that initiated an explicit sleep request.
-  if (trigger == UpdateTrigger::ENTERING_SLEEP) {
-    if (screenTapped) return true;
-    if (!anyButtonPressed) return false;
-    return !(ignoreTriggerPowerButton && powerButtonPressed);
-  }
-
-  // A first-start refresh is opportunistic even when the selected profile does
-  // not have an image yet. The built-in fallback remains usable, so never trap
-  // the user behind WiFi and download timeouts just to fill the cache.
-  if (screenTapped) return true;
-  if (!anyButtonPressed) return false;
-  return !(ignoreTriggerPowerButton && powerButtonPressed);
+bool shouldCancelAutomaticUpdate(const bool backPressed, const bool anyButtonPressed, const bool screenTapped) {
+  return backPressed || anyButtonPressed || screenTapped;
 }
 
 uint32_t pendingProfileHash(const bool hasCurrentProfileImage, const uint32_t currentProfileHash) {
@@ -60,7 +35,7 @@ bool isBackoffActive(const uint32_t currentProfileHash, const uint32_t failurePr
   }
 
   // Without a trustworthy clock there is no safe way to measure elapsed
-  // backoff across deep-sleep resets. Retrying on the next trigger is safer
+  // backoff across deep-sleep resets. Retrying on a later daily trigger is safer
   // than suppressing the profile forever: the first successful HTTPS response
   // restores the clock, after which the normal bounded backoff applies.
   if (currentDate == 0) return false;

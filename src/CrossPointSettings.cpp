@@ -218,6 +218,11 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
     }
   }
 
+  // Văn Nhân Số now always refreshes automatically on the first power start
+  // of a new day. Drop the former persisted mode (including update-on-sleep)
+  // when an older settings file is next saved.
+  if (!doc["vanNhanSoUpdateMode"].isNull()) needsResave = true;
+
   if (doc["sleepTimeoutMinutes"].isNull() && !doc["sleepTimeout"].isNull()) {
     const uint8_t legacyValue =
         clamp(doc["sleepTimeout"] | (uint8_t)SLEEP_10_MIN, SLEEP_TIMEOUT_COUNT, (uint8_t)SLEEP_10_MIN);

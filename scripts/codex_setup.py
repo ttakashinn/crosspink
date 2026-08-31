@@ -234,7 +234,8 @@ def format_check() -> None:
     files = [
         path
         for path in tracked
-        if Path(path).suffix in FORMAT_SUFFIXES
+        if (ROOT / path).is_file()
+        and Path(path).suffix in FORMAT_SUFFIXES
         and not path.startswith(FORMAT_EXCLUDES)
     ]
     for start in range(0, len(files), 100):

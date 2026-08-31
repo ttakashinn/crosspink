@@ -20,11 +20,9 @@
 namespace fui = freeink::ui;
 
 namespace {
-constexpr int BASE_ITEM_COUNT = 4;
-constexpr int FULL_ITEM_COUNT = 7;
+constexpr int BASE_ITEM_COUNT = 3;
+constexpr int FULL_ITEM_COUNT = 6;
 
-const StrId updateModeNames[] = {StrId::STR_VANNHANSO_UPDATE_FIRST_BOOT, StrId::STR_VANNHANSO_UPDATE_ON_SLEEP,
-                                 StrId::STR_VANNHANSO_UPDATE_MANUAL};
 const StrId layoutNames[] = {StrId::STR_VANNHANSO_LAYOUT_MINIMAL, StrId::STR_VANNHANSO_LAYOUT_FULL};
 const StrId fontNames[] = {StrId::STR_VANNHANSO_FONT_STANDARD, StrId::STR_VANNHANSO_FONT_LARGE};
 const StrId vocabularyNames[] = {StrId::STR_VANNHANSO_VOCAB_B1, StrId::STR_VANNHANSO_VOCAB_B2,
@@ -59,9 +57,8 @@ const char* VanNhanSoSettingsActivity::headerTitle() const { return tr(STR_VANNH
 
 StrId VanNhanSoSettingsActivity::itemName(const int index) const {
   static constexpr StrId names[FULL_ITEM_COUNT] = {
-      StrId::STR_VANNHANSO_REFRESH,   StrId::STR_VANNHANSO_UPDATE_MODE,      StrId::STR_VANNHANSO_LAYOUT,
-      StrId::STR_VANNHANSO_FONT_SIZE, StrId::STR_VANNHANSO_VOCABULARY_LEVEL, StrId::STR_VANNHANSO_WEATHER_LOCATION,
-      StrId::STR_VANNHANSO_FINANCE};
+      StrId::STR_VANNHANSO_REFRESH,          StrId::STR_VANNHANSO_LAYOUT,           StrId::STR_VANNHANSO_FONT_SIZE,
+      StrId::STR_VANNHANSO_VOCABULARY_LEVEL, StrId::STR_VANNHANSO_WEATHER_LOCATION, StrId::STR_VANNHANSO_FINANCE};
   return names[index >= 0 && index < FULL_ITEM_COUNT ? index : 0];
 }
 
@@ -82,17 +79,15 @@ std::string VanNhanSoSettingsActivity::itemValue(const int index) const {
                  : tr(STR_NOT_SET);
     }
     case 1:
-      return I18N.get(updateModeNames[std::min<uint8_t>(SETTINGS.vanNhanSoUpdateMode, std::size(updateModeNames) - 1)]);
-    case 2:
       return I18N.get(layoutNames[std::min<uint8_t>(SETTINGS.vanNhanSoLayout, std::size(layoutNames) - 1)]);
-    case 3:
+    case 2:
       return I18N.get(fontNames[std::min<uint8_t>(SETTINGS.vanNhanSoFontSize, std::size(fontNames) - 1)]);
-    case 4:
+    case 3:
       return I18N.get(
           vocabularyNames[std::min<uint8_t>(SETTINGS.vanNhanSoVocabularyLevel, std::size(vocabularyNames) - 1)]);
-    case 5:
+    case 4:
       return I18N.get(weatherNames[std::min<uint8_t>(SETTINGS.vanNhanSoWeatherLocation, std::size(weatherNames) - 1)]);
-    case 6:
+    case 5:
       return SETTINGS.vanNhanSoFinance ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
     default:
       return "";
@@ -109,13 +104,6 @@ void VanNhanSoSettingsActivity::handleSelection(const int index) {
       return;
     }
     case 1:
-      optionPopup.show(StrId::STR_VANNHANSO_UPDATE_MODE, updateModeNames, std::size(updateModeNames),
-                       SETTINGS.vanNhanSoUpdateMode, [](const int index) {
-                         SETTINGS.vanNhanSoUpdateMode = index;
-                         SETTINGS.saveToFile();
-                       });
-      return;
-    case 2:
       optionPopup.show(StrId::STR_VANNHANSO_LAYOUT, layoutNames, std::size(layoutNames), SETTINGS.vanNhanSoLayout,
                        [this](const int index) {
                          SETTINGS.vanNhanSoLayout = index;
@@ -124,7 +112,7 @@ void VanNhanSoSettingsActivity::handleSelection(const int index) {
                          moveSelectionTo(std::min(nav.selected, listCount() - 1));
                        });
       return;
-    case 3:
+    case 2:
       optionPopup.show(StrId::STR_VANNHANSO_FONT_SIZE, fontNames, std::size(fontNames), SETTINGS.vanNhanSoFontSize,
                        [this](const int index) {
                          SETTINGS.vanNhanSoFontSize = index;
@@ -132,7 +120,7 @@ void VanNhanSoSettingsActivity::handleSelection(const int index) {
                          syncPendingProfile();
                        });
       return;
-    case 4:
+    case 3:
       optionPopup.show(StrId::STR_VANNHANSO_VOCABULARY_LEVEL, vocabularyNames, std::size(vocabularyNames),
                        SETTINGS.vanNhanSoVocabularyLevel, [this](const int index) {
                          SETTINGS.vanNhanSoVocabularyLevel = index;
@@ -140,7 +128,7 @@ void VanNhanSoSettingsActivity::handleSelection(const int index) {
                          syncPendingProfile();
                        });
       return;
-    case 5:
+    case 4:
       optionPopup.show(StrId::STR_VANNHANSO_WEATHER_LOCATION, weatherNames, std::size(weatherNames),
                        SETTINGS.vanNhanSoWeatherLocation, [this](const int index) {
                          SETTINGS.vanNhanSoWeatherLocation = index;
@@ -148,7 +136,7 @@ void VanNhanSoSettingsActivity::handleSelection(const int index) {
                          syncPendingProfile();
                        });
       return;
-    case 6:
+    case 5:
       SETTINGS.vanNhanSoFinance = !SETTINGS.vanNhanSoFinance;
       SETTINGS.saveToFile();
       syncPendingProfile();
