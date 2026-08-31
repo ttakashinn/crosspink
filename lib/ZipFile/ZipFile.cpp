@@ -11,6 +11,7 @@ struct ZipInflateCtx {
   size_t fileRemaining = 0;
   uint8_t* readBuf = nullptr;
   size_t readBufSize = 0;
+  bool readError = false;
 };
 
 namespace {
@@ -49,8 +50,9 @@ size_t zipFillCallback(void* vctx, const uint8_t** data) {
   // rather than letting the negative-to-size_t conversion underflow fileRemaining
   // and report a huge bytesRead, which would have the inflate library read past
   // the end of readBuf.
-  if (result < 0) {
+  if (result <= 0) {
     LOG_ERR("ZIP", "Failed to read compressed data: %d", result);
+    ctx->readError = true;
     return 0;
   }
   const size_t bytesRead = static_cast<size_t>(result);
@@ -446,17 +448,24 @@ uint8_t* ZipFile::readFileToMemory(const char* filename, size_t* size, const boo
   return data;
 }
 
-bool ZipFile::readFileToStream(const char* filename, Print& out, const size_t chunkSize, const bool allowEarlyStop) {
+bool ZipFile::readFileToStream(const char* filename, Print& out, const size_t chunkSize, const bool allowEarlyStop,
+                               StreamReadFailure* failure) {
+  if (failure) *failure = StreamReadFailure::None;
+  const auto fail = [failure](const StreamReadFailure reason) {
+    if (failure) *failure = reason;
+    return false;
+  };
+
   const ScopedOpenClose zip{*this};
-  if (!zip) return false;
+  if (!zip) return fail(StreamReadFailure::Io);
 
   FileStatSlim fileStat = {};
-  if (!loadFileStatSlim(filename, &fileStat)) return false;
+  if (!loadFileStatSlim(filename, &fileStat)) return fail(StreamReadFailure::InvalidContent);
 
   const long fileOffset = getDataOffset(fileStat);
-  if (fileOffset < 0) return false;
+  if (fileOffset < 0) return fail(StreamReadFailure::InvalidContent);
 
-  file.seek(fileOffset);
+  if (!file.seek(fileOffset)) return fail(StreamReadFailure::Io);
   const auto deflatedDataSize = fileStat.compressedSize;
   const auto inflatedDataSize = fileStat.uncompressedSize;
 
@@ -465,7 +474,7 @@ bool ZipFile::readFileToStream(const char* filename, Print& out, const size_t ch
     const auto buffer = static_cast<uint8_t*>(malloc(chunkSize));
     if (!buffer) {
       LOG_ERR("ZIP", "Failed to allocate memory for buffer");
-      return false;
+      return fail(StreamReadFailure::LowMemory);
     }
 
     size_t remaining = inflatedDataSize;
@@ -474,14 +483,14 @@ bool ZipFile::readFileToStream(const char* filename, Print& out, const size_t ch
       if (dataRead == 0) {
         LOG_ERR("ZIP", "Could not read more bytes");
         free(buffer);
-        return false;
+        return fail(StreamReadFailure::Io);
       }
 
       if (out.write(buffer, dataRead) != dataRead) {
         free(buffer);
         if (allowEarlyStop) return true;  // sink has what it needs
         LOG_ERR("ZIP", "Failed to write all output bytes to stream");
-        return false;
+        return fail(StreamReadFailure::Io);
       }
       remaining -= dataRead;
     }
@@ -494,14 +503,14 @@ bool ZipFile::readFileToStream(const char* filename, Print& out, const size_t ch
     auto* fileReadBuffer = static_cast<uint8_t*>(malloc(chunkSize));
     if (!fileReadBuffer) {
       LOG_ERR("ZIP", "Failed to allocate memory for zip file read buffer");
-      return false;
+      return fail(StreamReadFailure::LowMemory);
     }
 
     auto* outputBuffer = static_cast<uint8_t*>(malloc(chunkSize));
     if (!outputBuffer) {
       LOG_ERR("ZIP", "Failed to allocate memory for output buffer");
       free(fileReadBuffer);
-      return false;
+      return fail(StreamReadFailure::LowMemory);
     }
 
     ZipInflateCtx ctx;
@@ -515,11 +524,12 @@ bool ZipFile::readFileToStream(const char* filename, Print& out, const size_t ch
       LOG_ERR("ZIP", "Failed to init inflate stream");
       free(outputBuffer);
       free(fileReadBuffer);
-      return false;
+      return fail(StreamReadFailure::LowMemory);
     }
     inflate.setFill(zipFillCallback, &ctx);
 
     bool success = false;
+    StreamReadFailure failureReason = StreamReadFailure::InvalidContent;
     size_t totalProduced = 0;
 
     while (true) {
@@ -539,6 +549,7 @@ bool ZipFile::readFileToStream(const char* filename, Print& out, const size_t ch
             success = true;  // sink has what it needs
           } else {
             LOG_ERR("ZIP", "Failed to write all output bytes to stream");
+            failureReason = StreamReadFailure::Io;
           }
           break;
         }
@@ -557,6 +568,7 @@ bool ZipFile::readFileToStream(const char* filename, Print& out, const size_t ch
 
       if (status == InflateStream::Status::Error) {
         LOG_ERR("ZIP", "Decompression failed");
+        if (ctx.readError) failureReason = StreamReadFailure::Io;
         break;
       }
       // InflateStream::Status::Ok: output buffer full, continue
@@ -564,9 +576,10 @@ bool ZipFile::readFileToStream(const char* filename, Print& out, const size_t ch
 
     free(outputBuffer);
     free(fileReadBuffer);
-    return success;  // inflate destructor frees the decompressor state + window
+    if (!success) return fail(failureReason);
+    return true;  // inflate destructor frees the decompressor state + window
   }
 
   LOG_ERR("ZIP", "Unsupported compression method");
-  return false;
+  return fail(StreamReadFailure::InvalidContent);
 }

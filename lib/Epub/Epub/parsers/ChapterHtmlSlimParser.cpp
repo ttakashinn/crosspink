@@ -32,11 +32,6 @@
 constexpr size_t MIN_SIZE_FOR_POPUP = 10 * 1024;  // 10KB
 constexpr size_t PARSE_BUFFER_SIZE = 1024;
 // Stop before entering throwing STL growth or shared_ptr control-block
-// allocations. CrossInk uses the same floor for EPUB text layout; these next
-// allocations are small, so total free heap is the relevant signal.
-constexpr size_t EPUB_TEXT_LAYOUT_MIN_FREE_HEAP = 44 * 1024;
-constexpr size_t EPUB_TEXT_LAYOUT_MIN_MAX_ALLOC = 32 * 1024;
-
 // This number comes from PR #73
 // If we have > 750 words buffered up, perform the layout and consume out all but the last line
 // There should be enough here to build out 1-2 full pages and doing this will free up a lot of
@@ -333,25 +328,24 @@ CssParser::DescendantMask ChapterHtmlSlimParser::activeCssAncestorMask() const {
 }
 
 void ChapterHtmlSlimParser::markLowMemoryFailure(const char* stage) {
-  if (!lowMemoryFailure_) {
+  if (failure_ != Failure::LowMemory) {
     LOG_ERR("EHP", "Low memory during %s (%u free, %u max alloc); aborting section build", stage,
             static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
   }
-  lowMemoryFailure_ = true;
+  failure_ = Failure::LowMemory;
   if (xmlParser_) XML_StopParser(xmlParser_, XML_FALSE);
 }
 
 bool ChapterHtmlSlimParser::shouldAbortForLowMemory(const char* stage) {
-  if (lowMemoryFailure_) return true;
-  if (ESP.getFreeHeap() >= EPUB_TEXT_LAYOUT_MIN_FREE_HEAP && ESP.getMaxAllocHeap() >= EPUB_TEXT_LAYOUT_MIN_MAX_ALLOC) {
+  if (failure_ == Failure::LowMemory) return true;
+  if (epubLayoutHeapSufficient(renderMode, ESP.getFreeHeap(), ESP.getMaxAllocHeap())) {
     return false;
   }
   if (!attemptedLowMemoryFontCacheRelease_) {
     attemptedLowMemoryFontCacheRelease_ = true;
     if (auto* fontCache = renderer.getFontCacheManager()) {
       fontCache->releaseSdFontCaches();
-      if (ESP.getFreeHeap() >= EPUB_TEXT_LAYOUT_MIN_FREE_HEAP &&
-          ESP.getMaxAllocHeap() >= EPUB_TEXT_LAYOUT_MIN_MAX_ALLOC) {
+      if (epubLayoutHeapSufficient(renderMode, ESP.getFreeHeap(), ESP.getMaxAllocHeap())) {
         LOG_DBG("EHP", "Released SD font caches before %s", stage);
         return false;
       }
@@ -556,12 +550,12 @@ void ChapterHtmlSlimParser::startNewTextBlock(const BlockStyle& blockStyle) {
     }
 
     makePages();
-    if (lowMemoryFailure_) return;
+    if (failure_ == Failure::LowMemory) return;
   }
   // If the pending anchor is a TOC chapter boundary, force a page break after the previous
   // block is flushed so the chapter starts on a fresh page.
   flushPendingAnchor();
-  if (lowMemoryFailure_) return;
+  if (failure_ == Failure::LowMemory) return;
   currentTextBlock = makeUniqueNoThrow<ParsedText>(extraParagraphSpacing, hyphenationEnabled, focusReadingEnabled,
                                                    blockStyle, wordSpacing);
   if (!currentTextBlock) {
@@ -581,7 +575,7 @@ void ChapterHtmlSlimParser::emitHorizontalRule(const BlockStyle& blockStyle) {
   if (currentTextBlock) {
     const BlockStyle parentBlockStyle = currentTextBlock->getBlockStyle();
     startNewTextBlock(parentBlockStyle);
-    if (lowMemoryFailure_) return;
+    if (failure_ == Failure::LowMemory) return;
   }
 
   if (!currentPage) {
@@ -1369,7 +1363,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
                 if (self->currentTextBlock && !self->currentTextBlock->isEmpty()) {
                   const BlockStyle parentBlockStyle = self->currentTextBlock->getBlockStyle();
                   self->startNewTextBlock(parentBlockStyle);
-                  if (self->lowMemoryFailure_) return;
+                  if (self->failure_ == Failure::LowMemory) return;
                 }
 
                 // Apply vertical margins from the container to the image.
@@ -2083,7 +2077,7 @@ void XMLCALL ChapterHtmlSlimParser::defaultHandlerExpand(void* userData, const X
 
 void XMLCALL ChapterHtmlSlimParser::endElement(void* userData, const XML_Char* name) {
   auto* self = static_cast<ChapterHtmlSlimParser*>(userData);
-  if (self->lowMemoryFailure_) return;
+  if (self->failure_ == Failure::LowMemory) return;
   if (self->nonVisibleTextDepth > 0) {
     self->nonVisibleTextDepth--;
   }
@@ -2292,7 +2286,7 @@ void XMLCALL ChapterHtmlSlimParser::endElement(void* userData, const XML_Char* n
 ChapterHtmlSlimParser::~ChapterHtmlSlimParser() { abortParse(); }
 
 bool ChapterHtmlSlimParser::beginParse() {
-  lowMemoryFailure_ = false;
+  failure_ = Failure::None;
   attemptedLowMemoryFontCacheRelease_ = false;
   htmlEnded_ = false;
   if (shouldAbortForLowMemory("parser initialization")) return false;
@@ -2344,7 +2338,7 @@ bool ChapterHtmlSlimParser::beginParse() {
   const auto align = rootBlockStyle.alignment;
   paragraphAlignmentBlockStyle.alignment = align;
   startNewTextBlock(paragraphAlignmentBlockStyle);
-  if (lowMemoryFailure_) return false;
+  if (failure_ == Failure::LowMemory) return false;
 
   xmlParser_ = XML_ParserCreate(nullptr);
   if (!xmlParser_) {
@@ -2357,6 +2351,7 @@ bool ChapterHtmlSlimParser::beginParse() {
   XML_SetDefaultHandlerExpand(xmlParser_, defaultHandlerExpand);
 
   if (!Storage.openFileForRead("EHP", filepath, parseFile_)) {
+    failure_ = Failure::Io;
     destroyXmlParser(xmlParser_);
     xmlParser_ = nullptr;
     return false;
@@ -2387,13 +2382,14 @@ ChapterHtmlSlimParser::ParseStatus ChapterHtmlSlimParser::parseStep() {
 
   if (len == 0 && parseFile_.available() > 0) {
     LOG_ERR("EHP", "File read error");
+    failure_ = Failure::Io;
     return ParseStatus::Error;
   }
 
   const int done = parseFile_.available() == 0;
 
   if (XML_ParseBuffer(xmlParser_, static_cast<int>(len), done) == XML_STATUS_ERROR) {
-    if (lowMemoryFailure_) return ParseStatus::Error;
+    if (failure_ == Failure::LowMemory) return ParseStatus::Error;
     if (XML_GetErrorCode(xmlParser_) == XML_ERROR_NO_MEMORY) {
       markLowMemoryFailure("XML parser");
       return ParseStatus::Error;
@@ -2404,6 +2400,7 @@ ChapterHtmlSlimParser::ParseStatus ChapterHtmlSlimParser::parseStep() {
     }
     LOG_ERR("EHP", "Parse error at line %lu:\n%s", XML_GetCurrentLineNumber(xmlParser_),
             XML_ErrorString(XML_GetErrorCode(xmlParser_)));
+    failure_ = Failure::InvalidContent;
     return ParseStatus::Error;
   }
 
@@ -2422,7 +2419,7 @@ void ChapterHtmlSlimParser::abortParse() {
 }
 
 bool ChapterHtmlSlimParser::finishParse() {
-  if (lowMemoryFailure_) {
+  if (failure_ == Failure::LowMemory) {
     abortParse();
     return false;
   }
@@ -2436,7 +2433,7 @@ bool ChapterHtmlSlimParser::finishParse() {
   // Process last page if there is still text
   if (currentTextBlock) {
     makePages();
-    if (lowMemoryFailure_) return false;
+    if (failure_ == Failure::LowMemory) return false;
     if (!pendingAnchorId.empty()) {
       anchorData.push_back({std::move(pendingAnchorId), static_cast<uint16_t>(completedPageCount)});
       pendingAnchorId.clear();
@@ -2569,7 +2566,7 @@ void ChapterHtmlSlimParser::makePages() {
     markLowMemoryFailure("text layout");
     return;
   }
-  if (lowMemoryFailure_) return;
+  if (failure_ == Failure::LowMemory) return;
 
   // Fallback: transfer any remaining pending footnotes to current page.
   // Normally addLineToPage handles this via word-index tracking, but this catches

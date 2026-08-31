@@ -61,10 +61,11 @@ void relayout(PreviewLayout& layout, const GfxRenderer& renderer, int fontId, in
 
 }  // namespace
 
-void renderPreview(const GfxRenderer& renderer, PreviewLayout& layout, int previewPadding, int labelGap, int top,
-                   int height, const char* familyName, const char* sizeName) {
-  const int left = previewPadding;
-  const int width = renderer.getScreenWidth() - (previewPadding * 2);
+void renderPreview(const GfxRenderer& renderer, PreviewLayout& layout, const int paneLeft, const int paneWidth,
+                   const int previewPadding, const int labelGap, const int top, const int height,
+                   const char* familyName, const char* sizeName) {
+  const int left = paneLeft + previewPadding;
+  const int width = paneWidth - (previewPadding * 2);
   if (width <= 0 || height <= 0) return;
 
   const int labelH = renderer.getTextHeight(UI_10_FONT_ID);

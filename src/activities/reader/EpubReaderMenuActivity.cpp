@@ -359,6 +359,16 @@ void EpubReaderMenuActivity::drawChrome() {
                  title.c_str());
 }
 
+void EpubReaderMenuActivity::drawFooter() {
+  const char* confirmLabel = tr(STR_SELECT);
+  if (ringPos() == 0) {
+    const int nextTab = ButtonNavigator::nextIndex(activeTab(), tabCount());
+    confirmLabel = tabLabel(nextTab);
+  }
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+}
+
 void EpubReaderMenuActivity::render(RenderLock&&) {
   if (optionPopup.processRender(renderer, mappedInput)) return;
 

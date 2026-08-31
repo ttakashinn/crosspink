@@ -12,6 +12,13 @@
 
 class ZipFile;
 
+enum class EpubItemReadFailure : uint8_t {
+  None,
+  LowMemory,
+  Io,
+  InvalidContent,
+};
+
 class Epub {
   // the ncx file (EPUB 2)
   std::string tocNcxItem;
@@ -35,6 +42,7 @@ class Epub {
   bool parseTocNcxFile() const;
   bool parseTocNavFile() const;
   void discoverCssFilesFromZip();
+  void releaseCssFileList();
   CssParser::ParseResult parseCssFiles(CssParser::CacheStatus existingCacheStatus) const;
 
  public:
@@ -59,8 +67,8 @@ class Epub {
   bool generateThumbBmp(int height) const;
   uint8_t* readItemContentsToBytes(const std::string& itemHref, size_t* size = nullptr,
                                    bool trailingNullByte = false) const;
-  bool readItemContentsToStream(const std::string& itemHref, Print& out, size_t chunkSize,
-                                bool allowEarlyStop = false) const;
+  bool readItemContentsToStream(const std::string& itemHref, Print& out, size_t chunkSize, bool allowEarlyStop = false,
+                                EpubItemReadFailure* failure = nullptr) const;
   // Extract an item to a file on SD. On failure the partial file is removed.
   bool extractItemToFile(const std::string& itemHref, const std::string& destPath) const;
   bool getItemSize(const std::string& itemHref, size_t* size) const;

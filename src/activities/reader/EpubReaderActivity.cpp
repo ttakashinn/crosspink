@@ -45,6 +45,7 @@
 #include "ReadingStatsStore.h"
 #include "RecentBooksStore.h"
 #include "SdCardFontSystem.h"
+#include "SilentRestart.h"
 #include "activities/settings/TextSettingsActivity.h"
 #include "clippings/ClippingPageTools.h"
 #include "clippings/ClippingStore.h"
@@ -405,6 +406,7 @@ bool EpubReaderActivity::prepareReaderSettings() {
   if (bookReaderSettings.hasOverrides && perBookSettingsWritable) applyReaderSettings(bookReaderSettings);
   activeRenderMode = static_cast<EpubRenderMode>(bookReaderSettings.preferredRenderMode);
   pendingWorkingFallback = UINT8_MAX;
+  preferredRenderTrialActive = false;
   if (bookReaderSettings.lastWorkingFallback != UINT8_MAX &&
       bookReaderSettings.lastWorkingFallback > bookReaderSettings.preferredRenderMode &&
       bookReaderSettings.fallbackRenderSignature == readerSettingsRenderSignature(bookReaderSettings)) {
@@ -424,6 +426,7 @@ void EpubReaderActivity::restoreReaderSettings() {
   applyReaderSettings(globalReaderSettings);
   SETTINGS.endReaderPersistenceOverlay();
   pendingWorkingFallback = UINT8_MAX;
+  preferredRenderTrialActive = false;
   readerSettingsPrepared = false;
 }
 
@@ -656,7 +659,7 @@ void EpubReaderActivity::openReaderMenu() {
 bool EpubReaderActivity::buildTickHeapGate() {
   const size_t freeHeap = ESP.getFreeHeap();
   const size_t maxBlock = ESP.getMaxAllocHeap();
-  buildHeapPaused = freeHeap < BACKGROUND_BUILD_MIN_FREE_HEAP || maxBlock < BACKGROUND_BUILD_MIN_MAX_ALLOC;
+  buildHeapPaused = !epubLayoutHeapSufficient(activeRenderMode, freeHeap, maxBlock);
   return !buildHeapPaused;
 }
 
@@ -669,10 +672,9 @@ ReaderRenderSpec EpubReaderActivity::activeReaderRenderSpec(const uint16_t viewp
   return spec;
 }
 
-bool EpubReaderActivity::retrySectionInSafeMode() {
-  if (!section || activeRenderMode == EpubRenderMode::Safe || !section->lastBuildFailedLowMemory()) {
-    return false;
-  }
+bool EpubReaderActivity::recoverSectionBuildFailure() {
+  if (!section) return false;
+  const SectionBuildFailure failure = section->lastBuildFailure();
 
   if (section->currentPage >= 0 && section->currentPage < section->pageCount) {
     rememberCurrentContentOffset();
@@ -688,17 +690,71 @@ bool EpubReaderActivity::retrySectionInSafeMode() {
     cachedChapterTotalPageCount = std::max(lastSavedPageCount, 0);
     nextPageNumber = std::max(section->currentPage, 0);
   }
+
+  return recoverSectionFailure(failure);
+}
+
+bool EpubReaderActivity::recoverSectionFailure(const SectionBuildFailure failure) {
+  if (preferredRenderTrialActive) {
+    section.reset();
+    activeRenderMode = preferredRenderTrialRollbackMode;
+    preferredRenderTrialActive = false;
+    pendingWorkingFallback = UINT8_MAX;
+    partialRebuildStartFailed = false;
+    partialRebuildPausedForLowMemory = false;
+    buildHeapPaused = false;
+    LOG_ERR("ERS", "Preferred render trial failed (%u); restoring %s mode", static_cast<unsigned>(failure),
+            epubRenderModeName(activeRenderMode));
+    requestUpdate();
+    return true;
+  }
+
+  const EpubBuildRecovery recovery = epubBuildRecoveryFor(failure, activeRenderMode, bootWasLowMemoryRestart());
+  if (recovery == EpubBuildRecovery::None) return false;
+
+  if (recovery == EpubBuildRecovery::RestartReaderOnce) {
+    flushReaderState();
+    section.reset();
+    partialRebuildStartFailed = false;
+    partialRebuildPausedForLowMemory = false;
+    buildHeapPaused = false;
+    LOG_ERR("ERS", "Safe section build ran out of memory; restarting reader once to defragment heap");
+    silentRestartToReaderForLowMemory();
+    return true;
+  }
+
   section.reset();
   activeRenderMode = nextLighterEpubRenderMode(activeRenderMode);
   pendingWorkingFallback = static_cast<uint8_t>(activeRenderMode);
   partialRebuildStartFailed = false;
+  partialRebuildPausedForLowMemory = false;
   buildHeapPaused = false;
   LOG_ERR("ERS", "Section build ran out of memory; retrying in %s mode", epubRenderModeName(activeRenderMode));
   requestUpdate();
   return true;
 }
 
+void EpubReaderActivity::showSectionBuildError(const SectionBuildFailure failure) {
+  StrId message = StrId::STR_INDEX_FAILED;
+  if (failure == SectionBuildFailure::LowMemory) {
+    message = StrId::STR_MEMORY_ERROR;
+  } else if (failure == SectionBuildFailure::Io) {
+    message = StrId::STR_FILE_OPEN_FAILED;
+  }
+  renderer.clearScreen();
+  GUI.drawPopup(renderer, I18N.get(message));
+  automaticPageTurnActive = false;
+}
+
 void EpubReaderActivity::rememberRenderedFallback() {
+  if (preferredRenderTrialActive) {
+    preferredRenderTrialActive = false;
+    bookReaderSettings.lastWorkingFallback = UINT8_MAX;
+    bookReaderSettings.fallbackRenderSignature = 0;
+    pendingWorkingFallback = UINT8_MAX;
+    saveBookReaderSettings();
+    return;
+  }
   if (pendingWorkingFallback == UINT8_MAX || pendingWorkingFallback != static_cast<uint8_t>(activeRenderMode) ||
       !shouldRememberEpubFallback(bookReaderSettings.preferredRenderMode, activeRenderMode, true)) {
     return;
@@ -877,7 +933,7 @@ void EpubReaderActivity::loop() {
       renderer.isSdCardFont(renderFontId) && section && !section->isBuilding() && !RenderLock::peek() &&
       renderer.hasFrameBuffer() && lastRenderCompleteMs != 0 &&
       canRunDeferredReaderWork(static_cast<uint32_t>(millis())) && ESP.getFreeHeap() > RENDER_MIN_FREE_HEAP &&
-      ESP.getMaxAllocHeap() > BACKGROUND_BUILD_MIN_MAX_ALLOC &&
+      ESP.getMaxAllocHeap() > SD_FONT_PREWARM_MIN_MAX_ALLOC &&
       (idlePrewarmSpine != currentSpineIndex || idlePrewarmPage != section->currentPage ||
        idlePrewarmFontId != renderFontId)) {
     const uint32_t idleWorkStarted = beginReaderIdleWork("font_prewarm");
@@ -906,13 +962,13 @@ void EpubReaderActivity::loop() {
 
   if (!userInputPending && canRunDeferredReaderWork(static_cast<uint32_t>(millis())) && section &&
       !section->isBuilding() && section->isPartial() && !RenderLock::peek() && buildViewportWidth > 0 &&
-      !partialRebuildStartFailed &&
+      !partialRebuildStartFailed && !partialRebuildPausedForLowMemory &&
       section->currentPage + PARTIAL_REBUILD_START_MARGIN >= static_cast<int>(section->pageCount)) {
     const uint32_t idleWorkStarted = beginReaderIdleWork("partial_build_start");
     RenderLock lock;
     const ReaderRenderSpec buildSpec = activeReaderRenderSpec(buildViewportWidth, buildViewportHeight);
     if (!section->startBuild(buildSpec)) {
-      if (retrySectionInSafeMode()) {
+      if (recoverSectionBuildFailure()) {
         endReaderIdleWork("partial_build_start", idleWorkStarted);
         return;
       }
@@ -934,7 +990,15 @@ void EpubReaderActivity::loop() {
     if (section->isBuilding() && buildTickHeapGate()) {
       if (!section->buildSomeMore(BACKGROUND_BUILD_PAGES_PER_TICK)) {
         LOG_ERR("ERS", "Background section build failed");
-        if (retrySectionInSafeMode()) {
+        if (shouldPauseEpubBackgroundBuild(section->lastBuildFailure(), section->isPartial(), section->pageCount)) {
+          partialRebuildPausedForLowMemory = true;
+          buildHeapPaused = true;
+          LOG_ERR("ERS", "Background section build suspended at %u readable pages after low-memory abort",
+                  section->pageCount);
+          endReaderIdleWork("section_build_tick", idleWorkStarted);
+          return;
+        }
+        if (recoverSectionBuildFailure()) {
           endReaderIdleWork("section_build_tick", idleWorkStarted);
           return;
         }
@@ -1648,9 +1712,31 @@ void EpubReaderActivity::applyExtendedReaderSettings(const uint8_t wordSpacing, 
                                                      const bool retryPreferredRender) {
   const uint8_t normalizedSpacing = std::min<uint8_t>(wordSpacing, 2);
   const uint8_t normalizedMode = std::min<uint8_t>(preferredRenderMode, static_cast<uint8_t>(EpubRenderMode::Safe));
-  if (bookReaderSettings.wordSpacing == normalizedSpacing &&
-      bookReaderSettings.repairParagraphIndent == static_cast<uint8_t>(repairParagraphIndent) &&
-      bookReaderSettings.preferredRenderMode == normalizedMode && !retryPreferredRender) {
+  const bool settingsChanged =
+      bookReaderSettings.wordSpacing != normalizedSpacing ||
+      bookReaderSettings.repairParagraphIndent != static_cast<uint8_t>(repairParagraphIndent) ||
+      bookReaderSettings.preferredRenderMode != normalizedMode;
+  if (!settingsChanged && !retryPreferredRender) return;
+
+  const EpubRenderMode preferredMode = static_cast<EpubRenderMode>(normalizedMode);
+  if (!settingsChanged && retryPreferredRender) {
+    if (preferredRenderTrialActive ||
+        !shouldStartPreferredRenderTrial(normalizedMode, activeRenderMode, settingsChanged)) {
+      return;
+    }
+    RenderLock lock(*this);
+    if (section) {
+      rememberCurrentContentOffset();
+      cachedSpineIndex = currentSpineIndex;
+      cachedChapterTotalPageCount = section->pageCount;
+      nextPageNumber = section->currentPage;
+    }
+    preferredRenderTrialRollbackMode = activeRenderMode;
+    preferredRenderTrialActive = true;
+    pendingWorkingFallback = UINT8_MAX;
+    activeRenderMode = preferredMode;
+    section.reset();
+    requestUpdate();
     return;
   }
 
@@ -1661,13 +1747,24 @@ void EpubReaderActivity::applyExtendedReaderSettings(const uint8_t wordSpacing, 
     cachedChapterTotalPageCount = section->pageCount;
     nextPageNumber = section->currentPage;
   }
+  const uint8_t oldPreferredMode = bookReaderSettings.preferredRenderMode;
+  const EpubRenderMode oldActiveMode = activeRenderMode;
   bookReaderSettings.wordSpacing = normalizedSpacing;
   bookReaderSettings.repairParagraphIndent = repairParagraphIndent ? 1 : 0;
   bookReaderSettings.preferredRenderMode = normalizedMode;
   bookReaderSettings.lastWorkingFallback = UINT8_MAX;
   bookReaderSettings.fallbackRenderSignature = 0;
-  pendingWorkingFallback = UINT8_MAX;
-  activeRenderMode = static_cast<EpubRenderMode>(normalizedMode);
+  preferredRenderTrialActive = false;
+  if (oldPreferredMode == normalizedMode && oldActiveMode > preferredMode) {
+    // A spacing/indent-only change invalidates the old cache signature, but it
+    // does not prove that the known working render mode became unsafe. Rebuild
+    // there first and persist its new signature only after a page renders.
+    activeRenderMode = oldActiveMode;
+    pendingWorkingFallback = static_cast<uint8_t>(oldActiveMode);
+  } else {
+    activeRenderMode = preferredMode;
+    pendingWorkingFallback = UINT8_MAX;
+  }
   saveBookReaderSettings();
   section.reset();
   requestUpdate();
@@ -1782,10 +1879,11 @@ void EpubReaderActivity::renderBook() {
     GUI.drawPopup(renderer, tr(STR_READER_SETTINGS_SAVE_FAILED));
   };
 
-  const auto showBuildError = [this]() {
-    renderer.clearScreen();
-    GUI.drawPopup(renderer, tr(STR_INDEX_FAILED));
-    automaticPageTurnActive = false;
+  const auto handleBuildFailure = [this]() {
+    const SectionBuildFailure failure = section ? section->lastBuildFailure() : SectionBuildFailure::InvalidContent;
+    if (recoverSectionBuildFailure()) return;
+    section.reset();
+    showSectionBuildError(failure);
   };
 
   if (currentSpineIndex < 0) currentSpineIndex = 0;
@@ -1821,10 +1919,18 @@ void EpubReaderActivity::renderBook() {
   const ReaderRenderSpec renderSpec = activeReaderRenderSpec(viewportWidth, viewportHeight);
 
   if (!section) {
+    partialRebuildPausedForLowMemory = false;
     const auto filepath = epub->getSpineItem(currentSpineIndex).href;
     LOG_DBG("ERS", "Loading file: %s, index: %d", filepath.c_str(), currentSpineIndex);
-    section = std::unique_ptr<Section>(new Section(epub, currentSpineIndex, renderer));
+    section = makeUniqueNoThrow<Section>(epub, currentSpineIndex, renderer);
     partialRebuildStartFailed = false;
+    if (!section) {
+      LOG_ERR("ERS", "OOM: Section for spine %d", currentSpineIndex);
+      if (!recoverSectionFailure(SectionBuildFailure::LowMemory)) {
+        showSectionBuildError(SectionBuildFailure::LowMemory);
+      }
+      return;
+    }
 
     const bool cacheLoaded = section->loadSectionFile(renderSpec);
     if (cacheLoaded) {
@@ -1863,9 +1969,7 @@ void EpubReaderActivity::renderBook() {
         if (!section->createSectionFile(renderSpec, popupFn)) {
           LOG_ERR("ERS", "Failed to persist page data to SD");
           loan.end();
-          if (retrySectionInSafeMode()) return;
-          section.reset();
-          showBuildError();
+          handleBuildFailure();
           return;
         }
         loan.end();
@@ -1904,9 +2008,7 @@ void EpubReaderActivity::renderBook() {
           if (!started) {
             LOG_ERR("ERS", "Failed to start section build");
             buildPopupPending = false;
-            if (retrySectionInSafeMode()) return;
-            section.reset();
-            showBuildError();
+            handleBuildFailure();
             return;
           }
           while (!section->isBuildComplete() &&
@@ -1919,9 +2021,7 @@ void EpubReaderActivity::renderBook() {
             if (!section->buildSomeMore(BUILD_PAGES_PER_CHUNK)) {
               LOG_ERR("ERS", "Failed during incremental section build");
               buildPopupPending = false;
-              if (retrySectionInSafeMode()) return;
-              section.reset();
-              showBuildError();
+              handleBuildFailure();
               return;
             }
           }
@@ -1983,17 +2083,13 @@ void EpubReaderActivity::renderBook() {
   while (section->isPartial() && section->currentPage >= static_cast<int>(section->pageCount)) {
     if (!section->isBuilding() && !section->startBuild(renderSpec)) {
       LOG_ERR("ERS", "Failed to start partial extension build");
-      if (retrySectionInSafeMode()) return;
-      section.reset();
-      showBuildError();
+      handleBuildFailure();
       return;
     }
     while (!section->isBuildComplete() && section->currentPage >= static_cast<int>(section->pageCount)) {
       if (!section->buildSomeMore(BUILD_PAGES_PER_CHUNK)) {
         LOG_ERR("ERS", "Failed during incremental section build");
-        if (retrySectionInSafeMode()) return;
-        section.reset();
-        showBuildError();
+        handleBuildFailure();
         return;
       }
     }
@@ -2002,9 +2098,7 @@ void EpubReaderActivity::renderBook() {
     while (!section->isBuildComplete() && section->currentPage >= static_cast<int>(section->pageCount)) {
       if (!section->buildSomeMore(BUILD_PAGES_PER_CHUNK)) {
         LOG_ERR("ERS", "Failed during incremental section build");
-        if (retrySectionInSafeMode()) return;
-        section.reset();
-        showBuildError();
+        handleBuildFailure();
         return;
       }
     }
@@ -2020,6 +2114,7 @@ void EpubReaderActivity::renderBook() {
   renderer.clearScreen();
 
   if (section->pageCount == 0) {
+    if (preferredRenderTrialActive && recoverSectionBuildFailure()) return;
     LOG_DBG("ERS", "No pages to render");
     renderer.drawCenteredText(UI_12_FONT_ID, 300, tr(STR_EMPTY_CHAPTER), true, EpdFontFamily::BOLD);
     renderStatusBar();
@@ -2046,6 +2141,17 @@ void EpubReaderActivity::renderBook() {
     if (!p) {
       LOG_ERR("ERS", "Failed to load page from SD - clearing section cache");
       automaticPageTurnActive = false;
+      if (preferredRenderTrialActive) {
+        // Loading is part of the quality trial's success criterion. Drop only
+        // the failed preferred-mode generation, then return to the still-known
+        // fallback instead of repeatedly rebuilding the trial mode.
+        section->abandonBuild();
+        section->clearCache();
+        pageLoadRetryCount = 0;
+        recoverSectionBuildFailure();
+        showPendingSyncSaveError();
+        return;
+      }
       const bool giveUp = ++pageLoadRetryCount > MAX_PAGE_LOAD_RETRIES;
       section->abandonBuild();
       section->clearCache();
@@ -3164,6 +3270,11 @@ void EpubReaderActivity::paintOverlayPopup() {
 }
 
 void EpubReaderActivity::applyReaderTextSettings() {
+  bookReaderSettings.lastWorkingFallback = UINT8_MAX;
+  bookReaderSettings.fallbackRenderSignature = 0;
+  preferredRenderTrialActive = false;
+  const EpubRenderMode preferredMode = static_cast<EpubRenderMode>(bookReaderSettings.preferredRenderMode);
+  pendingWorkingFallback = activeRenderMode > preferredMode ? static_cast<uint8_t>(activeRenderMode) : UINT8_MAX;
   saveBookReaderSettings();
   // (Re)load or unload the selected SD-card font for the current family/size.
   // The reader otherwise only loads SD fonts on book open, so without this an

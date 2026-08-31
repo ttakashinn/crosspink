@@ -28,6 +28,15 @@ class Epub;
 #define MAX_WORD_SIZE 200
 
 class ChapterHtmlSlimParser {
+ public:
+  enum class Failure : uint8_t {
+    None,
+    LowMemory,
+    Io,
+    InvalidContent,
+  };
+
+ private:
   std::shared_ptr<Epub> epub;
   const std::string& filepath;
   GfxRenderer& renderer;
@@ -166,7 +175,7 @@ class ChapterHtmlSlimParser {
   XML_Parser xmlParser_ = nullptr;
   HalFile parseFile_;
   uint32_t parseStartTime_ = 0;
-  bool lowMemoryFailure_ = false;
+  Failure failure_ = Failure::None;
   bool attemptedLowMemoryFontCacheRelease_ = false;
 
   void updateEffectiveInlineStyle();
@@ -253,9 +262,9 @@ class ChapterHtmlSlimParser {
   enum class ParseStatus { More, Done, Error };
   bool beginParse();
   ParseStatus parseStep();
-  bool finishParse();  // flush the trailing page and tear down; returns true
+  bool finishParse();  // flush the trailing page and tear down; false when final serialization fails
   void abortParse();   // tear down without flushing (error / abandon)
-  bool failedForLowMemory() const { return lowMemoryFailure_; }
+  Failure failure() const { return failure_; }
 
   void addLineToPage(std::shared_ptr<TextBlock> line, uint32_t visibleOffset, int16_t xOffsetOverride = -1);
   const std::vector<std::pair<std::string, uint16_t>>& getAnchors() const { return anchorData; }

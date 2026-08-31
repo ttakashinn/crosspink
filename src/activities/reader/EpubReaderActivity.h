@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Epub.h>
+#include <Epub/EpubBuildRecovery.h>
 #include <Epub/FootnoteEntry.h>
 #include <Epub/PageLink.h>
 #include <Epub/Section.h>
@@ -127,8 +128,11 @@ class EpubReaderActivity final : public ReaderActivity {
   uint16_t buildViewportWidth = 0;
   uint16_t buildViewportHeight = 0;
   bool partialRebuildStartFailed = false;
+  bool partialRebuildPausedForLowMemory = false;
   EpubRenderMode activeRenderMode = EpubRenderMode::Standard;
   uint8_t pendingWorkingFallback = UINT8_MAX;
+  bool preferredRenderTrialActive = false;
+  EpubRenderMode preferredRenderTrialRollbackMode = EpubRenderMode::Standard;
 
   int lastSavedSpineIndex = -1;
   int lastSavedPage = -1;
@@ -141,13 +145,12 @@ class EpubReaderActivity final : public ReaderActivity {
 
   static constexpr int BUILD_PAGES_PER_CHUNK = 8;
   static constexpr int BACKGROUND_BUILD_PAGES_PER_TICK = 2;
-  // Match the parser's text-layout floor so background work pauses before it
-  // enters a build that the parser must immediately abandon as unsafe.
-  static constexpr size_t BACKGROUND_BUILD_MIN_FREE_HEAP = 44 * 1024;
-  static constexpr size_t BACKGROUND_BUILD_MIN_MAX_ALLOC = 32 * 1024;
+  static constexpr size_t SD_FONT_PREWARM_MIN_MAX_ALLOC = 32 * 1024;
   bool buildTickHeapGate();
   ReaderRenderSpec activeReaderRenderSpec(uint16_t viewportWidth, uint16_t viewportHeight) const;
-  bool retrySectionInSafeMode();
+  bool recoverSectionBuildFailure();
+  bool recoverSectionFailure(SectionBuildFailure failure);
+  void showSectionBuildError(SectionBuildFailure failure);
   void rememberRenderedFallback();
   bool buildHeapPaused = false;
   static constexpr size_t RENDER_MIN_FREE_HEAP = 24 * 1024;

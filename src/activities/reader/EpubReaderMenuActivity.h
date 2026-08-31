@@ -82,6 +82,9 @@ class EpubReaderMenuActivity final : public UiTabListActivity {
   bool handleButtons() override;
   // Header via GUI.drawHeader inside the safe area for the battery indicator.
   void drawChrome() override;
+  // Confirm advances tabs while the tab band has focus, so name that target
+  // instead of leaving the generic "Select" hint on screen.
+  void drawFooter() override;
 
   void closeCancelled();
   void switchTab(int direction);

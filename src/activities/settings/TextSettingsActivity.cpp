@@ -73,9 +73,10 @@ void TextSettingsActivity::onEnter() {
   UiTabListActivity::onEnter();
 
   metrics_ = UITheme::getInstance().getMetrics();
-  afterHeader = metrics_.topPadding + metrics_.headerHeight + metrics_.verticalSpacing;
-  bottomReserved = metrics_.buttonHintsHeight + metrics_.verticalSpacing;
-  usableHeight = renderer.getScreenHeight() - afterHeader - bottomReserved;
+  safeArea_ = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
+  afterHeader = safeArea_.y + metrics_.topPadding + metrics_.headerHeight + metrics_.verticalSpacing;
+  bottomReserved = renderer.getScreenHeight() - (safeArea_.y + safeArea_.height) + metrics_.verticalSpacing;
+  usableHeight = safeArea_.y + safeArea_.height - metrics_.verticalSpacing - afterHeader;
   previewHeight = usableHeight * metrics_.previewHeightPercent / 100;
 
   fonts_.clear();
@@ -209,8 +210,9 @@ void TextSettingsActivity::buildScreen(UiScreen& screen) {
   // directly) and above the caption band + button hints.
   const int tabTop = afterHeader + previewHeight;
   const int captionHeight = renderer.getTextHeight(UI_10_FONT_ID) + metrics_.verticalSpacing;
-  screen.setContentMargin(
-      fui::Insets{static_cast<int16_t>(tabTop), 0, static_cast<int16_t>(bottomReserved + captionHeight), 0});
+  screen.setContentMargin(fui::Insets{
+      static_cast<int16_t>(tabTop), static_cast<int16_t>(renderer.getScreenWidth() - (safeArea_.x + safeArea_.width)),
+      static_cast<int16_t>(bottomReserved + captionHeight), static_cast<int16_t>(safeArea_.x)});
 
   buildTabBar(screen);
 
@@ -274,9 +276,8 @@ void TextSettingsActivity::render(RenderLock&&) {
 
   renderer.clearScreen();
 
-  const auto pageWidth = renderer.getScreenWidth();
-
-  GUI.drawHeader(renderer, Rect{0, metrics_.topPadding, pageWidth, metrics_.headerHeight}, tr(STR_TEXT_SETTINGS));
+  GUI.drawHeader(renderer, Rect{safeArea_.x, safeArea_.y + metrics_.topPadding, safeArea_.width, metrics_.headerHeight},
+                 tr(STR_TEXT_SETTINGS));
 
   const char* familyName = (currentFamilyIndex_ >= 0 && currentFamilyIndex_ < static_cast<int>(fonts_.size()))
                                ? fonts_[currentFamilyIndex_].name.c_str()
@@ -284,8 +285,8 @@ void TextSettingsActivity::render(RenderLock&&) {
   const char* sizeName = (currentSizeIndex_ >= 0 && currentSizeIndex_ < static_cast<int>(sizes_.size()))
                              ? sizes_[currentSizeIndex_].name.c_str()
                              : "";
-  textsettings::renderPreview(renderer, previewLayout_, metrics_.previewPadding, metrics_.verticalSpacing, afterHeader,
-                              previewHeight, familyName, sizeName);
+  textsettings::renderPreview(renderer, previewLayout_, safeArea_.x, safeArea_.width, metrics_.previewPadding,
+                              metrics_.verticalSpacing, afterHeader, previewHeight, familyName, sizeName);
 
   // Tab bar + active tab's list draw inside the screen builder.
   renderUi();
@@ -293,7 +294,7 @@ void TextSettingsActivity::render(RenderLock&&) {
   if (focusedRowHasNoPreview()) {
     const int captionHeight = renderer.getTextHeight(UI_10_FONT_ID) + metrics_.verticalSpacing;
     const int capY = afterHeader + usableHeight - captionHeight + metrics_.verticalSpacing;
-    renderer.drawText(UI_10_FONT_ID, metrics_.previewPadding, capY, tr(STR_NOT_IN_PREVIEW));
+    renderer.drawText(UI_10_FONT_ID, safeArea_.x + metrics_.previewPadding, capY, tr(STR_NOT_IN_PREVIEW));
   }
 
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabelText(), tr(STR_DIR_UP), tr(STR_DIR_DOWN));

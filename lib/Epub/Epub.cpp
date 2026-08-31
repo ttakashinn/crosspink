@@ -257,6 +257,13 @@ void Epub::discoverCssFilesFromZip() {
   }
 }
 
+void Epub::releaseCssFileList() {
+  // Stylesheet paths are one-shot cache-build scratch. Generator-produced
+  // EPUBs can contain hundreds of them; keeping the vector resident steals
+  // contiguous heap from the first chapter index for the rest of the session.
+  std::vector<std::string>().swap(cssFiles);
+}
+
 CssParser::ParseResult Epub::parseCssFiles(const CssParser::CacheStatus existingCacheStatus) const {
   // Maximum CSS file size we'll attempt to parse (uncompressed)
   // Larger files risk memory exhaustion on ESP32
@@ -436,9 +443,18 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss) {
   LOG_DBG("EBP", "Loading ePub: %s", filepath.c_str());
 
   // Initialize spine/TOC cache
-  bookMetadataCache.reset(new BookMetadataCache(cachePath, filepath));
+  bookMetadataCache = makeUniqueNoThrow<BookMetadataCache>(cachePath, filepath);
+  if (!bookMetadataCache) {
+    LOG_ERR("EBP", "OOM: book metadata cache");
+    return false;
+  }
   // Always create CssParser - needed for inline style parsing even without CSS files
-  cssParser.reset(new CssParser(cachePath));
+  cssParser = makeUniqueNoThrow<CssParser>(cachePath);
+  if (!cssParser) {
+    LOG_ERR("EBP", "OOM: CSS parser");
+    bookMetadataCache.reset();
+    return false;
+  }
 
   // Try to load existing cache first
   if (bookMetadataCache->load()) {
@@ -468,8 +484,13 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss) {
           bookMetadataCache.reset();
           cssParseResult = parseCssFiles(cacheStatus);
         }
+        releaseCssFileList();
         bookMetadataCache.reset();
-        bookMetadataCache.reset(new BookMetadataCache(cachePath, filepath));
+        bookMetadataCache = makeUniqueNoThrow<BookMetadataCache>(cachePath, filepath);
+        if (!bookMetadataCache) {
+          LOG_ERR("EBP", "OOM: book metadata cache after CSS rebuild");
+          return false;
+        }
         if (!bookMetadataCache->load()) {
           LOG_ERR("EBP", "Failed to reload cache after CSS rebuild");
           return false;
@@ -503,8 +524,12 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss) {
     cssParser.reset();
     clearCache();
     setupCacheDir();
-    bookMetadataCache.reset(new BookMetadataCache(cachePath, filepath));
-    cssParser.reset(new CssParser(cachePath));
+    bookMetadataCache = makeUniqueNoThrow<BookMetadataCache>(cachePath, filepath);
+    cssParser = makeUniqueNoThrow<CssParser>(cachePath);
+    if (!bookMetadataCache || !cssParser) {
+      LOG_ERR("EBP", "OOM: EPUB cache objects after source replacement");
+      return false;
+    }
   }
 
   // If we didn't load from cache above and we aren't allowed to build, fail now
@@ -600,9 +625,14 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss) {
       Storage.removeDir((cachePath + "/sections").c_str());
     }
   }
+  releaseCssFileList();
 
   // Reload the cache from disk so it's in the correct state
-  bookMetadataCache.reset(new BookMetadataCache(cachePath, filepath));
+  bookMetadataCache = makeUniqueNoThrow<BookMetadataCache>(cachePath, filepath);
+  if (!bookMetadataCache) {
+    LOG_ERR("EBP", "OOM: book metadata cache reload");
+    return false;
+  }
   if (!bookMetadataCache->load()) {
     LOG_ERR("EBP", "Failed to reload cache after writing");
     return false;
@@ -877,14 +907,35 @@ uint8_t* Epub::readItemContentsToBytes(const std::string& itemHref, size_t* size
 }
 
 bool Epub::readItemContentsToStream(const std::string& itemHref, Print& out, const size_t chunkSize,
-                                    const bool allowEarlyStop) const {
+                                    const bool allowEarlyStop, EpubItemReadFailure* failure) const {
+  if (failure) *failure = EpubItemReadFailure::None;
   if (itemHref.empty()) {
     LOG_DBG("EBP", "Failed to read item, empty href");
+    if (failure) *failure = EpubItemReadFailure::InvalidContent;
     return false;
   }
 
   const std::string path = FsHelpers::normalisePath(itemHref);
-  return ZipFile(filepath).readFileToStream(path.c_str(), out, chunkSize, allowEarlyStop);
+  ZipFile::StreamReadFailure zipFailure = ZipFile::StreamReadFailure::None;
+  const bool read = ZipFile(filepath).readFileToStream(path.c_str(), out, chunkSize, allowEarlyStop, &zipFailure);
+  if (failure) {
+    switch (zipFailure) {
+      case ZipFile::StreamReadFailure::LowMemory:
+        *failure = EpubItemReadFailure::LowMemory;
+        break;
+      case ZipFile::StreamReadFailure::Io:
+        *failure = EpubItemReadFailure::Io;
+        break;
+      case ZipFile::StreamReadFailure::InvalidContent:
+        *failure = EpubItemReadFailure::InvalidContent;
+        break;
+      case ZipFile::StreamReadFailure::None:
+      default:
+        *failure = EpubItemReadFailure::None;
+        break;
+    }
+  }
+  return read;
 }
 
 bool Epub::extractItemToFile(const std::string& itemHref, const std::string& destPath) const {

@@ -20,14 +20,14 @@ Mỗi lần chạy là một process riêng để settings, global state và cac
 - `x3-default`: portrait `528 × 792`, cùng render settings để khóa khác biệt pagination do viewport.
 - `x4-no-text-aa`: portrait `480 × 800`, text AA tắt; ảnh vẫn đi qua grayscale plane.
 - `x4-sd-font`: portrait `480 × 800`, dùng fixture `.cpfont` v4 `CrossPointTest` có đủ 4 style và Latin mở rộng/combining marks cho tiếng Việt.
-- `x4-safe-fallback`: portrait `480 × 800`, fault-injection buộc lần dựng Standard báo thiếu bộ nhớ để kiểm tra retry Safe và namespace cache riêng.
+- `x4-safe-fallback`: portrait `480 × 800`, fault-injection buộc Standard và Simplified báo thiếu bộ nhớ để kiểm tra chuỗi retry tới Safe và namespace cache riêng.
 - `x4-focus-reading`: portrait `480 × 800`, bật Focus Reading để khóa vị trí split đậm/thường cho tiếng Việt và thứ tự 2 run trong từ RTL.
 - `x4-book-style`: portrait `480 × 800`, dùng lựa chọn căn đoạn “theo kiểu của sách” và tắt khoảng cách đoạn bổ sung để kiểm tra trực tiếp `text-align`/`text-indent` từ CSS thay vì bị thiết lập của người dùng ghi đè.
 - `smoke`: 3 checkpoint tiếng Việt, bảng/danh sách và ảnh trên X4.
 - `full`: 26 checkpoint trên 3 profile; checkpoint stress chạy cả cold và warm, tổng cộng 81 case. 3 checkpoint ma trận tiếng Việt khóa toàn bộ nguyên âm/dấu, `Đ/đ`, thứ tự combining mark và từ ghép; `css-inheritance-important-continuation` khóa trang chứa các trường hợp reset kiểu chữ và `!important`; cặp checkpoint `css-layout-spacing` khóa căn lề, thụt đầu dòng và inset lồng nhưng vẫn giữ vùng chữ đọc được; cặp checkpoint `css-soft-flush` khóa indent ở đầu đoạn và ngăn indent lặp lại sau nhiều lần gom parser; `unicode-line-breaks` khóa ngắt dòng ở U+200B và chuỗi tiếng Việt dài; `table-continuation` khóa trang ngay sau anchor bảng; `publisher-page-list` khóa nhãn trang nhà xuất bản khi marker nằm trong `span` rỗng; 5 checkpoint ảnh bổ sung khóa từng đường PNG alpha, line art, JPEG/ảnh rộng, ảnh cao và chuyển ảnh → text.
 - `css`: 7 checkpoint trên profile `x4-book-style`, khóa kế thừa/`!important`, cascade, căn lề theo CSS, inset lồng và đoạn tiếng Việt đi qua nhiều lần soft flush.
 - `font`: 6 checkpoint trên profile SD font; checkpoint stress chạy cả cold và warm, tổng cộng 7 case. Fixture được chép vào `/.fonts/CrossPointTest/` trong SD root tạm để đi qua đúng loader và cache font của firmware; 2 trang ma trận dấu khóa coverage tiếng Việt ở cả chữ thường và chữ hoa.
-- `safe`: checkpoint stress cold/warm, tổng cộng 2 case. Log phải có lần Standard thất bại có phân loại, lần Safe thành công; warm run phải nạp được cache `.safe.bin` thay vì dựng lại.
+- `safe`: checkpoint stress cold/warm, tổng cộng 2 case. Log phải có Standard và Simplified thất bại do thiếu bộ nhớ rồi Safe thành công; warm run phải nạp được cache `.safe.bin` thay vì dựng lại.
 - `focus`: checkpoint typography tiếng Việt và mixed LTR/RTL trên profile Focus Reading, tổng cộng 2 case.
 
 ## Review regression

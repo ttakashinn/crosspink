@@ -138,6 +138,7 @@ constexpr uint32_t SILENT_REBOOT_MAGIC = 0xC1EAB007;
 constexpr uint32_t SILENT_REBOOT_TARGET_HOME = 0;
 constexpr uint32_t SILENT_REBOOT_TARGET_READER = 1;
 constexpr uint32_t SILENT_REBOOT_TARGET_VANNHANSO_SETTINGS = 2;
+constexpr uint32_t SILENT_REBOOT_TARGET_READER_LOW_MEMORY = 3;
 
 // How the device is coming back to life, resolved once at boot. Both resume
 // flows suppress the splash and leave the panel holding its pre-boot frame; a
@@ -155,6 +156,9 @@ enum class BootResume : uint8_t {
 // device back up against the user's sleep gesture. Never cleared:
 // startDeepSleep() does not return, so a set latch only ends at the wakeup reset.
 static bool deepSleepInProgress = false;
+static bool bootedFromLowMemoryRestart = false;
+
+bool bootWasLowMemoryRestart() { return bootedFromLowMemoryRestart; }
 
 void vanNhanSoUpdateFinishedBeforeSleep(const bool continueSleeping) {
   vanNhanSoUpdateCoordinator.markSleepUpdateFinished(continueSleeping);
@@ -201,6 +205,19 @@ void silentRestartToReader() {
   silentRebootTarget = SILENT_REBOOT_TARGET_READER;
   silentRebootMagic = SILENT_REBOOT_MAGIC;
   LOG_DBG("MAIN", "Silent restart (target=reader)");
+  GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+  delay(50);
+  ESP.restart();
+}
+
+void silentRestartToReaderForLowMemory() {
+  if (deepSleepInProgress) return;
+  // Unlike Wi-Fi teardown, this path exists specifically to defragment the
+  // heap. Returning in place on a touch board would immediately re-enter the
+  // same failed Safe-mode build.
+  silentRebootTarget = SILENT_REBOOT_TARGET_READER_LOW_MEMORY;
+  silentRebootMagic = SILENT_REBOOT_MAGIC;
+  LOG_DBG("MAIN", "Low-memory restart (target=reader)");
   GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
   delay(50);
   ESP.restart();
@@ -392,8 +409,11 @@ void setup() {
   // Read-and-clear so a panic later in setup() doesn't loop into silent reboot.
   // Bound the target range too — RTC_NOINIT memory is uninitialized on cold boot.
   const bool isSilentReboot = (silentRebootMagic == SILENT_REBOOT_MAGIC);
-  const uint32_t snapshotTarget =
-      (isSilentReboot && silentRebootTarget <= SILENT_REBOOT_TARGET_VANNHANSO_SETTINGS) ? silentRebootTarget : 0;
+  bootedFromLowMemoryRestart = isSilentReboot && silentRebootTarget == SILENT_REBOOT_TARGET_READER_LOW_MEMORY;
+  const uint32_t snapshotTarget = bootedFromLowMemoryRestart ? SILENT_REBOOT_TARGET_READER
+                                  : (isSilentReboot && silentRebootTarget <= SILENT_REBOOT_TARGET_VANNHANSO_SETTINGS)
+                                      ? silentRebootTarget
+                                      : 0;
   silentRebootMagic = 0;
   silentRebootTarget = 0;
 

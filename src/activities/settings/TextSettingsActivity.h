@@ -103,4 +103,5 @@ class TextSettingsActivity final : public UiTabListActivity {
   int bottomReserved = 0;
   int usableHeight = 0;
   int previewHeight = 0;
+  Rect safeArea_{0, 0, 0, 0};
 };

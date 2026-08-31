@@ -3,10 +3,10 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include <vector>
 
 #include "Epub.h"
 #include "ReaderRenderSpec.h"
+#include "SectionBuildFailure.h"
 
 class Page;
 class GfxRenderer;
@@ -21,7 +21,7 @@ class Section {
   std::string filePath;
   HalFile file;
 
-  void writeSectionFileHeader(const ReaderRenderSpec& spec);
+  bool writeSectionFileHeader(const ReaderRenderSpec& spec);
   void selectSectionFile(const ReaderRenderSpec& spec);
   uint32_t onPageComplete(std::unique_ptr<Page> page);
 
@@ -38,13 +38,20 @@ class Section {
   // and the in-RAM page-offset table.
   struct BuildContext {
     std::unique_ptr<ChapterHtmlSlimParser> parser;
-    std::vector<PageLutEntry> lut;
+    // A fallible array avoids std::vector growth in the parser callback. On
+    // ESP32-C3, a failed vector reallocation can abort the process before the
+    // reader gets a chance to switch render modes.
+    std::unique_ptr<PageLutEntry[]> lut;
+    uint16_t lutCapacity = 0;
+    uint16_t lutCount = 0;
     std::string parsePath;
     std::string contentBase;
     std::string imageBasePath;
     std::string htmlPath;
     std::string tmpHtmlPath;
     bool reusedHtml = false;
+    bool pageWriteFailed = false;
+    bool lutAllocationFailed = false;
     CssParser* cssParser = nullptr;
     // HTML byte progress, for estimating the section's total page count while it's still building.
     uint32_t bytesConsumed = 0;
@@ -57,8 +64,8 @@ class Section {
   };
   std::unique_ptr<BuildContext> build_;
   bool buildComplete_ = false;
-  bool lastBuildFailedLowMemory_ = false;
-  // Pages laid out by the active build (== build_->lut.size()). Distinct from pageCount,
+  SectionBuildFailure lastBuildFailure_ = SectionBuildFailure::None;
+  // Pages laid out by the active build (== build_->lutCount). Distinct from pageCount,
   // which is the pages *available to read* and also counts a loaded partial file's pages.
   uint16_t builtPageCount_ = 0;
   // A partial section file (suspended build from a previous session) is loaded at filePath.
@@ -69,12 +76,16 @@ class Section {
   uint32_t partialBytesConsumed_ = 0;
   uint32_t partialTotalBytes_ = 0;
   bool finalizeBuild();
+  void failBuild(SectionBuildFailure failure);
+  void discardBuild(bool preserveExistingCache);
   // Write the LUTs/anchor map (and, for a partial, the watermark trailer), patch the
   // header, stamp the version byte, and swap the tmp .bin over filePath.
   bool commitBuildFile(uint8_t version, uint32_t bytesConsumed, uint32_t totalBytes);
   // Builds write here and are swapped over filePath only on commit, so a prior
   // partial/finalized file stays readable while a rebuild is in progress.
   std::string binTmpPath() const { return filePath + ".part"; }
+  std::string binBackupPath() const { return filePath + ".bak"; }
+  void recoverSectionBackup() const;
   std::unique_ptr<Page> loadPageAt(int page) const;
   // Read a page already laid out by the in-progress build (page < build LUT size), from
   // the partially-written tmp .bin without disturbing the build's write cursor.
@@ -103,7 +114,7 @@ class Section {
   bool buildSomeMore(int maxPages);
   bool isBuilding() const { return static_cast<bool>(build_); }
   bool isBuildComplete() const { return buildComplete_; }
-  bool lastBuildFailedLowMemory() const { return lastBuildFailedLowMemory_; }
+  SectionBuildFailure lastBuildFailure() const { return lastBuildFailure_; }
   // Best-known total page count: the exact pageCount once finalized, or a smoothed byte-based
   // estimate (pages so far scaled by totalBytes/bytesConsumed, damped by an EMA) while a giant spine
   // is still building, so "page X of Y" / progress don't read off the small build watermark.
@@ -168,6 +179,6 @@ class Section {
   // False with no build running -- there is nothing left to wait for, so the on-disk
   // cache answers directly.
   bool buildReachedVisibleTextOffset(uint32_t offset) const {
-    return build_ && !build_->lut.empty() && offset <= build_->lut.back().visibleTextOffset;
+    return build_ && build_->lutCount > 0 && offset <= build_->lut[build_->lutCount - 1].visibleTextOffset;
   }
 };

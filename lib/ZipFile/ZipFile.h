@@ -8,6 +8,13 @@
 
 class ZipFile {
  public:
+  enum class StreamReadFailure : uint8_t {
+    None,
+    LowMemory,
+    Io,
+    InvalidContent,
+  };
+
   struct FileStatSlim {
     uint16_t method;             // Compression method
     uint32_t compressedSize;     // Compressed size
@@ -72,7 +79,8 @@ class ZipFile {
   // allowEarlyStop: a short write from `out` is treated as the sink asking to
   // stop (returns true) instead of a write failure — used by header probes
   // that only need the first bytes of an entry.
-  bool readFileToStream(const char* filename, Print& out, size_t chunkSize, bool allowEarlyStop = false);
+  bool readFileToStream(const char* filename, Print& out, size_t chunkSize, bool allowEarlyStop = false,
+                        StreamReadFailure* failure = nullptr);
 
   template <typename F>
   bool enumerateFilePaths(F&& callback) {

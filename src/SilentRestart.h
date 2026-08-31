@@ -4,9 +4,11 @@
 // skips the boot splash and routes straight to a destination. Used to clear
 // heap fragmentation accumulated during a wifi session.
 
-void silentRestart();                     // home screen
-void silentRestartToReader();             // currently-open EPUB (APP_STATE.openEpubPath)
-void silentRestartToVanNhanSoSettings();  // Văn Nhân Số settings
+void silentRestart();                      // home screen
+void silentRestartToReader();              // currently-open EPUB (APP_STATE.openEpubPath)
+void silentRestartToReaderForLowMemory();  // force heap-defrag reboot, including touch boards
+void silentRestartToVanNhanSoSettings();   // Văn Nhân Số settings
+bool bootWasLowMemoryRestart();
 
 // Reboots immediately after an activity releases exclusive raw storage. The
 // RTC target ensures setup() lands on Home instead of resuming a reader.
