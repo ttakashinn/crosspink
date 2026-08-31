@@ -1,8 +1,11 @@
 <svg width="120" height="120" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <title>CrossPink crossed-page mark</title>
+  <title>CrossPink cross and open-book mark</title>
   <rect width="120" height="120" fill="white"/>
-  <path d="M 18 27 L 33 18 L 102 87 L 87 102 Z" fill="black"/>
-  <path d="M 87 18 L 102 27 L 33 102 L 18 87 Z" fill="black"/>
-  <path d="M 20 103 L 58 111 L 58 116 L 20 108 Z" fill="black"/>
-  <path d="M 62 111 L 100 103 L 100 108 L 62 116 Z" fill="black"/>
+  <rect x="48" y="16" width="24" height="60" fill="black"/>
+  <rect x="26" y="38" width="68" height="24" fill="black"/>
+  <rect x="22" y="80" width="36" height="24" fill="black"/>
+  <rect x="62" y="80" width="36" height="24" fill="black"/>
+  <rect x="57" y="78" width="6" height="28" fill="black"/>
+  <rect x="27" y="85" width="27" height="15" fill="white"/>
+  <rect x="66" y="85" width="27" height="15" fill="white"/>
 </svg>

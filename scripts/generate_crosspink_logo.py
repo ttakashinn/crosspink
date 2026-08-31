@@ -2,9 +2,8 @@
 """Generate CrossPink's 120 px monochrome boot logo and source assets.
 
 The firmware uses a packed 1-bit header; the matching SVG and PNG are kept for
-documentation and the user-guide EPUB.  The mark is intentionally built from
-hard-edged page ribbons: it stays recognisable on a dithered e-ink panel and
-does not rely on pink colour being available.
+documentation and the user-guide EPUB.  The mark uses only orthogonal edges so
+it remains clean on monochrome e-ink displays without anti-aliasing.
 """
 
 from __future__ import annotations
@@ -18,46 +17,50 @@ WIDTH = HEIGHT = 120
 ROOT = Path(__file__).resolve().parents[1]
 IMAGES = ROOT / "src" / "images"
 
-# Two crossed page ribbons, followed by a subtle two-page baseline. Coordinates
-# are deliberately integral so the 1-bit firmware asset has crisp, stable edges.
-POLYGONS = (
-    ((18, 27), (33, 18), (102, 87), (87, 102)),
-    ((87, 18), (102, 27), (33, 102), (18, 87)),
-    ((20, 103), (58, 111), (58, 116), (20, 108)),
-    ((62, 111), (100, 103), (100, 108), (62, 116)),
+# A square-ended cross over an open book. The four book-page borders are
+# deliberately rectangular: every edge maps exactly to the 1-bit pixel grid.
+# Rectangles use half-open coordinates: (left, top, right, bottom).
+RECTANGLES = (
+    (48, 16, 72, 76),  # vertical cross stroke
+    (26, 38, 94, 62),  # horizontal cross stroke
+    (22, 80, 58, 104),  # left page outer border
+    (62, 80, 98, 104),  # right page outer border
+    (27, 85, 54, 100),  # left page inset, erased below
+    (66, 85, 93, 100),  # right page inset, erased below
+    (57, 78, 63, 106),  # book spine
 )
 
-
-def contains(polygon: tuple[tuple[int, int], ...], x: float, y: float) -> bool:
-    """Return whether the pixel centre lies inside a polygon."""
-    inside = False
-    previous_x, previous_y = polygon[-1]
-    for current_x, current_y in polygon:
-        crosses = (current_y > y) != (previous_y > y)
-        if crosses and x < (previous_x - current_x) * (y - current_y) / (previous_y - current_y) + current_x:
-            inside = not inside
-        previous_x, previous_y = current_x, current_y
-    return inside
+PAGE_INSETS = RECTANGLES[4:6]
 
 
 def pixels() -> list[list[bool]]:
-    return [
-        [any(contains(polygon, x + 0.5, y + 0.5) for polygon in POLYGONS) for x in range(WIDTH)]
-        for y in range(HEIGHT)
-    ]
+    bitmap = [[False] * WIDTH for _ in range(HEIGHT)]
+    for left, top, right, bottom in RECTANGLES[:4] + RECTANGLES[6:]:
+        for y in range(top, bottom):
+            for x in range(left, right):
+                bitmap[y][x] = True
+    for left, top, right, bottom in PAGE_INSETS:
+        for y in range(top, bottom):
+            for x in range(left, right):
+                bitmap[y][x] = False
+    return bitmap
 
 
 def write_svg() -> None:
-    paths = "\n".join(
-        "  <path d=\"M " + " L ".join(f"{x} {y}" for x, y in polygon) + " Z\" fill=\"black\"/>"
-        for polygon in POLYGONS
+    outer = "\n".join(
+        f'  <rect x="{left}" y="{top}" width="{right - left}" height="{bottom - top}" fill="black"/>'
+        for left, top, right, bottom in RECTANGLES[:4] + RECTANGLES[6:]
+    )
+    insets = "\n".join(
+        f'  <rect x="{left}" y="{top}" width="{right - left}" height="{bottom - top}" fill="white"/>'
+        for left, top, right, bottom in PAGE_INSETS
     )
     (IMAGES / "logo.svg").write_text(
         "<svg width=\"120\" height=\"120\" viewBox=\"0 0 120 120\" fill=\"none\" "
         "xmlns=\"http://www.w3.org/2000/svg\">\n"
-        "  <title>CrossPink crossed-page mark</title>\n"
+        "  <title>CrossPink cross and open-book mark</title>\n"
         "  <rect width=\"120\" height=\"120\" fill=\"white\"/>\n"
-        f"{paths}\n"
+        f"{outer}\n{insets}\n"
         "</svg>\n",
         encoding="utf-8",
     )
@@ -85,7 +88,7 @@ def write_header(bitmap: list[list[bool]]) -> None:
         "#pragma once",
         "#include <cstdint>",
         "",
-        "// CrossPink crossed-page mark, 120x120 px, packed 1-bit MSB-first.",
+        "// CrossPink cross and open-book mark, 120x120 px, packed 1-bit MSB-first.",
         "static const uint8_t Logo120[] = {",
     ]
     for row in bitmap:
