@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <iterator>
 
 #include "DictZip.h"
 #include "DictionaryQuery.h"
@@ -353,8 +354,10 @@ bool Dictionary::openSynonyms(LookupSession& session) {
 // Shared by locate() (.qidx over .idx) and locateSynonym() (.sidx over .syn):
 // both sidecars have the same layout and both sources are sorted word-first, so
 // the descent is identical and only the file pair differs.
-uint32_t Dictionary::bisectSamples(HalFile& sidecar, HalFile& source, uint32_t sampleCount, const char* target) {
+uint32_t Dictionary::bisectSamples(HalFile& sidecar, HalFile& source, const uint32_t sampleCount, const char* target,
+                                   uint32_t* sampleIndexOut) {
   uint32_t startByte = 0;
+  if (sampleIndexOut) *sampleIndexOut = 0;
   if (sampleCount == 0) return startByte;  // no usable sidecar: scan from the start
 
   uint32_t lo = 0;
@@ -374,6 +377,7 @@ uint32_t Dictionary::bisectSamples(HalFile& sidecar, HalFile& source, uint32_t s
     }
   }
   readSampleOffset(sidecar, lo, &startByte);
+  if (sampleIndexOut) *sampleIndexOut = lo;
   return startByte;
 }
 
@@ -656,4 +660,55 @@ bool Dictionary::lookup(const char* word, std::string& definitionOut, std::strin
     return true;
   }
   return false;
+}
+
+bool Dictionary::suggest(const char* word, std::vector<std::string>& suggestionsOut, const size_t maxSuggestions) {
+  suggestionsOut.clear();
+  if (maxSuggestions == 0 || !isOpen()) return true;
+  const std::string cleaned = cleanWord(word);
+  if (cleaned.empty()) return true;
+
+  LookupSession session;
+  if (!openSession(session)) return false;
+  uint32_t sampleIndex = 0;
+  uint32_t startByte = bisectSamples(session.qidx, session.idx, session.sampleCount, cleaned.c_str(), &sampleIndex);
+  // Include one block before the insertion point. This supplies plausible
+  // candidates on both sides without retaining a reverse index in RAM.
+  if (sampleIndex > 0 && readSampleOffset(session.qidx, sampleIndex - 1, &startByte)) --sampleIndex;
+  if (!session.idx.seekSet(startByte)) return false;
+
+  struct Candidate {
+    uint8_t distance;
+    std::string word;
+  };
+  std::vector<Candidate> best;
+  best.reserve(maxSuggestions);
+  const uint8_t maxDistance = cleaned.size() <= 5 ? 1 : (cleaned.size() <= 14 ? 2 : 3);
+  const uint32_t scanLimit = session.sampleCount > 0 ? SAMPLE_INTERVAL * 3 : SAMPLE_INTERVAL * 2;
+  uint32_t scanned = 0;
+  while (scanned++ < scanLimit && static_cast<uint32_t>(session.idx.position()) < session.idxSize) {
+    const int wordLength = readWordInto(session.idx, wordBuf, sizeof(wordBuf));
+    if (wordLength < 0) break;
+    uint8_t suffix[8];
+    if (session.idx.read(suffix, sizeof(suffix)) != static_cast<int>(sizeof(suffix))) break;
+    if (wordLength == 0 || StringUtils::asciiCaseCmp(wordBuf, cleaned.c_str()) == 0) continue;
+    const uint8_t distance = DictionaryQuery::editDistance(cleaned, std::string_view(wordBuf, wordLength), maxDistance);
+    if (distance > maxDistance) continue;
+    const auto duplicate = std::find_if(best.begin(), best.end(), [this](const Candidate& candidate) {
+      return StringUtils::asciiCaseCmp(candidate.word.c_str(), wordBuf) == 0;
+    });
+    if (duplicate != best.end()) continue;
+    Candidate candidate{distance, std::string(wordBuf, static_cast<size_t>(wordLength))};
+    const auto position =
+        std::lower_bound(best.begin(), best.end(), candidate, [](const Candidate& a, const Candidate& b) {
+          if (a.distance != b.distance) return a.distance < b.distance;
+          return StringUtils::asciiCaseCmp(a.word.c_str(), b.word.c_str()) < 0;
+        });
+    best.insert(position, std::move(candidate));
+    if (best.size() > maxSuggestions) best.pop_back();
+  }
+  suggestionsOut.reserve(best.size());
+  std::transform(best.begin(), best.end(), std::back_inserter(suggestionsOut),
+                 [](Candidate& candidate) { return std::move(candidate.word); });
+  return true;
 }

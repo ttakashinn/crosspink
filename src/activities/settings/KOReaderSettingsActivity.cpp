@@ -116,9 +116,8 @@ void KOReaderSettingsActivity::activateIndex(const int index) {
 
 void KOReaderSettingsActivity::buildScreen(UiScreen& screen) {
   const auto& metrics = UITheme::getInstance().getMetrics();
-  // Content below the GUI.drawHeader band, above the button hints.
-  screen.setContentMarginFromScreen(fui::Insets{static_cast<int16_t>(metrics.topPadding + metrics.headerHeight), 0,
-                                                static_cast<int16_t>(metrics.buttonHintsHeight), 0});
+  // Button-guide clearance comes from UiAppHost's oriented safe area.
+  screen.setContentMargin(fui::Insets{static_cast<int16_t>(metrics.topPadding + metrics.headerHeight), 0, 0, 0});
   screen.spacer(static_cast<int16_t>(metrics.verticalSpacing));
 
   // rowItems_'s labels/actionValue were set once in the constructor; only the

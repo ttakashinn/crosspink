@@ -4,6 +4,7 @@
 #include <I18n.h>
 
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "activities/Activity.h"
@@ -12,15 +13,18 @@
 // Word selection over the current reader page: Left/Right step through words
 // in reading order, Up/Down jump rows, Confirm looks the word up and opens
 // DictionaryDefinitionActivity, Back returns to the reader. On touch devices a
-// touch-down moves the highlight and a tap on a word looks it up directly.
+// touch-down moves the highlight, a tap looks up one word, and a long-hold
+// followed by a drag looks up the selected phrase.
 class DictionaryWordSelectActivity final : public Activity {
  public:
   explicit DictionaryWordSelectActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
-                                        std::unique_ptr<Page> page, int marginLeft, int marginTop)
+                                        std::unique_ptr<Page> page, int marginLeft, int marginTop,
+                                        std::string dictionaryName)
       : Activity("DictionaryWordSelect", renderer, mappedInput),
         page(std::move(page)),
         marginLeft(marginLeft),
-        marginTop(marginTop) {}
+        marginTop(marginTop),
+        dictionaryName(std::move(dictionaryName)) {}
 
   void onEnter() override;
   void loop() override;
@@ -44,18 +48,23 @@ class DictionaryWordSelectActivity final : public Activity {
   int closestInRow(uint16_t row, int centerX) const;
   int wordAt(int x, int y) const;
   void moveVertical(int direction);
-  void performLookup();
+  std::string selectedQuery() const;
+  void performLookup(const std::string& query, bool offerSuggestions = true);
   bool drawHighlightWithSnapshot();
-  void drawHints() const;
+  void drawWordHighlight(const WordBox& word) const;
 
   std::unique_ptr<Page> page;
   const int marginLeft;
   const int marginTop;
+  const std::string dictionaryName;
   int fontId = 0;
   int lineHeight = 0;
 
   std::vector<WordBox> words;
   int selected = 0;
+  int selectionAnchor = 0;
+  bool rangeSelecting = false;
+  bool touchRangeSelecting = false;
   uint16_t rowCount = 0;
 
   Dictionary dict;

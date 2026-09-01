@@ -4,6 +4,7 @@
 #include <FreeInkUIIcon.h>
 #include <I18n.h>
 
+#include <algorithm>
 #include <atomic>
 
 #include "MappedInputManager.h"
@@ -85,6 +86,23 @@ inline freeink::ui::GfxRendererTarget makeUiTarget(const GfxRenderer& renderer) 
   freeink::ui::GfxRendererTarget target(renderer);
   bindUiScaleFonts(target);
   return target;
+}
+
+// GfxRendererTarget supplies the board's bezel insets. Add the firmware's
+// on-screen button-guide reservation so every FUI screen rotates both parts
+// of its safe area in the same place.
+inline freeink::ui::DeviceContext uiDeviceContext(const GfxRenderer& renderer,
+                                                  const freeink::ui::GfxRendererTarget& target) {
+  auto device = target.deviceContext();
+  const Rect safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
+  const freeink::ui::Insets hints{
+      static_cast<int16_t>(safe.y), static_cast<int16_t>(renderer.getScreenWidth() - (safe.x + safe.width)),
+      static_cast<int16_t>(renderer.getScreenHeight() - (safe.y + safe.height)), static_cast<int16_t>(safe.x)};
+  device.safeArea.top = std::max(device.safeArea.top, hints.top);
+  device.safeArea.right = std::max(device.safeArea.right, hints.right);
+  device.safeArea.bottom = std::max(device.safeArea.bottom, hints.bottom);
+  device.safeArea.left = std::max(device.safeArea.left, hints.left);
+  return device;
 }
 
 // Tap release with coords, plus the raw release the tap classifier never

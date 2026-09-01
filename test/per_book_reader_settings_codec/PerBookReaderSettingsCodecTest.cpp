@@ -18,6 +18,9 @@ TEST(PerBookReaderSettingsCodec, RoundTripsVietnameseSdFontName) {
   settings.fallbackRenderSignature = 0x12345678U;
   const char name[] = "Văn Nhân Serif";
   std::copy(std::begin(name), std::end(name), settings.sdFontFamilyName.begin());
+  settings.hasDictionaryOverride = true;
+  const char dictionary[] = "Việt-Anh";
+  std::copy(std::begin(dictionary), std::end(dictionary), settings.dictionaryName.begin());
 
   PerBookReaderSettingsCodec::Encoded encoded;
   ASSERT_TRUE(PerBookReaderSettingsCodec::encode(settings, encoded));
@@ -63,6 +66,14 @@ TEST(PerBookReaderSettingsCodec, RejectsInvalidValuesBeforeWriting) {
   settings.autoPageTurnSeconds = 30;
   settings.preferredRenderMode = 3;
   EXPECT_FALSE(PerBookReaderSettingsCodec::encode(settings, encoded));
+  settings.preferredRenderMode = 0;
+  settings.dictionaryName[0] = '.';
+  settings.dictionaryName[1] = '\0';
+  EXPECT_FALSE(PerBookReaderSettingsCodec::encode(settings, encoded));
+  settings.dictionaryName = {};
+  settings.dictionaryName[0] = '/';
+  settings.dictionaryName[1] = '\0';
+  EXPECT_FALSE(PerBookReaderSettingsCodec::encode(settings, encoded));
 }
 
 TEST(PerBookReaderSettingsCodec, MigratesVersionOneWithSafeExtensionDefaults) {
@@ -105,4 +116,51 @@ TEST(PerBookReaderSettingsCodec, MigratesVersionOneWithSafeExtensionDefaults) {
   EXPECT_EQ(decoded.preferredRenderMode, 0);
   EXPECT_EQ(decoded.lastWorkingFallback, UINT8_MAX);
   EXPECT_EQ(decoded.fallbackRenderSignature, 0U);
+  EXPECT_FALSE(decoded.hasDictionaryOverride);
+  EXPECT_STREQ(decoded.dictionaryName.data(), "");
+}
+
+TEST(PerBookReaderSettingsCodec, MigratesVersionTwoWithoutInventingDictionaryOverride) {
+  PerBookReaderSettings settings;
+  settings.hasOverrides = true;
+  settings.fontPointSize = 20;
+  settings.wordSpacing = 1;
+
+  std::array<uint8_t, PerBookReaderSettingsCodec::PAYLOAD_OFFSET + PerBookReaderSettingsCodec::V2_PAYLOAD_SIZE> v2{};
+  std::copy(PerBookReaderSettingsCodec::MAGIC.begin(), PerBookReaderSettingsCodec::MAGIC.end(), v2.begin());
+  v2[PerBookReaderSettingsCodec::VERSION_OFFSET] = 2;
+  PerBookReaderSettingsCodec::writeU16(v2.data() + PerBookReaderSettingsCodec::LENGTH_OFFSET,
+                                       PerBookReaderSettingsCodec::V2_PAYLOAD_SIZE);
+  uint8_t* payload = v2.data() + PerBookReaderSettingsCodec::PAYLOAD_OFFSET;
+  payload[0] = 1;
+  payload[1] = settings.fontFamily;
+  payload[2] = settings.fontPointSize;
+  payload[3] = settings.lineSpacing;
+  payload[4] = settings.paragraphAlignment;
+  payload[5] = settings.orientation;
+  payload[6] = settings.screenMargin;
+  payload[7] = settings.embeddedStyle;
+  payload[8] = settings.focusReadingEnabled;
+  payload[9] = settings.hyphenationEnabled;
+  payload[10] = settings.extraParagraphSpacing;
+  payload[11] = settings.textAntiAliasing;
+  payload[12] = settings.imageRendering;
+  std::memcpy(payload + 13, settings.sdFontFamilyName.data(), settings.sdFontFamilyName.size());
+  payload[45] = settings.wordSpacing;
+  payload[46] = settings.repairParagraphIndent;
+  PerBookReaderSettingsCodec::writeU16(payload + 47, settings.autoPageTurnSeconds);
+  payload[49] = settings.preferredRenderMode;
+  payload[50] = settings.lastWorkingFallback;
+  PerBookReaderSettingsCodec::writeU32(payload + 51, settings.fallbackRenderSignature);
+  PerBookReaderSettingsCodec::writeU32(
+      v2.data() + PerBookReaderSettingsCodec::CRC_OFFSET,
+      PerBookReaderSettingsCodec::crc32(payload, PerBookReaderSettingsCodec::V2_PAYLOAD_SIZE));
+
+  PerBookReaderSettings decoded;
+  EXPECT_EQ(PerBookReaderSettingsCodec::decode(v2.data(), v2.size(), decoded),
+            PerBookReaderSettingsCodec::DecodeStatus::OK);
+  EXPECT_EQ(decoded.fontPointSize, 20);
+  EXPECT_EQ(decoded.wordSpacing, 1);
+  EXPECT_FALSE(decoded.hasDictionaryOverride);
+  EXPECT_STREQ(decoded.dictionaryName.data(), "");
 }

@@ -382,8 +382,9 @@ void EpubReaderClippingsActivity::rebuildDetailLayout() {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const Rect safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
   const int width = std::max(1, safe.width - metrics.contentSidePadding * 2);
-  const int footer = mappedInput.hasTouch() ? std::max(44, metrics.listRowHeight) + metrics.verticalSpacing
-                                            : metrics.buttonHintsHeight;
+  // On button boards `safe` already excludes the oriented hints. Touch keeps
+  // a real bottom action button, so only that variant needs footer height.
+  const int footer = mappedInput.hasTouch() ? std::max(44, metrics.listRowHeight) + metrics.verticalSpacing : 0;
   const int textTop = safe.y + metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
   const int available = std::max(1, safe.y + safe.height - footer - metrics.verticalSpacing - textTop - 24);
   const int linesPerPage = std::max(1, available / (renderer.getLineHeight(UI_10_FONT_ID) + 6));

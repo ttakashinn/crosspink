@@ -72,6 +72,7 @@ class UiAppHost {
   UiApp app;
 
  private:
+  const GfxRenderer& uiRenderer;
   // Opened by the render task after publication and closed on lifecycle/state
   // resets; read by the loop task (route*).
   std::atomic<bool> uiReady{false};

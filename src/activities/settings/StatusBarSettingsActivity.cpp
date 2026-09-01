@@ -237,14 +237,13 @@ std::string StatusBarSettingsActivity::rowValueText(const int index) {
 void StatusBarSettingsActivity::buildScreen(UiScreen& screen) {
   const auto& metrics = UITheme::getInstance().getMetrics();
   // Reserve the bottom band for the live status-bar preview footer (label +
-  // bar) so the list never runs underneath it, plus the button-hints row below.
-  // The preview is pinned directly above the hints (see render()), so the band
-  // is just the bar + its label, not a floating gap.
+  // bar) so the list never runs underneath it. The oriented button-guide
+  // clearance itself comes from UiAppHost's safe area.
   const int statusBarHeight = UITheme::getInstance().getStatusBarHeight();
   const auto previewFooter =
       static_cast<int16_t>(statusBarHeight + verticalPreviewTextPadding + metrics.verticalSpacing);
-  screen.setContentMarginFromScreen(fui::Insets{static_cast<int16_t>(metrics.topPadding + metrics.headerHeight), 0,
-                                                static_cast<int16_t>(metrics.buttonHintsHeight + previewFooter), 0});
+  screen.setContentMargin(
+      fui::Insets{static_cast<int16_t>(metrics.topPadding + metrics.headerHeight), 0, previewFooter, 0});
   screen.spacer(static_cast<int16_t>(metrics.verticalSpacing));
 
   // rowItems_'s labels/actionValue were set once in onEnter(); only the live

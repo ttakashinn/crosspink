@@ -24,6 +24,8 @@
 #include "ClipSelectionActivity.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
+#include "DictionaryHistoryActivity.h"
+#include "DictionarySelectActivity.h"
 #include "DictionaryWordSelectActivity.h"
 #include "EpubReaderBookmarksActivity.h"
 #include "EpubReaderChapterSelectionActivity.h"
@@ -438,6 +440,8 @@ void EpubReaderActivity::saveBookReaderSettings() {
   const uint8_t preferredRenderMode = bookReaderSettings.preferredRenderMode;
   const uint8_t lastWorkingFallback = bookReaderSettings.lastWorkingFallback;
   const uint32_t fallbackRenderSignature = bookReaderSettings.fallbackRenderSignature;
+  const bool hasDictionaryOverride = bookReaderSettings.hasDictionaryOverride;
+  const auto dictionaryName = bookReaderSettings.dictionaryName;
   bookReaderSettings = captureReaderSettings(true);
   bookReaderSettings.wordSpacing = wordSpacing;
   bookReaderSettings.repairParagraphIndent = repairParagraphIndent;
@@ -445,11 +449,28 @@ void EpubReaderActivity::saveBookReaderSettings() {
   bookReaderSettings.preferredRenderMode = preferredRenderMode;
   bookReaderSettings.lastWorkingFallback = lastWorkingFallback;
   bookReaderSettings.fallbackRenderSignature = fallbackRenderSignature;
+  bookReaderSettings.hasDictionaryOverride = hasDictionaryOverride;
+  bookReaderSettings.dictionaryName = dictionaryName;
   if (PerBookReaderSettingsStore::save(epub->getCachePath(), bookReaderSettings) !=
       PerBookReaderSettingsStore::SaveStatus::SAVED) {
     LOG_ERR("PBRS", "Failed to save per-book reader settings");
     pendingBookSettingsSaveError = true;
   }
+}
+
+void EpubReaderActivity::saveBookDictionarySettings() {
+  if (!epub || !perBookSettingsWritable) return;
+  if (PerBookReaderSettingsStore::save(epub->getCachePath(), bookReaderSettings) !=
+      PerBookReaderSettingsStore::SaveStatus::SAVED) {
+    LOG_ERR("PBRS", "Failed to save per-book dictionary setting");
+    pendingBookSettingsSaveError = true;
+  }
+}
+
+std::string EpubReaderActivity::activeDictionaryName() const {
+  if (!temporaryDictionaryName.empty()) return temporaryDictionaryName;
+  if (bookReaderSettings.hasDictionaryOverride) return bookReaderSettings.dictionaryName.data();
+  return SETTINGS.dictionaryName;
 }
 
 #if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
@@ -773,7 +794,8 @@ void EpubReaderActivity::showBuildPopup(GfxRenderer& renderer, int& pagesUntilFu
 }
 
 void EpubReaderActivity::openDictionaryWordSelect() {
-  if (SETTINGS.dictionaryName[0] == '\0') {
+  const std::string dictionaryName = activeDictionaryName();
+  if (dictionaryName.empty()) {
     showDictionaryMessage = true;
     dictionaryMessageTime = millis();
     requestUpdate();
@@ -790,9 +812,13 @@ void EpubReaderActivity::openDictionaryWordSelect() {
   orientedMarginTop += SETTINGS.screenMargin;
   orientedMarginLeft += SETTINGS.screenMargin;
 
-  startActivityForResult(std::make_unique<DictionaryWordSelectActivity>(renderer, mappedInput, std::move(page),
-                                                                        orientedMarginLeft, orientedMarginTop),
-                         [this](const ActivityResult&) { requestUpdate(); });
+  startActivityForResult(
+      std::make_unique<DictionaryWordSelectActivity>(renderer, mappedInput, std::move(page), orientedMarginLeft,
+                                                     orientedMarginTop, dictionaryName),
+      [this](const ActivityResult&) {
+        resumeReadingStats();
+        requestUpdate();
+      });
 }
 
 void EpubReaderActivity::openClipSelection() {
@@ -1518,6 +1544,61 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
     }
     case EpubReaderMenuActivity::MenuAction::DICTIONARY: {
       openDictionaryWordSelect();
+      break;
+    }
+    case EpubReaderMenuActivity::MenuAction::LOOKUP_HISTORY: {
+      pauseReadingStats(false);
+      const std::string dictionaryName = activeDictionaryName();
+      if (dictionaryName.empty()) {
+        showDictionaryMessage = true;
+        dictionaryMessageTime = millis();
+        resumeReadingStats();
+        requestUpdate();
+        break;
+      }
+      startActivityForResult(std::make_unique<DictionaryHistoryActivity>(renderer, mappedInput, dictionaryName),
+                             [this](const ActivityResult&) {
+                               resumeReadingStats();
+                               requestUpdate();
+                             });
+      break;
+    }
+    case EpubReaderMenuActivity::MenuAction::DICTIONARY_SWITCH: {
+      pauseReadingStats(false);
+      startActivityForResult(
+          std::make_unique<DictionarySelectActivity>(renderer, mappedInput, DictionarySelectActivity::Mode::Temporary,
+                                                     activeDictionaryName(), SETTINGS.dictionaryName),
+          [this](const ActivityResult& result) {
+            if (result.isCancelled || !std::holds_alternative<DictionarySelectionResult>(result.data)) {
+              resumeReadingStats();
+              requestUpdate();
+              return;
+            }
+            temporaryDictionaryName = std::get<DictionarySelectionResult>(result.data).name;
+            openDictionaryWordSelect();
+          });
+      break;
+    }
+    case EpubReaderMenuActivity::MenuAction::DICTIONARY_BOOK: {
+      pauseReadingStats(false);
+      startActivityForResult(
+          std::make_unique<DictionarySelectActivity>(renderer, mappedInput, DictionarySelectActivity::Mode::PerBook,
+                                                     activeDictionaryName(), SETTINGS.dictionaryName),
+          [this](const ActivityResult& result) {
+            if (!result.isCancelled && std::holds_alternative<DictionarySelectionResult>(result.data)) {
+              const auto& selection = std::get<DictionarySelectionResult>(result.data);
+              bookReaderSettings.hasDictionaryOverride = !selection.inheritGlobal;
+              bookReaderSettings.dictionaryName.fill('\0');
+              if (!selection.name.empty()) {
+                std::strncpy(bookReaderSettings.dictionaryName.data(), selection.name.c_str(),
+                             bookReaderSettings.dictionaryName.size() - 1);
+              }
+              temporaryDictionaryName.clear();
+              saveBookDictionarySettings();
+            }
+            resumeReadingStats();
+            requestUpdate();
+          });
       break;
     }
     case EpubReaderMenuActivity::MenuAction::HIGHLIGHT_TEXT: {
@@ -2982,7 +3063,6 @@ void EpubReaderActivity::renderOverlay() {
   // Panels (Contents / Text / More): a bottom sheet over the page + button hints.
   model.panel = true;
   if (!mappedInput.hasTouch()) {
-    model.bottomReserve = UITheme::getInstance().getMetrics().buttonHintsHeight;
     model.denseRows = true;
   }
   // Tap-first: the cursor is only drawn once a button has moved it, so a

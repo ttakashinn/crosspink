@@ -189,11 +189,9 @@ void UiTabListActivity::buildTabBar(UiScreen& screen) {
   tabStyles.focused = tabStyles.selected;
   tabStyles.active = tabStyles.selected;
   tabProps.tabStyles = tabStyles;
-  const fui::Rect contentTabRect = screen.takeTop(tabBand);
-  const fui::Rect frameRect = screen.frame().screen();
-  // The tab divider is full-width chrome; the list below remains constrained
-  // to the physical safe area.
-  const fui::Rect tabRect{frameRect.x, contentTabRect.y, frameRect.width, contentTabRect.height};
+  // Keep tab controls inside the same safe width as the list. In landscape,
+  // a full-frame tab bar runs underneath the rotated button guide.
+  const fui::Rect tabRect = screen.takeTop(tabBand);
   fui::tabBar(screen.frame(), tabRect, tabProps);
   screen.spacer(static_cast<int16_t>(metrics.verticalSpacing));
 }

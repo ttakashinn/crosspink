@@ -72,6 +72,22 @@ struct FilePathResult {
   std::string path;
 };
 
+struct DictionarySelectionResult {
+  // Book mode uses inheritGlobal to clear the per-book override. An empty
+  // name with inheritGlobal=false explicitly disables dictionary lookup for
+  // that book. Temporary mode always returns a non-empty name.
+  std::string name;
+  bool inheritGlobal = false;
+};
+
+struct LookupQueryResult {
+  std::string query;
+};
+
+struct DictionaryExitResult {
+  bool exitAll = false;
+};
+
 struct ClippingSelectionResult {
   struct Segment {
     uint16_t pageHint = 0;
@@ -92,9 +108,10 @@ struct ClippingSelectionResult {
   std::array<Segment, MAX_SEGMENTS> segments{};
 };
 
-using ResultVariant = std::variant<std::monostate, WifiResult, KeyboardResult, MenuResult, ChapterResult, PercentResult,
-                                   IntervalResult, PageResult, ProgressChangeResult, NetworkModeResult, FootnoteResult,
-                                   FilePathResult, ClippingSelectionResult>;
+using ResultVariant =
+    std::variant<std::monostate, WifiResult, KeyboardResult, MenuResult, ChapterResult, PercentResult, IntervalResult,
+                 PageResult, ProgressChangeResult, NetworkModeResult, FootnoteResult, FilePathResult,
+                 DictionarySelectionResult, LookupQueryResult, DictionaryExitResult, ClippingSelectionResult>;
 
 struct ActivityResult {
   bool isCancelled = false;

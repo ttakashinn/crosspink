@@ -11,6 +11,7 @@
 #include "MappedInputManager.h"
 #include "ReaderUtils.h"
 #include "components/UITheme.h"
+#include "components/UiAppHelpers.h"
 #include "util/ButtonNavigator.h"
 
 namespace fui = freeink::ui;
@@ -65,6 +66,13 @@ void EpubReaderMenuActivity::buildMenuItems(std::vector<MenuItem>& items, bool h
                                             const bool hasRenderFallback) {
   items.clear();
   items.reserve(MAX_MENU_ITEMS);
+  // Dictionary is the most frequent in-reader tool. Keep lookup and its
+  // history as the first two rows of the Read tab so neither depends on the
+  // presence of footnotes/bookmarks or on the size of the settings section.
+  items.push_back({MenuAction::DICTIONARY, StrId::STR_LOOKUP});
+  items.push_back({MenuAction::LOOKUP_HISTORY, StrId::STR_DICT_HISTORY});
+  items.push_back({MenuAction::DICTIONARY_SWITCH, StrId::STR_DICT_SWITCH});
+  items.push_back({MenuAction::DICTIONARY_BOOK, StrId::STR_DICT_BOOK});
   items.push_back({MenuAction::SELECT_CHAPTER, StrId::STR_SELECT_CHAPTER});
   if (hasFootnotes) {
     items.push_back({MenuAction::FOOTNOTES, StrId::STR_FOOTNOTES});
@@ -84,7 +92,6 @@ void EpubReaderMenuActivity::buildMenuItems(std::vector<MenuItem>& items, bool h
   if (Frontlight.present()) {
     items.push_back({MenuAction::FRONTLIGHT, StrId::STR_FRONTLIGHT});
   }
-  items.push_back({MenuAction::DICTIONARY, StrId::STR_LOOKUP});
   items.push_back({MenuAction::HIGHLIGHT_TEXT, StrId::STR_HIGHLIGHT_TEXT});
   items.push_back({MenuAction::MY_CLIPPINGS, StrId::STR_MY_CLIPPINGS});
   items.push_back({MenuAction::ROTATE_SCREEN, StrId::STR_ORIENTATION});
@@ -197,7 +204,7 @@ void EpubReaderMenuActivity::activateIndex(const int index) {
                        // SETTINGS.orientation stays unchanged so the reader's
                        // result handler still detects the change and reflows.
                        ReaderUtils::applyOrientation(renderer, pendingOrientation);
-                       app.setDevice(uiTarget.deviceContext());  // hit rects follow the new frame
+                       app.setDevice(uiDeviceContext(renderer, uiTarget));  // hit rects follow the new frame
                        requestUpdate(true);
                      });
     requestUpdate();

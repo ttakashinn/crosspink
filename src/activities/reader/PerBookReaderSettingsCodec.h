@@ -14,9 +14,10 @@
 namespace PerBookReaderSettingsCodec {
 
 constexpr std::array<uint8_t, 4> MAGIC = {'V', 'N', 'S', 'R'};
-constexpr uint8_t VERSION = 2;
+constexpr uint8_t VERSION = 3;
 constexpr uint16_t V1_PAYLOAD_SIZE = 45;
-constexpr uint16_t PAYLOAD_SIZE = 55;
+constexpr uint16_t V2_PAYLOAD_SIZE = 55;
+constexpr uint16_t PAYLOAD_SIZE = 88;
 constexpr size_t VERSION_OFFSET = 4;
 constexpr size_t LENGTH_OFFSET = 5;
 constexpr size_t CRC_OFFSET = 7;
@@ -72,6 +73,18 @@ inline bool validFontName(const std::array<char, PerBookReaderSettings::SD_FONT_
              [](const char value) { return value == '\0'; });
 }
 
+inline bool validDictionaryName(const std::array<char, PerBookReaderSettings::DICTIONARY_NAME_CAPACITY>& name) {
+  size_t length = 0;
+  while (length < name.size() && name[length] != '\0') ++length;
+  if (length >= name.size() || !utf8IsValid({name.data(), length})) return false;
+  if (length > 0 && name[0] == '.') return false;
+  for (size_t i = 0; i < length; ++i) {
+    if (name[i] == '/' || name[i] == '\\') return false;
+  }
+  return std::all_of(name.begin() + static_cast<std::ptrdiff_t>(length), name.end(),
+                     [](const char value) { return value == '\0'; });
+}
+
 inline bool isValid(const PerBookReaderSettings& settings) {
   const auto toggle = [](const uint8_t value) { return value <= 1; };
   return settings.fontFamily < CrossPointSettings::FONT_FAMILY_COUNT && settings.fontPointSize >= 8 &&
@@ -90,7 +103,7 @@ inline bool isValid(const PerBookReaderSettings& settings) {
           (settings.autoPageTurnSeconds >= 5 && settings.autoPageTurnSeconds <= 120)) &&
          settings.preferredRenderMode <= 2 &&
          (settings.lastWorkingFallback == UINT8_MAX || settings.lastWorkingFallback <= 2) &&
-         validFontName(settings.sdFontFamilyName);
+         validFontName(settings.sdFontFamilyName) && validDictionaryName(settings.dictionaryName);
 }
 
 inline bool encode(const PerBookReaderSettings& settings, Encoded& encoded) {
@@ -120,6 +133,8 @@ inline bool encode(const PerBookReaderSettings& settings, Encoded& encoded) {
   payload[49] = settings.preferredRenderMode;
   payload[50] = settings.lastWorkingFallback;
   writeU32(payload + 51, settings.fallbackRenderSignature);
+  payload[55] = settings.hasDictionaryOverride ? 1 : 0;
+  std::memcpy(payload + 56, settings.dictionaryName.data(), settings.dictionaryName.size());
   writeU32(encoded.data() + CRC_OFFSET, crc32(payload, PAYLOAD_SIZE));
   return true;
 }
@@ -129,8 +144,8 @@ inline DecodeStatus decode(const uint8_t* bytes, const size_t length, PerBookRea
   if (!std::equal(MAGIC.begin(), MAGIC.end(), bytes)) return DecodeStatus::BAD_MAGIC;
   const uint8_t version = bytes[VERSION_OFFSET];
   if (version > VERSION) return DecodeStatus::NEWER_VERSION;
-  if (version != 1 && version != VERSION) return DecodeStatus::UNSUPPORTED_VERSION;
-  const uint16_t expectedPayloadSize = version == 1 ? V1_PAYLOAD_SIZE : PAYLOAD_SIZE;
+  if (version != 1 && version != 2 && version != VERSION) return DecodeStatus::UNSUPPORTED_VERSION;
+  const uint16_t expectedPayloadSize = version == 1 ? V1_PAYLOAD_SIZE : (version == 2 ? V2_PAYLOAD_SIZE : PAYLOAD_SIZE);
   const size_t expectedSize = PAYLOAD_OFFSET + expectedPayloadSize;
   if (length < expectedSize) return DecodeStatus::TRUNCATED;
   if (length != expectedSize) return DecodeStatus::WRONG_SIZE;
@@ -161,6 +176,11 @@ inline DecodeStatus decode(const uint8_t* bytes, const size_t length, PerBookRea
     decoded.preferredRenderMode = payload[49];
     decoded.lastWorkingFallback = payload[50];
     decoded.fallbackRenderSignature = readU32(payload + 51);
+  }
+  if (version >= 3) {
+    if (payload[55] > 1) return DecodeStatus::INVALID_VALUE;
+    decoded.hasDictionaryOverride = payload[55] != 0;
+    std::memcpy(decoded.dictionaryName.data(), payload + 56, decoded.dictionaryName.size());
   }
   if (!isValid(decoded)) return DecodeStatus::INVALID_VALUE;
   settings = decoded;

@@ -9,6 +9,7 @@
 
 struct PerBookReaderSettings {
   static constexpr size_t SD_FONT_NAME_CAPACITY = 32;
+  static constexpr size_t DICTIONARY_NAME_CAPACITY = 32;
 
   bool hasOverrides = false;
   uint8_t fontFamily = CrossPointSettings::NOTOSERIF;
@@ -32,6 +33,10 @@ struct PerBookReaderSettings {
   uint8_t lastWorkingFallback = UINT8_MAX;
   uint32_t fallbackRenderSignature = 0;
   std::array<char, SD_FONT_NAME_CAPACITY> sdFontFamilyName{};
+  // Kept independently from hasOverrides: choosing a dictionary for one book
+  // must not implicitly freeze all of that book's typography settings.
+  bool hasDictionaryOverride = false;
+  std::array<char, DICTIONARY_NAME_CAPACITY> dictionaryName{};
 
   bool operator==(const PerBookReaderSettings&) const = default;
 };

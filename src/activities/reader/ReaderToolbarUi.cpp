@@ -222,8 +222,8 @@ void ReaderToolbarUi::buildPanel(UiScreen& screen) {
   const int16_t rowStride = static_cast<int16_t>(rowH + tokens.listRowGap);
   const int16_t grabberBand =
       static_cast<int16_t>(sheetProps.grabberMargin + sheetProps.grabberHeight + sheetProps.grabberInset);
-  const int16_t chrome = static_cast<int16_t>(grabberBand + titleH + tokens.spaceMd + tokens.spaceSm +
-                                              std::max(0, model_.bottomReserve) + kToolRowH + tokens.spaceSm);
+  const int16_t chrome =
+      static_cast<int16_t>(grabberBand + titleH + tokens.spaceMd + tokens.spaceSm + kToolRowH + tokens.spaceSm);
   const int16_t target = static_cast<int16_t>((safe.height * kPanelHeightPercent) / 100);
   const int16_t cap = static_cast<int16_t>((safe.height * kPanelHeightMaxPercent) / 100);
   int sheetRows = (target - chrome + tokens.listRowGap) / rowStride;
@@ -243,9 +243,9 @@ void ReaderToolbarUi::buildPanel(UiScreen& screen) {
     pageIndicatorRect_ = line;
   }
 
-  // Switcher row along the sheet's bottom edge (above the button-hint row on
-  // button boards); the list takes what is left.
-  screen.spacer(static_cast<int16_t>(tokens.spaceSm + std::max(0, model_.bottomReserve)), fui::LayoutAnchor::Bottom);
+  // The frame safe area already keeps this row clear of the oriented button
+  // guide; the list takes what is left.
+  screen.spacer(tokens.spaceSm, fui::LayoutAnchor::Bottom);
   buildToolRow(screen, fui::LayoutAnchor::Bottom, tokens.spaceLg);
   screen.spacer(tokens.spaceSm, fui::LayoutAnchor::Bottom);
 

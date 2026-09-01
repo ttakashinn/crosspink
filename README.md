@@ -59,7 +59,7 @@ Không flash CrossPink bằng Xteink Unlocker trừ khi nhà cung cấp unlocker
 
 ## Cập nhật OTA
 
-CrossPink nhận OTA từ GitHub Releases của chính repository này. Phiên bản phát hành có dạng `1.6.0-cp.N.M`, ví dụ `1.6.0-cp.2.1`; OTA so sánh đủ `N.M` nhưng chỉ giữa các bản cùng nhánh `cp`, do đó không tự chuyển qua lại giữa CrossPink, VNS và CrossPoint.
+CrossPink nhận OTA từ GitHub Releases của chính repository này. Phiên bản phát hành có dạng `1.6.0-cp.N.M`, ví dụ `1.6.0-cp.3.0`; OTA so sánh đủ `N.M` nhưng chỉ giữa các bản cùng nhánh `cp`, do đó không tự chuyển qua lại giữa CrossPink, VNS và CrossPoint.
 
 Lần chuyển từ firmware VNS/CrossPoint sang CrossPink cần flash thủ công một lần, vì firmware cũ không biết format phiên bản `-cp.N.M` và không truy vấn release repository CrossPink.
 
@@ -82,7 +82,7 @@ CrossPink vẫn dùng manifest font công khai của CrossPoint; không có kho 
 - [Font từ thẻ SD](./docs/sd-card-fonts.md)
 - [Định dạng file và cache](./docs/file-formats.md)
 - [Khắc phục thiết bị Xteink bị brick](./docs/fix-bricked-xteink.md)
-- [Ghi chú phát hành 1.6.0-cp.2.1](./docs/releases/1.6.0-cp.2.1.md)
+- [Ghi chú phát hành 1.6.0-cp.3.0](./docs/releases/1.6.0-cp.3.0.md)
 
 ## Phát triển nhanh
 

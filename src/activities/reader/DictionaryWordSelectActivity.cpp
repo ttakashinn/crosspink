@@ -9,15 +9,18 @@
 #include <cctype>
 #include <climits>
 #include <cstdlib>
+#include <cstring>
 
-#include "CrossPointSettings.h"
 #include "DictionaryDefinitionActivity.h"
+#include "DictionarySuggestionActivity.h"
 #include "components/UITheme.h"
 #include "util/DictionaryHistoryStore.h"
 
 namespace {
 
 constexpr unsigned long POPUP_DURATION_MS = 1500;
+constexpr unsigned long PHRASE_SELECT_HOLD_MS = 600;
+constexpr size_t MAX_QUERY_BYTES = 240;
 
 // A token is selectable when it has an ASCII alphanumeric or a non-ASCII
 // codepoint outside U+2000-U+206F (dashes, bullets and other General
@@ -151,11 +154,28 @@ void DictionaryWordSelectActivity::moveVertical(const int direction) {
   }
 }
 
-void DictionaryWordSelectActivity::performLookup() {
+std::string DictionaryWordSelectActivity::selectedQuery() const {
+  if (words.empty()) return {};
+  const int first = rangeSelecting ? std::min(selectionAnchor, selected) : selected;
+  const int last = rangeSelecting ? std::max(selectionAnchor, selected) : selected;
+  std::string query;
+  query.reserve(std::min<size_t>(MAX_QUERY_BYTES, static_cast<size_t>(last - first + 1) * 12));
+  for (int i = first; i <= last; ++i) {
+    const size_t wordLength = std::strlen(words[i].text);
+    const size_t separator = query.empty() ? 0 : 1;
+    if (query.size() + separator + wordLength > MAX_QUERY_BYTES) break;
+    if (separator != 0) query.push_back(' ');
+    query.append(words[i].text, wordLength);
+  }
+  return query;
+}
+
+void DictionaryWordSelectActivity::performLookup(const std::string& query, const bool offerSuggestions) {
+  if (query.empty()) return;
   popup = Popup::Busy;
   if (!dictOpenAttempted) {
     dictOpenAttempted = true;
-    dictOpenOk = dict.open(SETTINGS.dictionaryName);
+    dictOpenOk = dict.open(dictionaryName.c_str());
     // needsIndex() opens and validates the .qidx sidecar, so ask it once per
     // open rather than once per word: the answer only changes when we build
     // the sidecar ourselves, which is handled below.
@@ -174,17 +194,41 @@ void DictionaryWordSelectActivity::performLookup() {
   std::string definition;
   std::string headword;
   Dictionary::LookupResult result = Dictionary::LookupResult::NotFound;
-  const bool found = ok && dict.lookup(words[selected].text, definition, headword, &result);
+  const bool found = ok && dict.lookup(query.c_str(), definition, headword, &result);
 
   if (found) {
-    DICTIONARY_HISTORY.record(words[selected].text);
+    DICTIONARY_HISTORY.record(query);
     if (!DICTIONARY_HISTORY.flush()) LOG_ERR("DICT", "Could not persist dictionary history");
     popup = Popup::None;
-    startActivityForResult(
-        std::make_unique<DictionaryDefinitionActivity>(renderer, mappedInput, std::move(headword),
-                                                       std::move(definition), dict.definitionsAreHtml()),
-        [this](const ActivityResult&) { requestUpdate(); });
+    startActivityForResult(std::make_unique<DictionaryDefinitionActivity>(renderer, mappedInput, std::move(headword),
+                                                                          std::move(definition),
+                                                                          dict.definitionsAreHtml(), dictionaryName),
+                           [this](const ActivityResult& result) {
+                             if (std::holds_alternative<DictionaryExitResult>(result.data) &&
+                                 std::get<DictionaryExitResult>(result.data).exitAll) {
+                               setResult(DictionaryExitResult{true});
+                               finish();
+                             } else {
+                               requestUpdate();
+                             }
+                           });
     return;
+  }
+  if (ok && result == Dictionary::LookupResult::NotFound && offerSuggestions) {
+    std::vector<std::string> suggestions;
+    if (dict.suggest(query.c_str(), suggestions) && !suggestions.empty()) {
+      popup = Popup::None;
+      startActivityForResult(
+          std::make_unique<DictionarySuggestionActivity>(renderer, mappedInput, std::move(suggestions)),
+          [this](const ActivityResult& activityResult) {
+            if (!activityResult.isCancelled && std::holds_alternative<LookupQueryResult>(activityResult.data)) {
+              performLookup(std::get<LookupQueryResult>(activityResult.data).query, false);
+            } else {
+              requestUpdate();
+            }
+          });
+      return;
+    }
   }
   // Name the failure: a genuine miss is "Not found"; a word that WAS found but
   // couldn't be read is a real error — and we distinguish decompression from a
@@ -243,8 +287,17 @@ void DictionaryWordSelectActivity::loop() {
     finish();
     return;
   }
+  if (!words.empty() && mappedInput.wasLongPressed(MappedInputManager::Button::Confirm, PHRASE_SELECT_HOLD_MS)) {
+    rangeSelecting = !rangeSelecting;
+    touchRangeSelecting = false;
+    selectionAnchor = selected;
+    snapshotIdx = -1;
+    requestUpdate();
+    return;
+  }
+  if (mappedInput.consumeSuppressedRelease()) return;
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) && !words.empty()) {
-    performLookup();
+    performLookup(selectedQuery());
     return;
   }
 
@@ -254,6 +307,33 @@ void DictionaryWordSelectActivity::loop() {
   // repaint), a tap on a word selects and looks it up in one go.
   int tx = 0;
   int ty = 0;
+  if (mappedInput.wasScreenLongPressStart(tx, ty)) {
+    const int hit = wordAt(tx, ty);
+    if (hit >= 0) {
+      selected = hit;
+      selectionAnchor = hit;
+      rangeSelecting = true;
+      touchRangeSelecting = true;
+      snapshotIdx = -1;
+      requestUpdate();
+    }
+    return;
+  }
+  if (touchRangeSelecting) {
+    if (mappedInput.isScreenTouchHeld(tx, ty)) {
+      const int hit = wordAt(tx, ty);
+      if (hit >= 0 && hit != selected) {
+        selected = hit;
+        requestUpdate();
+      }
+      return;
+    }
+    if (mappedInput.wasScreenTouchReleased()) {
+      touchRangeSelecting = false;
+      performLookup(selectedQuery());
+      return;
+    }
+  }
   if (mappedInput.wasScreenTouchDown(tx, ty)) {
     const int hit = wordAt(tx, ty);
     if (hit >= 0 && hit != selected) {
@@ -266,7 +346,7 @@ void DictionaryWordSelectActivity::loop() {
     const int hit = wordAt(tx, ty);
     if (hit >= 0) {
       selected = hit;
-      performLookup();
+      performLookup(selectedQuery());
     }
     return;
   }
@@ -320,23 +400,13 @@ bool DictionaryWordSelectActivity::drawHighlightWithSnapshot() {
   return saved;
 }
 
-// Front-button bar (Back/Confirm/Left/Right). Drawn last on every repaint
-// path, including the differential highlight-only path, so it always ends
-// up as the top layer even when a highlighted word's box falls under a
-// hint's screen area. No side-button hints: the full-bleed reader page has no
-// spare gutter for them, so a hint box there would hide text.
-void DictionaryWordSelectActivity::drawHints() const {
-  // No selectable word on this page: Confirm and navigation are all no-ops
-  // (guarded by words.empty() in loop()/performLookup), so only Back does
-  // anything and only Back is hinted.
-  if (words.empty()) {
-    const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
-    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-    return;
-  }
-  const auto labels = mappedInput.mapDirectionalLabels(tr(STR_BACK), tr(STR_LOOKUP), tr(STR_DIR_LEFT),
-                                                       tr(STR_DIR_RIGHT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+void DictionaryWordSelectActivity::drawWordHighlight(const WordBox& word) const {
+  const int x = std::max(0, static_cast<int>(word.x) - 2);
+  const int y = std::max(0, static_cast<int>(word.y) - 2);
+  const int right = std::min(renderer.getScreenWidth(), static_cast<int>(word.x) + word.width + 2);
+  const int bottom = std::min(renderer.getScreenHeight(), static_cast<int>(word.y) + lineHeight + 2);
+  if (right > x && bottom > y) renderer.fillRect(x, y, right - x, bottom - y, true);
+  renderer.drawText(fontId, word.x, word.y, word.text, false, word.style);
 }
 
 void DictionaryWordSelectActivity::render(RenderLock&&) {
@@ -344,14 +414,13 @@ void DictionaryWordSelectActivity::render(RenderLock&&) {
   // still holds a clean page (no popup or sub-activity since the last full
   // repaint). Restore the pixels under the old highlight, draw the new one,
   // and push — skipping the two-pass page render entirely.
-  if (popup == Popup::None && snapshotIdx >= 0 && !words.empty() && selected != snapshotIdx) {
+  if (popup == Popup::None && !rangeSelecting && snapshotIdx >= 0 && !words.empty() && selected != snapshotIdx) {
     renderer.writeFramebufferRegion(snapshotX, snapshotY, snapshotW, snapshotH, snapshot.get());
     // The full path's PrewarmScope cleared the glyph cache on exit; batch-load
     // just the highlighted word's glyphs before drawing them white-on-black.
     renderer.getFontCacheManager()->prewarmCache(
         fontId, words[selected].text, static_cast<uint8_t>(1u << (static_cast<uint8_t>(words[selected].style) & 0x03)));
     if (drawHighlightWithSnapshot()) {
-      drawHints();
       renderer.displayBuffer(HalDisplay::FAST_REFRESH);
       return;
     }
@@ -369,10 +438,15 @@ void DictionaryWordSelectActivity::render(RenderLock&&) {
   page->render(renderer, fontId, marginLeft, marginTop);
 
   if (!words.empty()) {
-    drawHighlightWithSnapshot();
+    if (rangeSelecting) {
+      const int first = std::min(selectionAnchor, selected);
+      const int last = std::max(selectionAnchor, selected);
+      for (int i = first; i <= last; ++i) drawWordHighlight(words[i]);
+      snapshotIdx = -1;
+    } else {
+      drawHighlightWithSnapshot();
+    }
   }
-
-  drawHints();
 
   if (popup != Popup::None) {
     // The popup overdraws the page, so the snapshot no longer matches the

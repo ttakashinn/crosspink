@@ -9,7 +9,6 @@
 
 #include <algorithm>
 
-#include "CrossPointSettings.h"
 #include "DictionaryDefinitionActivity.h"
 #include "components/UITheme.h"
 #include "util/DictionaryHistoryStore.h"
@@ -116,7 +115,7 @@ void DictionaryHistoryActivity::lookupSelected(const int index) {
   busy_ = true;
   requestUpdateAndWait();
 
-  bool ok = dictionary_.isOpen() || dictionary_.open(SETTINGS.dictionaryName);
+  bool ok = dictionary_.isOpen() || dictionary_.open(dictionaryName_.c_str());
   Dictionary::IndexResult indexResult = Dictionary::IndexResult::Ok;
   if (ok && dictionary_.needsIndex()) ok = dictionary_.buildIndex(indexYield, nullptr, &indexResult);
   std::string definition;
@@ -135,8 +134,9 @@ void DictionaryHistoryActivity::lookupSelected(const int index) {
     return;
   }
 
-  auto activity = makeUniqueNoThrow<DictionaryDefinitionActivity>(
-      renderer, mappedInput, std::move(headword), std::move(definition), dictionary_.definitionsAreHtml());
+  auto activity =
+      makeUniqueNoThrow<DictionaryDefinitionActivity>(renderer, mappedInput, std::move(headword), std::move(definition),
+                                                      dictionary_.definitionsAreHtml(), dictionaryName_);
   if (!activity) {
     LOG_ERR("DHIST", "OOM allocating dictionary definition activity");
     showError(StrId::STR_DICT_LOW_MEMORY);
@@ -146,7 +146,15 @@ void DictionaryHistoryActivity::lookupSelected(const int index) {
   DICTIONARY_HISTORY.record(query);
   if (!DICTIONARY_HISTORY.flush()) LOG_ERR("DHIST", "Could not persist dictionary history");
   refreshEntries();
-  startActivityForResult(std::move(activity), [this](const ActivityResult&) { requestUpdate(); });
+  startActivityForResult(std::move(activity), [this](const ActivityResult& result) {
+    if (std::holds_alternative<DictionaryExitResult>(result.data) &&
+        std::get<DictionaryExitResult>(result.data).exitAll) {
+      setResult(DictionaryExitResult{true});
+      finish();
+    } else {
+      requestUpdate();
+    }
+  });
 }
 
 void DictionaryHistoryActivity::confirmClear() {

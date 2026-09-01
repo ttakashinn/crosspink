@@ -141,7 +141,8 @@ void UiListActivity::drawChrome() {
   const char* title = headerTitle();
   if (!title) return;
   const auto& metrics = UITheme::getInstance().getMetrics();
-  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, renderer.getScreenWidth(), metrics.headerHeight}, title);
+  const Rect safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
+  GUI.drawHeader(renderer, Rect{safe.x, safe.y + metrics.topPadding, safe.width, metrics.headerHeight}, title);
 }
 
 void UiListActivity::drawFooter() {

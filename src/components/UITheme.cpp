@@ -10,6 +10,7 @@
 
 #include "MappedInputManager.h"
 #include "RecentBooksStore.h"
+#include "components/ButtonHintSafeArea.h"
 #include "components/themes/BaseTheme.h"
 #include "components/themes/dashboard/DashboardTheme.h"
 #include "components/themes/lyra/Lyra3CoversTheme.h"
@@ -76,36 +77,30 @@ const ThemeMetrics& UITheme::getMetrics() const {
 
 // Screen area excluding the button hints
 Rect UITheme::getScreenSafeArea(const GfxRenderer& renderer, bool hasFrontButtonHints, bool hasSideButtonHints) {
-  auto orientation = renderer.getOrientation();
+  (void)hasSideButtonHints;
+  const auto orientation = renderer.getOrientation();
   const int screenWidth = renderer.getScreenWidth();
   const int screenHeight = renderer.getScreenHeight();
-  Rect safeArea = Rect{0, 0, screenWidth, screenHeight};
-  const ThemeMetrics metrics = getMetrics();
+  if (!hasFrontButtonHints) return Rect{0, 0, screenWidth, screenHeight};
+
+  button_hints::Orientation hintOrientation = button_hints::Orientation::Portrait;
   switch (orientation) {
     case GfxRenderer::Orientation::Portrait:
-      if (hasFrontButtonHints) {
-        safeArea.height -= metrics.buttonHintsHeight;
-      }
+      hintOrientation = button_hints::Orientation::Portrait;
       break;
     case GfxRenderer::Orientation::LandscapeClockwise:
-      if (hasFrontButtonHints) {
-        safeArea.x += metrics.buttonHintsHeight;
-        safeArea.width -= metrics.buttonHintsHeight;
-      }
+      hintOrientation = button_hints::Orientation::LandscapeClockwise;
       break;
     case GfxRenderer::Orientation::PortraitInverted:
-      if (hasFrontButtonHints) {
-        safeArea.y += metrics.buttonHintsHeight;
-        safeArea.height -= metrics.buttonHintsHeight;
-      }
+      hintOrientation = button_hints::Orientation::PortraitInverted;
       break;
     case GfxRenderer::Orientation::LandscapeCounterClockwise:
-      if (hasFrontButtonHints) {
-        safeArea.width -= metrics.buttonHintsHeight;
-      }
+      hintOrientation = button_hints::Orientation::LandscapeCounterClockwise;
       break;
   }
-  return safeArea;
+  const auto insets = button_hints::safeAreaInsets(hintOrientation, getMetrics().buttonHintsHeight);
+  return Rect{insets.left, insets.top, screenWidth - insets.left - insets.right,
+              screenHeight - insets.top - insets.bottom};
 }
 
 std::string UITheme::getCoverThumbPath(std::string coverBmpPath, int coverHeight) {

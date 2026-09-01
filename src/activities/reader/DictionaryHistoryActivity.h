@@ -11,8 +11,8 @@
 
 class DictionaryHistoryActivity final : public UiListActivity {
  public:
-  DictionaryHistoryActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-      : UiListActivity("DictionaryHistory", renderer, mappedInput) {}
+  DictionaryHistoryActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string dictionaryName)
+      : UiListActivity("DictionaryHistory", renderer, mappedInput), dictionaryName_(std::move(dictionaryName)) {}
 
   void onEnter() override;
   void render(RenderLock&& lock) override;
@@ -30,6 +30,7 @@ class DictionaryHistoryActivity final : public UiListActivity {
   void showError(StrId message);
 
   std::vector<std::string> entries_;
+  const std::string dictionaryName_;
   std::vector<freeink::ui::ListItem> rowItems_;
   Dictionary dictionary_;
   OptionPopup optionPopup_;

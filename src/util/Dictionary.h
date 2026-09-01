@@ -84,12 +84,20 @@ class Dictionary {
   bool lookup(const char* word, std::string& definitionOut, std::string& matchedHeadwordOut,
               LookupResult* outResult = nullptr, uint32_t maxDefinitionBytes = MAX_DEFINITION_BYTES);
 
+  // Return up to maxSuggestions nearby index headwords ranked with a bounded,
+  // Unicode-codepoint edit distance. Intended for the genuine-miss path only;
+  // it reuses the sampled index and never loads definitions.
+  bool suggest(const char* word, std::vector<std::string>& suggestionsOut, size_t maxSuggestions = 3);
+
   static std::string cleanWord(const char* word);
 
   static constexpr uint32_t MAX_DEFINITION_BYTES = 64 * 1024;
 
  private:
-  static constexpr uint32_t SAMPLE_INTERVAL = 256;
+  // 32 keeps the miss/suggestion scan bounded to a small SD burst. The V2
+  // sidecar header stores this interval, so existing 256-stride files are
+  // detected as stale and rebuilt safely.
+  static constexpr uint32_t SAMPLE_INTERVAL = 32;
 
   // Longest "<basePath><suffix>" the lookup path builds, rounded up. basePath is
   // "/dictionaries/<folder>/<stem>" (14 fixed chars) and the longest suffix is
@@ -149,7 +157,8 @@ class Dictionary {
   // only has to linear-scan at most SAMPLE_INTERVAL entries from there. Returns
   // 0 — scan source from the start — when sampleCount is 0 or a sample is
   // unreadable. Clobbers wordBuf.
-  uint32_t bisectSamples(HalFile& sidecar, HalFile& source, uint32_t sampleCount, const char* target);
+  uint32_t bisectSamples(HalFile& sidecar, HalFile& source, uint32_t sampleCount, const char* target,
+                         uint32_t* sampleIndexOut = nullptr);
 
   DictLocation locate(LookupSession& session, const char* target, std::string* matchedHeadwordOut);
 

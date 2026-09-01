@@ -140,6 +140,9 @@ class EpubReaderActivity final : public ReaderActivity {
   ReaderProgressSaveDebouncer progressSaveDebouncer;
   PerBookReaderSettings globalReaderSettings;
   PerBookReaderSettings bookReaderSettings;
+  // Session-only choice has highest priority and is deliberately not written
+  // to either the global JSON or the per-book record.
+  std::string temporaryDictionaryName;
   bool readerSettingsPrepared = false;
   bool perBookSettingsWritable = true;
 
@@ -171,6 +174,8 @@ class EpubReaderActivity final : public ReaderActivity {
   bool prepareReaderSettings() override;
   void restoreReaderSettings() override;
   void saveBookReaderSettings();
+  void saveBookDictionarySettings();
+  std::string activeDictionaryName() const;
   void jumpToPercent(int percent);
   vns_reference::Position currentVnsReferencePosition() const;
   void onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction action);
