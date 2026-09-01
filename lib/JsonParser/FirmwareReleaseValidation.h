@@ -22,7 +22,7 @@ struct Version {
 
 // Accepts exactly X.Y.Z, X.Y.Z-vns.N, X.Y.Z-vns.N.M, or X.Y.Z-cp.N.M (with
 // an optional leading v/V). CrossPink releases always carry both `cp`
-// components so the edition version remains unambiguous, e.g. 1.6.0-cp.2.0.
+// components so the edition version remains unambiguous, e.g. 1.6.0-cp.2.1.
 // Unknown/trailing suffixes fail closed so development and malformed tags are
 // never mistaken for a stable public update.
 bool parseVersion(const char* value, Version& version);
