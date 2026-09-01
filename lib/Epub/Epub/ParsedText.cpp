@@ -702,18 +702,19 @@ void ParsedText::ensureRubyCapacity() {
 }
 
 int ParsedText::resolveFirstLineIndent(const bool isFirstLine, const GfxRenderer& renderer, const int fontId) const {
+  (void)renderer;
+  (void)fontId;
   if (!isFirstLine || isContinuation_ || !isNaturalAlign) {
     return 0;
   }
   if (blockStyle.textIndentDefined) {
-    if (blockStyle.textIndent < 0 || !extraParagraphSpacing) {
-      return blockStyle.textIndent;
-    }
-    return 0;
+    // Paragraph spacing is vertical layout only. Never suppress an explicit
+    // publisher indent merely because the user also enabled extra spacing.
+    return blockStyle.textIndent;
   }
-  if (!extraParagraphSpacing) {
-    return renderer.getSpaceWidth(fontId, EpdFontFamily::REGULAR) * 3;
-  }
+  // Missing indents are injected explicitly by repairParagraphIndent in the
+  // parser. Keeping an implicit fallback here would make indentation appear
+  // enabled even when the repair setting is off.
   return 0;
 }
 // Consumes data to minimize memory usage

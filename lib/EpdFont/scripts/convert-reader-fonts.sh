@@ -26,8 +26,26 @@ READER_SYMBOL_INTERVALS=(
   --additional-intervals 0x2717,0x2717  # ballot X
 )
 
+# Dictionary definitions commonly use IPA even when the selected book font is
+# otherwise Latin-only. The dictionary renderer deliberately uses built-in
+# Noto Sans, so keep the IPA Extensions block, its spacing modifiers, and the
+# 3 Greek letters used as IPA symbols in those faces only.
+# Do not embed the full Greek/Phonetic Extensions blocks: those unrelated
+# glyphs add hundreds of KiB across 32 faces. Combining marks U+0300..U+036F
+# are already part of fontconvert.py's base set.
+READER_PHONETIC_INTERVALS=(
+  --additional-intervals 0x0250,0x02E9  # IPA Extensions + IPA spacing modifier letters
+  --additional-intervals 0x03B2,0x03B2  # Greek beta
+  --additional-intervals 0x03B8,0x03B8  # Greek theta
+  --additional-intervals 0x03C7,0x03C7  # Greek chi
+)
+
 for family in NotoSerif NotoSans; do
   family_slug=$(echo "$family" | tr '[:upper:]' '[:lower:]')
+  additional_intervals=("${READER_SYMBOL_INTERVALS[@]}")
+  if [[ "$family" == "NotoSans" ]]; then
+    additional_intervals+=("${READER_PHONETIC_INTERVALS[@]}")
+  fi
   for size in "${READER_FONT_SIZES[@]}"; do
     for style in "${READER_FONT_STYLES[@]}"; do
       font_name="${family_slug}_${size}_$(echo "$style" | tr '[:upper:]' '[:lower:]')"
@@ -40,7 +58,7 @@ for family in NotoSerif NotoSans; do
       output_path="../builtinFonts/${font_name}.h"
       "$PYTHON_BIN" fontconvert.py "$font_name" "$size" "$font_path" "$symbol_path" \
         --fallback-only-additional --2bit --compress --pnum --zopfli --darken-aa \
-        "${READER_SYMBOL_INTERVALS[@]}" > "$output_path"
+        "${additional_intervals[@]}" > "$output_path"
       echo "Generated $output_path"
     done
   done

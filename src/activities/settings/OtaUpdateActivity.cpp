@@ -187,11 +187,8 @@ void OtaUpdateActivity::render(RenderLock&&) {
         Rect{metrics.contentSidePadding, y, pageWidth - metrics.contentSidePadding * 2, metrics.progressBarHeight},
         static_cast<int>(updaterProgress * 100), 100);
 
-    y += metrics.progressBarHeight + metrics.verticalSpacing;
-    // Percent label is drawn by BaseTheme::drawProgressBar; this slot is left intentionally empty
-    // so the bytes line below stays at the same Y it was at when the activity drew its own percent.
-    y += height + metrics.verticalSpacing;
-    renderer.drawCenteredText(UI_10_FONT_ID, y, (std::to_string(lastUpdaterPercentage) + "%").c_str());
+    // BaseTheme::drawProgressBar already renders the percentage below the bar.
+    // Do not draw a second percentage label here.
   } else if (state == NO_UPDATE) {
     renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_NO_UPDATE), true, EpdFontFamily::BOLD);
     const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");

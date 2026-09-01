@@ -404,6 +404,7 @@ bool EpubReaderActivity::prepareReaderSettings() {
   } else if (status == PerBookReaderSettingsStore::LoadStatus::INVALID) {
     LOG_ERR("PBRS", "Ignoring invalid per-book settings");
   }
+  bookReaderSettings = mergeReaderSettings(globalReaderSettings, bookReaderSettings);
   SETTINGS.beginReaderPersistenceOverlay();
   if (bookReaderSettings.hasOverrides && perBookSettingsWritable) applyReaderSettings(bookReaderSettings);
   activeRenderMode = static_cast<EpubRenderMode>(bookReaderSettings.preferredRenderMode);
@@ -442,7 +443,9 @@ void EpubReaderActivity::saveBookReaderSettings() {
   const uint32_t fallbackRenderSignature = bookReaderSettings.fallbackRenderSignature;
   const bool hasDictionaryOverride = bookReaderSettings.hasDictionaryOverride;
   const auto dictionaryName = bookReaderSettings.dictionaryName;
-  bookReaderSettings = captureReaderSettings(true);
+  bookReaderSettings = captureReaderSettings(false);
+  bookReaderSettings.overrideMask = readerSettingsOverrideMask(bookReaderSettings, globalReaderSettings);
+  bookReaderSettings.hasOverrides = bookReaderSettings.overrideMask != 0;
   bookReaderSettings.wordSpacing = wordSpacing;
   bookReaderSettings.repairParagraphIndent = repairParagraphIndent;
   bookReaderSettings.autoPageTurnSeconds = autoPageTurnSeconds;
@@ -1476,9 +1479,10 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       break;
     }
     case EpubReaderMenuActivity::MenuAction::TEXT_SETTINGS: {
-      startActivityForResult(std::make_unique<TextSettingsActivity>(renderer, mappedInput, &sdFontSystem.registry(),
-                                                                    TextSettingsActivity::Tab::Family, false,
-                                                                    [this] { saveBookReaderSettings(); }),
+      startActivityForResult(std::make_unique<TextSettingsActivity>(
+                                 renderer, mappedInput, &sdFontSystem.registry(), TextSettingsActivity::Tab::Family,
+                                 false, [this] { saveBookReaderSettings(); }, &bookReaderSettings.wordSpacing,
+                                 &bookReaderSettings.repairParagraphIndent),
                              [this](const ActivityResult&) {
                                {
                                  RenderLock lock;
@@ -2461,6 +2465,8 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   const auto t0 = millis();
   const int fontId = SETTINGS.getReaderFontId();
 
+  ImageBlock::beginRenderCycle();
+
   struct PxcSlotGuard {
     ~PxcSlotGuard() { ImageBlock::releaseRenderCache(); }
   } pxcSlotGuard;
@@ -2580,7 +2586,12 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
       if (msbPlaneBuf) renderPlaneToBuffer(false, msbPlaneBuf.get());
       const auto tGrayRender = millis();
 
-      renderer.waitRefreshComplete();
+      // X3 vendor AA expects a gentle settle pass between the B/W base and the
+      // gray selectors. Skipping it made the weak edge waveform depend on
+      // whether this page happened to use FAST or periodic HALF, which showed
+      // up as alternating soft/dotted and crisp glyphs. The hook is a no-op on
+      // X4/other panels whose driver does not require this pass.
+      ReaderUtils::prepareGrayscalePlanes(renderer, true, combinedGrayscaleBase);
       const auto tWait = millis();
 
       renderer.writeGrayscalePlaneStrip(true, lsbPlaneBuf.get(), 0, gh);
@@ -2629,7 +2640,7 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
 #endif
             return makeUniqueNoThrow<uint8_t[]>(bytes);
           });
-      renderer.waitRefreshComplete();
+      ReaderUtils::prepareGrayscalePlanes(renderer, scratch != nullptr, combinedGrayscaleBase);
       if (!scratch) {
         LOG_ERR("ERS", "Grayscale applied=0 path=strip reason=scratch-oom free=%u largest=%u min_rows=%u min_bytes=%u",
                 static_cast<unsigned>(grayscaleFreeBefore), static_cast<unsigned>(grayscaleLargestBefore),
@@ -2957,16 +2968,19 @@ void EpubReaderActivity::openOverlay(Overlay target) {
       focusedTool = 0;
       break;
     case Overlay::Contents:
+      focusedTool = 2;
       panelIndex = std::max(0, epub->getTocIndexForSpineIndex(currentSpineIndex));
       // Fresh viewport opening on the current chapter, cursor shown or not.
       toolbarUi->nav().reset(panelIndex);
       toolbarUi->nav().top = panelIndex;
       break;
     case Overlay::Text:
+      focusedTool = 3;
       panelIndex = 0;
       toolbarUi->nav().reset();
       break;
     case Overlay::More:
+      focusedTool = 4;
       panelIndex = 0;
       buildMoreActions();
       toolbarUi->nav().reset();
@@ -3081,11 +3095,16 @@ void EpubReaderActivity::renderOverlay() {
     model.itemCount = kTextRowCount;
     model.rowText = [this](int i) { return textRowName(i); };
     model.rowValue = [this](int i) { return textRowValue(i); };
+    model.rowChevron = [](int i) { return i == 0; };
   } else {
     model.panelTitle = tr(STR_TOOL_MORE);
     model.itemCount = static_cast<int>(moreItems.size());
     model.rowText = [this](int i) { return moreRowName(i); };
     model.rowValue = [this](int i) { return moreRowValue(i); };
+    model.rowChevron = [this](int i) {
+      return i >= 0 && i < static_cast<int>(moreItems.size()) &&
+             EpubReaderMenuActivity::opensChildScreen(moreItems[i].action);
+    };
   }
   toolbarUi->setModel(model);
   toolbarUi->render();
@@ -3141,7 +3160,25 @@ void EpubReaderActivity::handleOverlayInput() {
     requestUpdate();
   };
   const auto toolOverlay = [](int tool) {
-    return tool == 0 ? Overlay::Contents : (tool == 1 ? Overlay::Text : Overlay::More);
+    return tool == 2 ? Overlay::Contents : (tool == 3 ? Overlay::Text : Overlay::More);
+  };
+  const auto activateTool = [this, &toolOverlay](int tool) {
+    focusedTool = std::clamp(tool, 0, 4);
+    if (focusedTool >= 2) {
+      openOverlay(toolOverlay(focusedTool));
+      return;
+    }
+
+    // Lookup and History are immediate tools, not panels. Tear down the
+    // overlay first so their child activities own a clean reader page and
+    // resume the reader timer; the launched activity pauses it again.
+    overlay = Overlay::None;
+    overlayPopup.dismiss();
+    toolbarUi.reset();
+    discardOverlayPage();
+    resumeReadingStats();
+    onReaderMenuConfirm(focusedTool == 0 ? EpubReaderMenuActivity::MenuAction::DICTIONARY
+                                         : EpubReaderMenuActivity::MenuAction::LOOKUP_HISTORY);
   };
 
   // Touch first: FreeInkUI routes the frame against the tap targets the last
@@ -3155,8 +3192,7 @@ void EpubReaderActivity::handleOverlayInput() {
         closeOverlayToPage();
         return;
       case ReaderToolbarUi::Event::Tool:
-        focusedTool = routed.value;
-        openOverlay(toolOverlay(focusedTool));
+        activateTool(routed.value);
         return;
       case ReaderToolbarUi::Event::PrevChapter:
         gotoSpine(currentSpineIndex - 1);
@@ -3179,19 +3215,19 @@ void EpubReaderActivity::handleOverlayInput() {
       return;
     }
     if (mappedInput.wasReleased(MappedInputManager::Button::Left)) {
-      focusedTool = (focusedTool + 2) % 3;
+      focusedTool = (focusedTool + 4) % 5;
       panelCursorShown = true;
       fastRedraw();
       return;
     }
     if (mappedInput.wasReleased(MappedInputManager::Button::Right)) {
-      focusedTool = (focusedTool + 1) % 3;
+      focusedTool = (focusedTool + 1) % 5;
       panelCursorShown = true;
       fastRedraw();
       return;
     }
     if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-      openOverlay(toolOverlay(focusedTool));
+      activateTool(focusedTool);
       return;
     }
     const bool prev = mappedInput.wasReleased(MappedInputManager::Button::Up);
@@ -3219,9 +3255,10 @@ void EpubReaderActivity::handleOverlayInput() {
         overlay = Overlay::None;
         overlayPopup.dismiss();
         discardOverlayPage();
-        startActivityForResult(std::make_unique<TextSettingsActivity>(renderer, mappedInput, &sdFontSystem.registry(),
-                                                                      TextSettingsActivity::Tab::Family, false,
-                                                                      [this] { saveBookReaderSettings(); }),
+        startActivityForResult(std::make_unique<TextSettingsActivity>(
+                                   renderer, mappedInput, &sdFontSystem.registry(), TextSettingsActivity::Tab::Family,
+                                   false, [this] { saveBookReaderSettings(); }, &bookReaderSettings.wordSpacing,
+                                   &bookReaderSettings.repairParagraphIndent),
                                [this](const ActivityResult&) {
                                  applyReaderTextSettings();
                                  overlay = Overlay::Text;  // back to the Text panel
@@ -3295,12 +3332,9 @@ void EpubReaderActivity::handleOverlayInput() {
       dismissPanel();
       return;
     case ReaderToolbarUi::Event::Tool: {
-      // Sheet-bottom tool switcher: hop straight to another panel.
-      const Overlay target = toolOverlay(routed.value);
-      if (target != overlay) {
-        focusedTool = routed.value;
-        openOverlay(target);
-      }
+      // Sheet-bottom switcher: launch quick dictionary tools or hop directly
+      // to another panel.
+      if (routed.value < 2 || toolOverlay(routed.value) != overlay) activateTool(routed.value);
       return;
     }
     case ReaderToolbarUi::Event::Row:

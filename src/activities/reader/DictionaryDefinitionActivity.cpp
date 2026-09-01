@@ -23,6 +23,7 @@
 #include "fontIds.h"
 #include "util/DictHtmlPages.h"
 #include "util/DictionaryHistoryStore.h"
+#include "util/DictionaryTypography.h"
 #include "util/HtmlToPlainText.h"
 
 namespace {
@@ -112,8 +113,9 @@ DictionaryDefinitionActivity::BodyArea DictionaryDefinitionActivity::bodyArea() 
 bool DictionaryDefinitionActivity::layoutHtmlPages() {
   const BodyArea body = bodyArea();
   if (body.width <= 0 || body.height <= 0) return false;
-  if (!buildDictionaryHtmlPages(renderer, definition, static_cast<uint16_t>(body.width),
-                                static_cast<uint16_t>(body.height), pages)) {
+  if (!buildDictionaryHtmlPages(renderer, definition, dictionary_typography::bodyFontId(SETTINGS.fontPointSize),
+                                dictionary_typography::lineCompression(SETTINGS.lineSpacing),
+                                static_cast<uint16_t>(body.width), static_cast<uint16_t>(body.height), pages)) {
     return false;
   }
   definition.clear();
@@ -139,7 +141,7 @@ void DictionaryDefinitionActivity::wrapText() {
   lines.clear();
   lines.reserve(definition.size() / 32 + 8);
 
-  const int fontId = SETTINGS.getReaderFontId();
+  const int fontId = dictionary_typography::bodyFontId(SETTINGS.fontPointSize);
   // SD-card fonts: merge every definition codepoint into the persistent
   // advance table up front. Otherwise each unseen codepoint measured below
   // falls back to an on-demand glyph load from SD (8-slot overflow ring).
@@ -243,7 +245,7 @@ void DictionaryDefinitionActivity::extractVisibleWords() {
   words.clear();
   words.reserve(96);
   rowCount = 0;
-  const int fontId = SETTINGS.getReaderFontId();
+  const int fontId = dictionary_typography::bodyFontId(SETTINGS.fontPointSize);
   const int ascender = renderer.getFontAscenderSize(fontId);
   const auto& metrics = UITheme::getInstance().getMetrics();
   const Rect safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
@@ -315,7 +317,7 @@ void DictionaryDefinitionActivity::extractVisibleWords() {
 
 int DictionaryDefinitionActivity::wordAt(const int x, const int y) const {
   constexpr int SLOP = 4;
-  const int lineHeight = renderer.getLineHeight(SETTINGS.getReaderFontId());
+  const int lineHeight = renderer.getLineHeight(dictionary_typography::bodyFontId(SETTINGS.fontPointSize));
   for (int i = 0; i < static_cast<int>(words.size()); ++i) {
     const auto& word = words[i];
     if (x >= word.x - SLOP && x < word.x + word.width + SLOP && y >= word.y - SLOP && y < word.y + lineHeight + SLOP) {
@@ -645,7 +647,7 @@ void DictionaryDefinitionActivity::render(RenderLock&&) {
   // Body: two-pass draw inside a prewarm scope (same pattern as the reader's
   // renderContents) so SD-card font glyphs load from SD in one batch instead
   // of one on-demand overflow read per character on every page turn.
-  const int fontId = SETTINGS.getReaderFontId();
+  const int fontId = dictionary_typography::bodyFontId(SETTINGS.fontPointSize);
   const int bodyStartY = safe.y + metrics.topPadding + metrics.headerHeight;
   auto* fcm = renderer.getFontCacheManager();
   auto scope = fcm->createPrewarmScope();

@@ -23,7 +23,8 @@ class TextSettingsActivity final : public UiTabListActivity {
 
   TextSettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const SdCardFontRegistry* registry,
                        Tab initialTab = Tab::Family, bool persistGlobally = true,
-                       std::function<void()> onSettingsChanged = {});
+                       std::function<void()> onSettingsChanged = {}, uint8_t* bookWordSpacing = nullptr,
+                       uint8_t* bookRepairParagraphIndent = nullptr);
 
   void onEnter() override;
   void render(RenderLock&&) override;
@@ -31,7 +32,7 @@ class TextSettingsActivity final : public UiTabListActivity {
  private:
   // Row indices per tab. enum class (not plain enum) so a LayoutRow can't be
   // silently confused with a StyleRow of equal value.
-  enum class LayoutRow { LineSpacing, ParaSpacing, Alignment, ScreenMargin, Count };
+  enum class LayoutRow { LineSpacing, ParaSpacing, RepairIndent, WordSpacing, Alignment, ScreenMargin, Count };
   enum class StyleRow { FocusReading, Hyphenation, EmbeddedStyle, AntiAliasing, Count };
 
   // --- UiTabListActivity contract ---
@@ -51,6 +52,8 @@ class TextSettingsActivity final : public UiTabListActivity {
   // Repopulates sizes_ (and currentSizeIndex_) from the active family's
   // installed point sizes. Call after any family change.
   void rebuildSizeList();
+  LayoutRow layoutRowAt(int listIndex) const;
+  int layoutRowCount() const;
   void confirmLayoutRow(int row);
   void confirmStyleRow(int row);
   // Applies the row at the given list index for the active tab (Confirm and tap share this).
@@ -89,6 +92,8 @@ class TextSettingsActivity final : public UiTabListActivity {
   const SdCardFontRegistry* registry_;
   bool persistGlobally_ = true;
   std::function<void()> onSettingsChanged_;
+  uint8_t* bookWordSpacing_ = nullptr;
+  uint8_t* bookRepairParagraphIndent_ = nullptr;
   OptionPopup optionPopup_;
   std::vector<FontEntry> fonts_;
   std::vector<SizeEntry> sizes_;

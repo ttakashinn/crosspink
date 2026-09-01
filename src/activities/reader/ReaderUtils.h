@@ -199,6 +199,18 @@ inline void displayBaseWithRefreshCycle(const GfxRenderer& renderer, int& pagesU
   }
 }
 
+// Finish any B/W base refresh before controller RAM is repurposed for gray
+// selector planes. Request the X3 settle hook only when planes will follow and
+// the panel did not defer/combine its own base waveform. Other panels keep
+// their established driver path because preconditionGrayscale() is a no-op
+// there.
+inline void prepareGrayscalePlanes(const GfxRenderer& renderer, const bool planesAvailable, const bool combinedBase) {
+  renderer.waitRefreshComplete();
+  if (grayscale_pass::shouldPrecondition(planesAvailable, combinedBase)) {
+    renderer.preconditionGrayscale();
+  }
+}
+
 // Grayscale anti-aliasing pass. Renders content twice (LSB + MSB) to build
 // the grayscale buffer. Only the content callback is re-rendered — status bars
 // and other overlays should be drawn before calling this.
@@ -215,7 +227,7 @@ bool renderAntiAliased(GfxRenderer& renderer, RenderFn&& renderFn) {
       return makeUniqueNoThrow<uint8_t[]>(bytes);
     });
 
-    renderer.waitRefreshComplete();
+    prepareGrayscalePlanes(renderer, scratch != nullptr, renderer.combinesGrayscaleBase());
     if (!scratch) {
       LOG_ERR("READER", "Grayscale applied=0 path=strip reason=scratch-oom free=%u largest=%u min_rows=%u min_bytes=%u",
               static_cast<unsigned>(freeBefore), static_cast<unsigned>(largestBefore),
@@ -267,6 +279,8 @@ bool renderAntiAliased(GfxRenderer& renderer, RenderFn&& renderFn) {
     if (renderer.combinesGrayscaleBase()) renderer.cleanupGrayscaleWithFrameBuffer();
     return false;
   }
+
+  prepareGrayscalePlanes(renderer, true, renderer.combinesGrayscaleBase());
 
   renderer.clearScreen(0x00);
   renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);

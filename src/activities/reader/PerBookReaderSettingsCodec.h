@@ -14,10 +14,11 @@
 namespace PerBookReaderSettingsCodec {
 
 constexpr std::array<uint8_t, 4> MAGIC = {'V', 'N', 'S', 'R'};
-constexpr uint8_t VERSION = 3;
+constexpr uint8_t VERSION = 4;
 constexpr uint16_t V1_PAYLOAD_SIZE = 45;
 constexpr uint16_t V2_PAYLOAD_SIZE = 55;
-constexpr uint16_t PAYLOAD_SIZE = 88;
+constexpr uint16_t V3_PAYLOAD_SIZE = 88;
+constexpr uint16_t PAYLOAD_SIZE = 90;
 constexpr size_t VERSION_OFFSET = 4;
 constexpr size_t LENGTH_OFFSET = 5;
 constexpr size_t CRC_OFFSET = 7;
@@ -87,7 +88,9 @@ inline bool validDictionaryName(const std::array<char, PerBookReaderSettings::DI
 
 inline bool isValid(const PerBookReaderSettings& settings) {
   const auto toggle = [](const uint8_t value) { return value <= 1; };
-  return settings.fontFamily < CrossPointSettings::FONT_FAMILY_COUNT && settings.fontPointSize >= 8 &&
+  return settings.hasOverrides == (settings.overrideMask != 0) &&
+         (settings.overrideMask & ~PerBookReaderSettings::ALL_READER_OVERRIDE_FIELDS) == 0 &&
+         settings.fontFamily < CrossPointSettings::FONT_FAMILY_COUNT && settings.fontPointSize >= 8 &&
          settings.fontPointSize <= 40 && settings.lineSpacing < CrossPointSettings::LINE_COMPRESSION_COUNT &&
          settings.paragraphAlignment < CrossPointSettings::PARAGRAPH_ALIGNMENT_COUNT &&
          settings.orientation < CrossPointSettings::ORIENTATION_COUNT &&
@@ -135,6 +138,7 @@ inline bool encode(const PerBookReaderSettings& settings, Encoded& encoded) {
   writeU32(payload + 51, settings.fallbackRenderSignature);
   payload[55] = settings.hasDictionaryOverride ? 1 : 0;
   std::memcpy(payload + 56, settings.dictionaryName.data(), settings.dictionaryName.size());
+  writeU16(payload + 88, settings.overrideMask);
   writeU32(encoded.data() + CRC_OFFSET, crc32(payload, PAYLOAD_SIZE));
   return true;
 }
@@ -144,8 +148,11 @@ inline DecodeStatus decode(const uint8_t* bytes, const size_t length, PerBookRea
   if (!std::equal(MAGIC.begin(), MAGIC.end(), bytes)) return DecodeStatus::BAD_MAGIC;
   const uint8_t version = bytes[VERSION_OFFSET];
   if (version > VERSION) return DecodeStatus::NEWER_VERSION;
-  if (version != 1 && version != 2 && version != VERSION) return DecodeStatus::UNSUPPORTED_VERSION;
-  const uint16_t expectedPayloadSize = version == 1 ? V1_PAYLOAD_SIZE : (version == 2 ? V2_PAYLOAD_SIZE : PAYLOAD_SIZE);
+  if (version < 1 || version > VERSION) return DecodeStatus::UNSUPPORTED_VERSION;
+  const uint16_t expectedPayloadSize = version == 1   ? V1_PAYLOAD_SIZE
+                                       : version == 2 ? V2_PAYLOAD_SIZE
+                                       : version == 3 ? V3_PAYLOAD_SIZE
+                                                      : PAYLOAD_SIZE;
   const size_t expectedSize = PAYLOAD_OFFSET + expectedPayloadSize;
   if (length < expectedSize) return DecodeStatus::TRUNCATED;
   if (length != expectedSize) return DecodeStatus::WRONG_SIZE;
@@ -181,6 +188,16 @@ inline DecodeStatus decode(const uint8_t* bytes, const size_t length, PerBookRea
     if (payload[55] > 1) return DecodeStatus::INVALID_VALUE;
     decoded.hasDictionaryOverride = payload[55] != 0;
     std::memcpy(decoded.dictionaryName.data(), payload + 56, decoded.dictionaryName.size());
+  }
+  if (version >= 4) {
+    decoded.overrideMask = readU16(payload + 88);
+    if (decoded.hasOverrides != (decoded.overrideMask != 0)) return DecodeStatus::INVALID_VALUE;
+    decoded.hasOverrides = decoded.overrideMask != 0;
+  } else {
+    // Versions 1..3 only had an all-or-nothing flag. Preserve their exact
+    // behavior on migration; the next save narrows this to fields that differ
+    // from current global defaults.
+    decoded.overrideMask = decoded.hasOverrides ? PerBookReaderSettings::ALL_READER_OVERRIDE_FIELDS : 0;
   }
   if (!isValid(decoded)) return DecodeStatus::INVALID_VALUE;
   settings = decoded;

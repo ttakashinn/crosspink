@@ -57,6 +57,7 @@ void EpubReaderMenuActivity::buildMenuRowItems() {
       fui::ListItem item;
       item.label = I18N.get(tabItems[tab][i].labelId);
       item.actionValue = static_cast<int16_t>(i);
+      item.chevron = opensChildScreen(tabItems[tab][i].action);
       menuRowItems[tab][i] = item;
     }
   }
@@ -71,19 +72,19 @@ void EpubReaderMenuActivity::buildMenuItems(std::vector<MenuItem>& items, bool h
   // presence of footnotes/bookmarks or on the size of the settings section.
   items.push_back({MenuAction::DICTIONARY, StrId::STR_LOOKUP});
   items.push_back({MenuAction::LOOKUP_HISTORY, StrId::STR_DICT_HISTORY});
-  items.push_back({MenuAction::DICTIONARY_SWITCH, StrId::STR_DICT_SWITCH});
-  items.push_back({MenuAction::DICTIONARY_BOOK, StrId::STR_DICT_BOOK});
   items.push_back({MenuAction::SELECT_CHAPTER, StrId::STR_SELECT_CHAPTER});
   if (hasFootnotes) {
     items.push_back({MenuAction::FOOTNOTES, StrId::STR_FOOTNOTES});
   }
+  items.push_back({MenuAction::GO_TO_PERCENT, StrId::STR_GO_TO_PERCENT});
+  items.push_back({MenuAction::AUTO_PAGE_TURN, StrId::STR_AUTO_TURN_INTERVAL});
+  items.push_back({MenuAction::DICTIONARY_SWITCH, StrId::STR_DICT_SWITCH});
+  items.push_back({MenuAction::DICTIONARY_BOOK, StrId::STR_DICT_BOOK});
   if (hasBookmarks) {
     items.push_back({MenuAction::BOOKMARKS, StrId::STR_BOOKMARKS});
   }
   items.push_back({MenuAction::TOGGLE_BOOKMARK, StrId::STR_TOGGLE_BOOKMARK});
   items.push_back({MenuAction::TEXT_SETTINGS, StrId::STR_TEXT_SETTINGS});
-  items.push_back({MenuAction::WORD_SPACING, StrId::STR_WORD_SPACING});
-  items.push_back({MenuAction::REPAIR_PARAGRAPH_INDENT, StrId::STR_REPAIR_PARAGRAPH_INDENT});
   items.push_back({MenuAction::RENDER_MODE, StrId::STR_RENDER_MODE});
   if (hasRenderFallback) {
     items.push_back({MenuAction::TRY_FULL_RENDER_QUALITY, StrId::STR_TRY_FULL_RENDER_QUALITY});
@@ -95,14 +96,33 @@ void EpubReaderMenuActivity::buildMenuItems(std::vector<MenuItem>& items, bool h
   items.push_back({MenuAction::HIGHLIGHT_TEXT, StrId::STR_HIGHLIGHT_TEXT});
   items.push_back({MenuAction::MY_CLIPPINGS, StrId::STR_MY_CLIPPINGS});
   items.push_back({MenuAction::ROTATE_SCREEN, StrId::STR_ORIENTATION});
-  items.push_back({MenuAction::AUTO_PAGE_TURN, StrId::STR_AUTO_TURN_INTERVAL});
-  items.push_back({MenuAction::GO_TO_PERCENT, StrId::STR_GO_TO_PERCENT});
   items.push_back({MenuAction::READING_STATS, StrId::STR_READING_STATS});
   items.push_back({MenuAction::SCREENSHOT, StrId::STR_SCREENSHOT_BUTTON});
   items.push_back({MenuAction::DISPLAY_QR, StrId::STR_DISPLAY_QR});
   items.push_back({MenuAction::GO_HOME, StrId::STR_GO_HOME_BUTTON});
   items.push_back({MenuAction::SYNC, StrId::STR_SYNC_PROGRESS});
   items.push_back({MenuAction::DELETE_CACHE, StrId::STR_DELETE_CACHE});
+}
+
+bool EpubReaderMenuActivity::opensChildScreen(const MenuAction action) {
+  switch (action) {
+    case MenuAction::DICTIONARY:
+    case MenuAction::LOOKUP_HISTORY:
+    case MenuAction::DICTIONARY_SWITCH:
+    case MenuAction::DICTIONARY_BOOK:
+    case MenuAction::SELECT_CHAPTER:
+    case MenuAction::FOOTNOTES:
+    case MenuAction::GO_TO_PERCENT:
+    case MenuAction::BOOKMARKS:
+    case MenuAction::TEXT_SETTINGS:
+    case MenuAction::HIGHLIGHT_TEXT:
+    case MenuAction::MY_CLIPPINGS:
+    case MenuAction::READING_STATS:
+    case MenuAction::DISPLAY_QR:
+      return true;
+    default:
+      return false;
+  }
 }
 
 EpubReaderMenuActivity::Tab EpubReaderMenuActivity::tabForAction(const MenuAction action) {
@@ -114,6 +134,13 @@ EpubReaderMenuActivity::Tab EpubReaderMenuActivity::tabForAction(const MenuActio
     case MenuAction::DISPLAY_QR:
     case MenuAction::SYNC:
       return Tab::Marks;
+    case MenuAction::TEXT_SETTINGS:
+    case MenuAction::WORD_SPACING:
+    case MenuAction::REPAIR_PARAGRAPH_INDENT:
+    case MenuAction::RENDER_MODE:
+    case MenuAction::TRY_FULL_RENDER_QUALITY:
+    case MenuAction::NIGHT_MODE:
+    case MenuAction::FRONTLIGHT:
     case MenuAction::ROTATE_SCREEN:
     case MenuAction::READING_STATS:
     case MenuAction::SCREENSHOT:

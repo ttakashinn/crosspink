@@ -681,10 +681,10 @@ void SleepActivity::renderDictionaryReviewSleepScreen() const {
   }
   y += 8;
   if (!selected.phonetic.empty()) {
-    const auto phoneticLines = renderer.wrappedText(UI_10_FONT_ID, selected.phonetic.c_str(), contentWidth, 2);
+    const auto phoneticLines = renderer.wrappedText(NOTOSANS_14_FONT_ID, selected.phonetic.c_str(), contentWidth, 2);
     for (const auto& line : phoneticLines) {
-      renderer.drawCenteredText(UI_10_FONT_ID, y, line.c_str());
-      y += renderer.getLineHeight(UI_10_FONT_ID);
+      renderer.drawCenteredText(NOTOSANS_14_FONT_ID, y, line.c_str());
+      y += renderer.getLineHeight(NOTOSANS_14_FONT_ID);
     }
     y += 16;
   } else {

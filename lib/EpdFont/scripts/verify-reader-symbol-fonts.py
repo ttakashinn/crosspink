@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify curated VNS symbols exist in every generated Noto reader face."""
+"""Verify curated symbols and common IPA glyphs in every Noto reader face."""
 
 from pathlib import Path
 import re
@@ -13,6 +13,7 @@ SYMBOLS = (
     0x25A0, 0x25A1, 0x25C6, 0x25C7, 0x25CB, 0x25CF,
     0x2605, 0x2606, 0x2661, 0x2665, 0x2713, 0x2717,
 )
+IPA_SAMPLES = tuple(map(ord, "ɪʊəæʌɑɔɒɜŋβθχðʃʒɡɹˈˌːʰ"))
 
 
 def header_intervals(path: Path, font_name: str) -> list[tuple[int, int]]:
@@ -48,8 +49,9 @@ def main() -> int:
                 except ValueError as error:
                     errors.append(str(error))
                     continue
+                required = SYMBOLS + (IPA_SAMPLES if family == "notosans" else ())
                 missing = [
-                    f"U+{cp:04X}" for cp in SYMBOLS
+                    f"U+{cp:04X}" for cp in required
                     if not any(first <= cp <= last for first, last in intervals)
                 ]
                 if missing:
@@ -60,7 +62,10 @@ def main() -> int:
         for error in errors:
             print(f"  - {error}", file=sys.stderr)
         return 1
-    print(f"Verified {len(SYMBOLS)} curated symbols in all 32 Noto reader font faces.")
+    print(
+        f"Verified {len(SYMBOLS)} curated symbols in all 32 Noto faces and "
+        f"{len(IPA_SAMPLES)} IPA glyphs in all 16 Noto Sans faces."
+    )
     return 0
 
 

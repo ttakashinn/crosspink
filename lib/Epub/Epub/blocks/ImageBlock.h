@@ -19,6 +19,10 @@ class ImageBlock final : public Block {
   bool hasValidCache() const;
   bool needsDecode() const;
   void renderPlaceholder(GfxRenderer& renderer, int x, int y) const;
+  // Start a new visible page render. Failures are suppressed only within this
+  // render (which can draw the same image many times for grayscale planes), so
+  // transient SD/heap failures are retried when the page is rendered again.
+  static void beginRenderCycle();
   static void clearSessionRenderFailures();
 
   // A page render draws its image up to ~13 times (BW double-refresh plus every

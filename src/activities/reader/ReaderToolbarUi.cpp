@@ -17,7 +17,7 @@ namespace fui = freeink::ui;
 
 namespace {
 constexpr fui::ActionId ACTION_DISMISS = 1;  // tap anywhere on the page above the sheet
-constexpr fui::ActionId ACTION_TOOL = 2;     // value = 0 Contents, 1 Text, 2 More
+constexpr fui::ActionId ACTION_TOOL = 2;     // value = 0 Lookup, 1 History, 2 Contents, 3 Text, 4 More
 constexpr fui::ActionId ACTION_PREV = 3;     // scrub row: previous chapter
 constexpr fui::ActionId ACTION_NEXT = 4;     // scrub row: next chapter
 constexpr fui::ActionId ACTION_SCRUB = 5;    // progress track: dragPermille along the book
@@ -33,7 +33,7 @@ constexpr int16_t kScrubGap = 12;     // air between the buttons and the track
 // pill. The whole slot is the tap target; the row height sets its size.
 constexpr int16_t kToolRowH = 80;
 constexpr int16_t kToolPillInset = 10;
-constexpr int kToolCount = 3;
+constexpr int kToolCount = 5;
 // Bottom sheet height for the panels. ListNav fits whole rows in the remaining
 // list area; any spare pixels stay between the list and the switcher.
 constexpr int kPanelHeightPercent = 62;
@@ -95,15 +95,17 @@ void ReaderToolbarUi::screenFn(UiScreen& screen, void* user) {
   }
 }
 
-// The Contents / Text / More row: three equal slots, an icon centred in each,
-// the active one inside an outline pill (the theme's control radius). Each
+// Lookup / History are first because they are the highest-frequency reader
+// actions; Contents / Text / More follow as the 3 navigation panels.
+// The active panel sits inside an outline pill (the theme's control radius). Each
 // slot is registered as one tap target, so the row stays light (no filled
 // tiles, no labels -- the glyphs carry the meaning).
 void ReaderToolbarUi::buildToolRow(UiScreen& screen, const fui::LayoutAnchor anchor, const int16_t sideInset) {
   const auto& tokens = screen.theme();
-  const fui::BitmapRef icons[kToolCount] = {fui::bitmapFromIcon(icon_reader_contents_24),
-                                            fui::bitmapFromIcon(icon_reader_text_24),
-                                            fui::bitmapFromIcon(icon_reader_more_24)};
+  const fui::BitmapRef icons[kToolCount] = {
+      fui::bitmapFromIcon(icon_reader_lookup_24), fui::bitmapFromIcon(icon_reader_history_24),
+      fui::bitmapFromIcon(icon_reader_contents_24), fui::bitmapFromIcon(icon_reader_text_24),
+      fui::bitmapFromIcon(icon_reader_more_24)};
   const fui::Rect row = screen.take(anchor, kToolRowH).inset(fui::Insets{0, sideInset, 0, sideInset});
   const int16_t slotW = static_cast<int16_t>(row.width / kToolCount);
   // Theme radius as-is (the frontlight panel pattern); the fill clamps to
@@ -275,6 +277,7 @@ void ReaderToolbarUi::buildPanel(UiScreen& screen) {
     fui::ListItem item;
     item.label = windowLabels_[i].c_str();
     item.value = windowValues_[i].empty() ? nullptr : windowValues_[i].c_str();
+    item.chevron = model_.rowChevron ? model_.rowChevron(index) : false;
     item.actionValue = static_cast<int16_t>(index);
     windowItems_[i] = item;
   }

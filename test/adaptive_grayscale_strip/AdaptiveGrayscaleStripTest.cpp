@@ -51,7 +51,7 @@ TEST(AdaptiveGrayscaleStripTest, ReportsFailureOnlyAfterEveryBoundedRetry) {
 
   EXPECT_EQ(nullptr, buffer);
   EXPECT_EQ(0, rows);
-  EXPECT_EQ((std::vector<size_t>{8000, 4000, 2000, 1000}), attempts);
+  EXPECT_EQ((std::vector<size_t>{8000, 4000, 2000, 1000, 500}), attempts);
 }
 
 TEST(AdaptiveGrayscaleStripTest, RejectsInvalidRowWidthWithoutAllocating) {
@@ -65,4 +65,11 @@ TEST(AdaptiveGrayscaleStripTest, RejectsInvalidRowWidthWithoutAllocating) {
   EXPECT_EQ(nullptr, buffer);
   EXPECT_EQ(0, rows);
   EXPECT_FALSE(called);
+}
+
+TEST(GrayscalePassPolicy, PreconditionRequiresPlanesAndAnIndependentBaseWaveform) {
+  EXPECT_TRUE(grayscale_pass::shouldPrecondition(true, false));
+  EXPECT_FALSE(grayscale_pass::shouldPrecondition(false, false));
+  EXPECT_FALSE(grayscale_pass::shouldPrecondition(true, true));
+  EXPECT_FALSE(grayscale_pass::shouldPrecondition(false, true));
 }

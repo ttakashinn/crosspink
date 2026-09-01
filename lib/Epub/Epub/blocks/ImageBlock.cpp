@@ -69,13 +69,14 @@ bool readValidCacheHeader(HalFile& cacheFile, const int expectedWidth, const int
   return cacheFile.size() == expectedSize;
 }
 
-// Pages are deserialized afresh on each visit. Keep a bounded, allocation-free
-// record so an image that failed renders its placeholder directly for the rest
-// of the reader session instead of paying another placeholder refresh and
-// decode. The reader clears this on entry so transient memory/storage failures
-// are retried.
-constexpr size_t MAX_SESSION_IMAGE_FAILURES = 16;
-uint64_t failedImageHashes[MAX_SESSION_IMAGE_FAILURES];
+// A visible page is rendered repeatedly: once in B/W and again for every
+// grayscale plane/strip. Keep a bounded, allocation-free record of failures
+// only for the current render cycle so those repeated passes do not retry an
+// expensive failed decode. The next visible render starts a fresh cycle and
+// retries transient SD/heap failures instead of hiding the image for the rest
+// of the reader session.
+constexpr size_t MAX_RENDER_IMAGE_FAILURES = 16;
+uint64_t failedImageHashes[MAX_RENDER_IMAGE_FAILURES];
 size_t failedImageCount = 0;
 
 uint64_t imagePathHash(const std::string& path) {
@@ -87,7 +88,7 @@ uint64_t imagePathHash(const std::string& path) {
   return hash;
 }
 
-bool imageFailedThisSession(const std::string& path) {
+bool imageFailedThisRender(const std::string& path) {
   const uint64_t hash = imagePathHash(path);
   for (size_t i = 0; i < failedImageCount; i++) {
     if (failedImageHashes[i] == hash) return true;
@@ -96,7 +97,7 @@ bool imageFailedThisSession(const std::string& path) {
 }
 
 void rememberImageFailure(const std::string& path) {
-  if (failedImageCount == MAX_SESSION_IMAGE_FAILURES || imageFailedThisSession(path)) return;
+  if (failedImageCount == MAX_RENDER_IMAGE_FAILURES || imageFailedThisRender(path)) return;
   failedImageHashes[failedImageCount++] = imagePathHash(path);
 }
 
@@ -336,7 +337,9 @@ bool ImageBlock::hasValidCache() const {
   return valid;
 }
 
-bool ImageBlock::needsDecode() const { return !imageFailedThisSession(imagePath) && !hasValidCache(); }
+bool ImageBlock::needsDecode() const { return !imageFailedThisRender(imagePath) && !hasValidCache(); }
+
+void ImageBlock::beginRenderCycle() { failedImageCount = 0; }
 
 void ImageBlock::clearSessionRenderFailures() { failedImageCount = 0; }
 
@@ -386,7 +389,7 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
     return;
   }
 
-  if (imageFailedThisSession(imagePath)) {
+  if (imageFailedThisRender(imagePath)) {
     renderPlaceholder(renderer, x, y);
     return;
   }

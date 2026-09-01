@@ -50,6 +50,7 @@ class EpubReaderMenuActivity final : public UiTabListActivity {
 
   static void buildMenuItems(std::vector<MenuItem>& items, bool hasFootnotes, bool hasBookmarks,
                              bool hasRenderFallback = false);
+  static bool opensChildScreen(MenuAction action);
 
   explicit EpubReaderMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const std::string& title,
                                   const int currentPage, const int totalPages, const int bookProgressPercent,

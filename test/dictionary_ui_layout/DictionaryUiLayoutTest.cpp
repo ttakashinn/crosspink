@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include "DictionaryTypography.h"
 #include "DictionaryUiLayout.h"
 
 TEST(DictionaryUiLayout, HeadwordUsesSafeBandWhenThereIsNoCounter) {
@@ -22,4 +23,18 @@ TEST(DictionaryUiLayout, DegenerateBandNeverProducesNegativeWidth) {
   EXPECT_EQ(layout.titleX, 30);
   EXPECT_EQ(layout.titleWidth, 0);
   EXPECT_EQ(layout.counterX, 30);
+}
+
+TEST(DictionaryTypography, UsesStableBuiltinFacesInsteadOfTheBookFont) {
+  EXPECT_EQ(dictionary_typography::bodyFontId(8), NOTOSANS_12_FONT_ID);
+  EXPECT_EQ(dictionary_typography::bodyFontId(14), NOTOSANS_14_FONT_ID);
+  EXPECT_EQ(dictionary_typography::bodyFontId(16), NOTOSANS_16_FONT_ID);
+  EXPECT_EQ(dictionary_typography::bodyFontId(40), NOTOSANS_18_FONT_ID);
+}
+
+TEST(DictionaryTypography, UsesNotoSansLineCompression) {
+  EXPECT_FLOAT_EQ(dictionary_typography::lineCompression(0), 0.90f);
+  EXPECT_FLOAT_EQ(dictionary_typography::lineCompression(1), 0.95f);
+  EXPECT_FLOAT_EQ(dictionary_typography::lineCompression(2), 1.0f);
+  EXPECT_FLOAT_EQ(dictionary_typography::lineCompression(3), 1.05f);
 }

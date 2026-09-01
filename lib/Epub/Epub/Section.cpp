@@ -55,7 +55,9 @@ namespace {
 // v47: Per-book word spacing and paragraph-indent repair join the render spec.
 // v48: Persist bounded internal-link hit rectangles with each page.
 // v49: Persist the publisher page label resolved for each page.
-constexpr uint8_t SECTION_FILE_VERSION = 49;
+// v50: Paragraph spacing no longer suppresses explicit first-line indents, and
+//      missing indents are synthesized only by paragraph-indent repair.
+constexpr uint8_t SECTION_FILE_VERSION = 50;
 // Written into the version field while a build is in progress; patched to
 // SECTION_FILE_VERSION only when the build is finalized. An abandoned /
 // crash-interrupted .bin therefore carries version 0, which loadSectionFile rejects

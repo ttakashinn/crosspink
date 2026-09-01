@@ -24,8 +24,9 @@ namespace {
 // Tab labels for Font | Size | Layout | Style.
 constexpr StrId TAB_NAME_IDS[] = {StrId::STR_FONT, StrId::STR_SIZE, StrId::STR_LAYOUT, StrId::STR_STYLE};
 
-constexpr StrId LAYOUT_ROW_NAME_IDS[] = {StrId::STR_LINE_SPACING, StrId::STR_EXTRA_SPACING, StrId::STR_ALIGNMENT,
-                                         StrId::STR_SCREEN_MARGIN};
+constexpr StrId LAYOUT_ROW_NAME_IDS[] = {
+    StrId::STR_LINE_SPACING, StrId::STR_EXTRA_SPACING, StrId::STR_REPAIR_PARAGRAPH_INDENT,
+    StrId::STR_WORD_SPACING, StrId::STR_ALIGNMENT,     StrId::STR_SCREEN_MARGIN};
 constexpr StrId STYLE_ROW_NAME_IDS[] = {StrId::STR_FOCUS_READING, StrId::STR_HYPHENATION, StrId::STR_EMBEDDED_STYLE,
                                         StrId::STR_TEXT_AA};
 
@@ -45,6 +46,7 @@ int findCurrentFontIndex(const SdCardFontRegistry* registry, const char* sdFontF
 constexpr StrId LINE_SPACING_IDS[] = {StrId::STR_TIGHT, StrId::STR_NORMAL, StrId::STR_WIDE, StrId::STR_EXTRA_WIDE};
 constexpr StrId ALIGNMENT_IDS[] = {StrId::STR_JUSTIFY, StrId::STR_ALIGN_LEFT, StrId::STR_CENTER, StrId::STR_ALIGN_RIGHT,
                                    StrId::STR_BOOK_S_STYLE};
+constexpr StrId WORD_SPACING_IDS[] = {StrId::STR_SPACING_DEFAULT, StrId::STR_SPACING_MEDIUM, StrId::STR_SPACING_WIDE};
 constexpr int MARGIN_MIN = CrossPointSettings::SCREEN_MARGIN_MIN;
 constexpr int MARGIN_MAX = CrossPointSettings::SCREEN_MARGIN_MAX;
 constexpr int MARGIN_STEP = CrossPointSettings::SCREEN_MARGIN_STEP;
@@ -52,12 +54,26 @@ constexpr int MARGIN_STEP = CrossPointSettings::SCREEN_MARGIN_STEP;
 
 TextSettingsActivity::TextSettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                            const SdCardFontRegistry* registry, Tab initialTab,
-                                           const bool persistGlobally, std::function<void()> onSettingsChanged)
+                                           const bool persistGlobally, std::function<void()> onSettingsChanged,
+                                           uint8_t* bookWordSpacing, uint8_t* bookRepairParagraphIndent)
     : UiTabListActivity("TextSettings", renderer, mappedInput),
       registry_(registry),
       persistGlobally_(persistGlobally),
       onSettingsChanged_(std::move(onSettingsChanged)),
+      bookWordSpacing_(bookWordSpacing),
+      bookRepairParagraphIndent_(bookRepairParagraphIndent),
       tab_(initialTab) {}
+
+TextSettingsActivity::LayoutRow TextSettingsActivity::layoutRowAt(const int listIndex) const {
+  if (bookWordSpacing_ && bookRepairParagraphIndent_) return static_cast<LayoutRow>(listIndex);
+  static constexpr LayoutRow globalRows[] = {LayoutRow::LineSpacing, LayoutRow::ParaSpacing, LayoutRow::Alignment,
+                                             LayoutRow::ScreenMargin};
+  return globalRows[std::clamp(listIndex, 0, static_cast<int>(std::size(globalRows)) - 1)];
+}
+
+int TextSettingsActivity::layoutRowCount() const {
+  return bookWordSpacing_ && bookRepairParagraphIndent_ ? static_cast<int>(LayoutRow::Count) : 4;
+}
 
 void TextSettingsActivity::persistSettings() {
   if (persistGlobally_) {
@@ -122,7 +138,7 @@ void TextSettingsActivity::rebuildRowItems() {
         item.label = sizes_[i].name.c_str();
         break;
       case Tab::Layout:
-        item.label = I18N.get(LAYOUT_ROW_NAME_IDS[i]);
+        item.label = I18N.get(LAYOUT_ROW_NAME_IDS[static_cast<int>(layoutRowAt(i))]);
         break;
       case Tab::Style:
         item.label = I18N.get(STYLE_ROW_NAME_IDS[i]);
@@ -262,8 +278,12 @@ const char* TextSettingsActivity::confirmLabelText() const {
   }
   switch (tab_) {
     case Tab::Layout:
-      // Extra Paragraph Spacing toggles; the rest open a picker
-      return ringPos() - 1 == static_cast<int>(LayoutRow::ParaSpacing) ? tr(STR_TOGGLE) : tr(STR_SELECT);
+      // Paragraph spacing and indent repair are independent toggles; the
+      // remaining layout rows open a value picker.
+      return layoutRowAt(ringPos() - 1) == LayoutRow::ParaSpacing ||
+                     layoutRowAt(ringPos() - 1) == LayoutRow::RepairIndent
+                 ? tr(STR_TOGGLE)
+                 : tr(STR_SELECT);
     case Tab::Style:
       return tr(STR_TOGGLE);
     default:
@@ -389,11 +409,28 @@ void TextSettingsActivity::applySize(int listIndex) {
 }
 
 void TextSettingsActivity::confirmLayoutRow(int row) {
-  switch (static_cast<LayoutRow>(row)) {
+  switch (layoutRowAt(row)) {
     case LayoutRow::ParaSpacing:
       SETTINGS.extraParagraphSpacing = !SETTINGS.extraParagraphSpacing;
       persistSettings();
       requestUpdate();
+      break;
+    case LayoutRow::RepairIndent:
+      if (bookRepairParagraphIndent_) {
+        *bookRepairParagraphIndent_ = *bookRepairParagraphIndent_ ? 0 : 1;
+        persistSettings();
+        requestUpdate();
+      }
+      break;
+    case LayoutRow::WordSpacing:
+      if (bookWordSpacing_) {
+        optionPopup_.show(StrId::STR_WORD_SPACING, WORD_SPACING_IDS, static_cast<int>(std::size(WORD_SPACING_IDS)),
+                          std::min<uint8_t>(*bookWordSpacing_, 2), [this](int idx) {
+                            *bookWordSpacing_ = static_cast<uint8_t>(idx);
+                            persistSettings();
+                          });
+        requestUpdate();
+      }
       break;
     case LayoutRow::LineSpacing:
       optionPopup_.show(StrId::STR_LINE_SPACING, LINE_SPACING_IDS, static_cast<int>(std::size(LINE_SPACING_IDS)),
@@ -430,13 +467,17 @@ void TextSettingsActivity::confirmLayoutRow(int row) {
 }
 
 std::string TextSettingsActivity::layoutValueText(int row) const {
-  switch (static_cast<LayoutRow>(row)) {
+  switch (layoutRowAt(row)) {
     case LayoutRow::LineSpacing: {
       const uint8_t v = SETTINGS.lineSpacing;
       return v < std::size(LINE_SPACING_IDS) ? I18N.get(LINE_SPACING_IDS[v]) : I18N.get(StrId::STR_NORMAL);
     }
     case LayoutRow::ParaSpacing:
       return SETTINGS.extraParagraphSpacing ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
+    case LayoutRow::RepairIndent:
+      return bookRepairParagraphIndent_ && *bookRepairParagraphIndent_ ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
+    case LayoutRow::WordSpacing:
+      return bookWordSpacing_ ? I18N.get(WORD_SPACING_IDS[std::min<uint8_t>(*bookWordSpacing_, 2)]) : "";
     case LayoutRow::Alignment: {
       const uint8_t v = SETTINGS.paragraphAlignment;
       return v < std::size(ALIGNMENT_IDS) ? I18N.get(ALIGNMENT_IDS[v]) : I18N.get(StrId::STR_JUSTIFY);
@@ -487,10 +528,15 @@ std::string TextSettingsActivity::styleValueText(int row) const {
   }
 }
 
-// Only Focus Reading shows in the preview (bold prefixes); the other Style rows
-// have no distinct preview.
+// Only base paragraph geometry and Focus Reading are represented in the
+// preview. Book-only repair/word spacing and the remaining Style rows are not.
 bool TextSettingsActivity::focusedRowHasNoPreview() const {
-  if (ringPos() == 0 || tab_ != Tab::Style) return false;
+  if (ringPos() == 0) return false;
+  if (tab_ == Tab::Layout) {
+    const LayoutRow row = layoutRowAt(ringPos() - 1);
+    return row == LayoutRow::RepairIndent || row == LayoutRow::WordSpacing;
+  }
+  if (tab_ != Tab::Style) return false;
   const StyleRow row = static_cast<StyleRow>(ringPos() - 1);
   return row == StyleRow::Hyphenation || row == StyleRow::EmbeddedStyle || row == StyleRow::AntiAliasing;
 }
@@ -513,7 +559,7 @@ int TextSettingsActivity::listCount() const {
     case Tab::Size:
       return static_cast<int>(sizes_.size());
     case Tab::Layout:
-      return static_cast<int>(LayoutRow::Count);
+      return layoutRowCount();
     case Tab::Style:
       return static_cast<int>(StyleRow::Count);
 

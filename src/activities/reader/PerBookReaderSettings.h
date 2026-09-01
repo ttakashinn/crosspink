@@ -11,7 +11,24 @@ struct PerBookReaderSettings {
   static constexpr size_t SD_FONT_NAME_CAPACITY = 32;
   static constexpr size_t DICTIONARY_NAME_CAPACITY = 32;
 
+  enum OverrideField : uint16_t {
+    OVERRIDE_FONT_FAMILY = 1U << 0,  // built-in/SD family and SD family name
+    OVERRIDE_FONT_SIZE = 1U << 1,
+    OVERRIDE_LINE_SPACING = 1U << 2,
+    OVERRIDE_ALIGNMENT = 1U << 3,
+    OVERRIDE_ORIENTATION = 1U << 4,
+    OVERRIDE_MARGIN = 1U << 5,
+    OVERRIDE_EMBEDDED_STYLE = 1U << 6,
+    OVERRIDE_FOCUS_READING = 1U << 7,
+    OVERRIDE_HYPHENATION = 1U << 8,
+    OVERRIDE_PARAGRAPH_SPACING = 1U << 9,
+    OVERRIDE_ANTI_ALIASING = 1U << 10,
+    OVERRIDE_IMAGES = 1U << 11,
+  };
+  static constexpr uint16_t ALL_READER_OVERRIDE_FIELDS = (1U << 12) - 1U;
+
   bool hasOverrides = false;
+  uint16_t overrideMask = 0;
   uint8_t fontFamily = CrossPointSettings::NOTOSERIF;
   uint8_t fontPointSize = CrossPointSettings::DEFAULT_FONT_POINT_SIZE;
   uint8_t lineSpacing = CrossPointSettings::NORMAL;
@@ -44,6 +61,7 @@ struct PerBookReaderSettings {
 inline PerBookReaderSettings captureReaderSettings(const bool hasOverrides = false) {
   PerBookReaderSettings out;
   out.hasOverrides = hasOverrides;
+  out.overrideMask = hasOverrides ? PerBookReaderSettings::ALL_READER_OVERRIDE_FIELDS : 0;
   out.fontFamily = SETTINGS.fontFamily;
   out.fontPointSize = SETTINGS.fontPointSize;
   out.lineSpacing = SETTINGS.lineSpacing;
@@ -57,6 +75,57 @@ inline PerBookReaderSettings captureReaderSettings(const bool hasOverrides = fal
   out.textAntiAliasing = SETTINGS.textAntiAliasing;
   out.imageRendering = SETTINGS.imageRendering;
   std::strncpy(out.sdFontFamilyName.data(), SETTINGS.sdFontFamilyName, out.sdFontFamilyName.size() - 1);
+  return out;
+}
+
+inline uint16_t readerSettingsOverrideMask(const PerBookReaderSettings& current, const PerBookReaderSettings& global) {
+  uint16_t mask = 0;
+  if (current.fontFamily != global.fontFamily || current.sdFontFamilyName != global.sdFontFamilyName) {
+    mask |= PerBookReaderSettings::OVERRIDE_FONT_FAMILY;
+  }
+  if (current.fontPointSize != global.fontPointSize) mask |= PerBookReaderSettings::OVERRIDE_FONT_SIZE;
+  if (current.lineSpacing != global.lineSpacing) mask |= PerBookReaderSettings::OVERRIDE_LINE_SPACING;
+  if (current.paragraphAlignment != global.paragraphAlignment) mask |= PerBookReaderSettings::OVERRIDE_ALIGNMENT;
+  if (current.orientation != global.orientation) mask |= PerBookReaderSettings::OVERRIDE_ORIENTATION;
+  if (current.screenMargin != global.screenMargin) mask |= PerBookReaderSettings::OVERRIDE_MARGIN;
+  if (current.embeddedStyle != global.embeddedStyle) mask |= PerBookReaderSettings::OVERRIDE_EMBEDDED_STYLE;
+  if (current.focusReadingEnabled != global.focusReadingEnabled) mask |= PerBookReaderSettings::OVERRIDE_FOCUS_READING;
+  if (current.hyphenationEnabled != global.hyphenationEnabled) mask |= PerBookReaderSettings::OVERRIDE_HYPHENATION;
+  if (current.extraParagraphSpacing != global.extraParagraphSpacing) {
+    mask |= PerBookReaderSettings::OVERRIDE_PARAGRAPH_SPACING;
+  }
+  if (current.textAntiAliasing != global.textAntiAliasing) mask |= PerBookReaderSettings::OVERRIDE_ANTI_ALIASING;
+  if (current.imageRendering != global.imageRendering) mask |= PerBookReaderSettings::OVERRIDE_IMAGES;
+  return mask;
+}
+
+// Keeps EPUB-only extensions/dictionary selection from `overrides`, while
+// allowing every unmodified typography field to continue following General
+// Settings. This is the effective record used for the open reader session.
+inline PerBookReaderSettings mergeReaderSettings(const PerBookReaderSettings& global,
+                                                 const PerBookReaderSettings& overrides) {
+  PerBookReaderSettings out = overrides;
+  const uint16_t mask = overrides.overrideMask;
+  if (!(mask & PerBookReaderSettings::OVERRIDE_FONT_FAMILY)) {
+    out.fontFamily = global.fontFamily;
+    out.sdFontFamilyName = global.sdFontFamilyName;
+  }
+  if (!(mask & PerBookReaderSettings::OVERRIDE_FONT_SIZE)) out.fontPointSize = global.fontPointSize;
+  if (!(mask & PerBookReaderSettings::OVERRIDE_LINE_SPACING)) out.lineSpacing = global.lineSpacing;
+  if (!(mask & PerBookReaderSettings::OVERRIDE_ALIGNMENT)) out.paragraphAlignment = global.paragraphAlignment;
+  if (!(mask & PerBookReaderSettings::OVERRIDE_ORIENTATION)) out.orientation = global.orientation;
+  if (!(mask & PerBookReaderSettings::OVERRIDE_MARGIN)) out.screenMargin = global.screenMargin;
+  if (!(mask & PerBookReaderSettings::OVERRIDE_EMBEDDED_STYLE)) out.embeddedStyle = global.embeddedStyle;
+  if (!(mask & PerBookReaderSettings::OVERRIDE_FOCUS_READING)) {
+    out.focusReadingEnabled = global.focusReadingEnabled;
+  }
+  if (!(mask & PerBookReaderSettings::OVERRIDE_HYPHENATION)) out.hyphenationEnabled = global.hyphenationEnabled;
+  if (!(mask & PerBookReaderSettings::OVERRIDE_PARAGRAPH_SPACING)) {
+    out.extraParagraphSpacing = global.extraParagraphSpacing;
+  }
+  if (!(mask & PerBookReaderSettings::OVERRIDE_ANTI_ALIASING)) out.textAntiAliasing = global.textAntiAliasing;
+  if (!(mask & PerBookReaderSettings::OVERRIDE_IMAGES)) out.imageRendering = global.imageRendering;
+  out.hasOverrides = mask != 0;
   return out;
 }
 

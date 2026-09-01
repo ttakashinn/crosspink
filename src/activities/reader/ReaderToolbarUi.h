@@ -12,8 +12,8 @@ class MappedInputManager;
 // FreeInkUI chrome for the toolbar reader menu (Settings -> Reader -> Reader
 // Menu Style -> Toolbar), painted over the page that is already on screen:
 //
-//  - Toolbar: a bottom sheet holding a chapter scrub row (< capsule >) and a
-//    Contents / Text / More tile row; the page above it stays untouched.
+//  - Toolbar: a bottom sheet holding a chapter scrub row (< capsule >), quick
+//    Lookup / History actions, and Contents / Text / More panel tools.
 //  - Panel: a taller bottom sheet with a title, a paged row list (name left,
 //    value right) and the same tile row as a switcher.
 //
@@ -38,7 +38,8 @@ class ReaderToolbarUi : public UiAppHost {
     int selectedIndex = -1;  // row the buttons' cursor sits on; -1 = none shown
     std::function<std::string(int)> rowText;
     std::function<std::string(int)> rowValue;
-    // Tile row: the tool in focus (toolbar) / the open panel (panel). 0..2.
+    std::function<bool(int)> rowChevron;
+    // Tile row: quick Lookup/History followed by Contents/Text/More. 0..4.
     int activeTool = 0;
     // Button boards keep the theme's denser list row height (as every other
     // list does there); touch boards use FreeInkUI's finger-sized rows.

@@ -7,6 +7,8 @@ CrossPointSettings SETTINGS;
 TEST(PerBookReaderSettingsCodec, RoundTripsVietnameseSdFontName) {
   PerBookReaderSettings settings;
   settings.hasOverrides = true;
+  settings.overrideMask = PerBookReaderSettings::OVERRIDE_FONT_SIZE | PerBookReaderSettings::OVERRIDE_LINE_SPACING |
+                          PerBookReaderSettings::OVERRIDE_MARGIN;
   settings.fontPointSize = 18;
   settings.lineSpacing = CrossPointSettings::WIDE;
   settings.screenMargin = 15;
@@ -42,6 +44,23 @@ TEST(PerBookReaderSettingsCodec, DetectsPayloadCorruptionAndTrailingBytes) {
             PerBookReaderSettingsCodec::DecodeStatus::TRUNCATED);
 }
 
+TEST(PerBookReaderSettingsCodec, RejectsInconsistentOverrideFlagAndMask) {
+  PerBookReaderSettings settings;
+  settings.hasOverrides = true;
+  settings.overrideMask = PerBookReaderSettings::OVERRIDE_FONT_SIZE;
+  PerBookReaderSettingsCodec::Encoded encoded;
+  ASSERT_TRUE(PerBookReaderSettingsCodec::encode(settings, encoded));
+  uint8_t* payload = encoded.data() + PerBookReaderSettingsCodec::PAYLOAD_OFFSET;
+  payload[0] = 0;
+  PerBookReaderSettingsCodec::writeU32(
+      encoded.data() + PerBookReaderSettingsCodec::CRC_OFFSET,
+      PerBookReaderSettingsCodec::crc32(payload, PerBookReaderSettingsCodec::PAYLOAD_SIZE));
+
+  PerBookReaderSettings decoded;
+  EXPECT_EQ(PerBookReaderSettingsCodec::decode(encoded.data(), encoded.size(), decoded),
+            PerBookReaderSettingsCodec::DecodeStatus::INVALID_VALUE);
+}
+
 TEST(PerBookReaderSettingsCodec, RefusesUnknownFutureFormat) {
   PerBookReaderSettings settings;
   PerBookReaderSettingsCodec::Encoded encoded;
@@ -73,6 +92,9 @@ TEST(PerBookReaderSettingsCodec, RejectsInvalidValuesBeforeWriting) {
   settings.dictionaryName = {};
   settings.dictionaryName[0] = '/';
   settings.dictionaryName[1] = '\0';
+  EXPECT_FALSE(PerBookReaderSettingsCodec::encode(settings, encoded));
+  settings.dictionaryName = {};
+  settings.hasOverrides = true;
   EXPECT_FALSE(PerBookReaderSettingsCodec::encode(settings, encoded));
 }
 
@@ -109,6 +131,7 @@ TEST(PerBookReaderSettingsCodec, MigratesVersionOneWithSafeExtensionDefaults) {
   EXPECT_EQ(PerBookReaderSettingsCodec::decode(v1.data(), v1.size(), decoded),
             PerBookReaderSettingsCodec::DecodeStatus::OK);
   EXPECT_TRUE(decoded.hasOverrides);
+  EXPECT_EQ(decoded.overrideMask, PerBookReaderSettings::ALL_READER_OVERRIDE_FIELDS);
   EXPECT_EQ(decoded.fontPointSize, 19);
   EXPECT_EQ(decoded.wordSpacing, 0);
   EXPECT_EQ(decoded.repairParagraphIndent, 0);
@@ -161,6 +184,70 @@ TEST(PerBookReaderSettingsCodec, MigratesVersionTwoWithoutInventingDictionaryOve
             PerBookReaderSettingsCodec::DecodeStatus::OK);
   EXPECT_EQ(decoded.fontPointSize, 20);
   EXPECT_EQ(decoded.wordSpacing, 1);
+  EXPECT_EQ(decoded.overrideMask, PerBookReaderSettings::ALL_READER_OVERRIDE_FIELDS);
   EXPECT_FALSE(decoded.hasDictionaryOverride);
   EXPECT_STREQ(decoded.dictionaryName.data(), "");
+}
+
+TEST(PerBookReaderSettingsCodec, MigratesVersionThreeAsAllTypographyFieldsOverridden) {
+  PerBookReaderSettings settings;
+  settings.hasOverrides = true;
+  settings.overrideMask = PerBookReaderSettings::ALL_READER_OVERRIDE_FIELDS;
+  settings.fontPointSize = 21;
+  settings.hasDictionaryOverride = true;
+  const char dictionary[] = "Anh-Việt";
+  std::copy(std::begin(dictionary), std::end(dictionary), settings.dictionaryName.begin());
+
+  PerBookReaderSettingsCodec::Encoded current{};
+  ASSERT_TRUE(PerBookReaderSettingsCodec::encode(settings, current));
+  std::array<uint8_t, PerBookReaderSettingsCodec::PAYLOAD_OFFSET + PerBookReaderSettingsCodec::V3_PAYLOAD_SIZE> v3{};
+  std::copy_n(current.begin(), v3.size(), v3.begin());
+  v3[PerBookReaderSettingsCodec::VERSION_OFFSET] = 3;
+  PerBookReaderSettingsCodec::writeU16(v3.data() + PerBookReaderSettingsCodec::LENGTH_OFFSET,
+                                       PerBookReaderSettingsCodec::V3_PAYLOAD_SIZE);
+  const uint8_t* payload = v3.data() + PerBookReaderSettingsCodec::PAYLOAD_OFFSET;
+  PerBookReaderSettingsCodec::writeU32(
+      v3.data() + PerBookReaderSettingsCodec::CRC_OFFSET,
+      PerBookReaderSettingsCodec::crc32(payload, PerBookReaderSettingsCodec::V3_PAYLOAD_SIZE));
+
+  PerBookReaderSettings decoded;
+  EXPECT_EQ(PerBookReaderSettingsCodec::decode(v3.data(), v3.size(), decoded),
+            PerBookReaderSettingsCodec::DecodeStatus::OK);
+  EXPECT_TRUE(decoded.hasOverrides);
+  EXPECT_EQ(decoded.overrideMask, PerBookReaderSettings::ALL_READER_OVERRIDE_FIELDS);
+  EXPECT_EQ(decoded.fontPointSize, 21);
+  EXPECT_TRUE(decoded.hasDictionaryOverride);
+  EXPECT_STREQ(decoded.dictionaryName.data(), dictionary);
+}
+
+TEST(PerBookReaderSettings, MergesOnlyFieldsMarkedAsBookOverrides) {
+  PerBookReaderSettings global;
+  global.fontPointSize = 14;
+  global.lineSpacing = CrossPointSettings::NORMAL;
+  global.imageRendering = CrossPointSettings::IMAGES_DISPLAY;
+
+  PerBookReaderSettings book = global;
+  book.hasOverrides = true;
+  book.overrideMask = PerBookReaderSettings::OVERRIDE_FONT_SIZE;
+  book.fontPointSize = 20;
+  book.lineSpacing = CrossPointSettings::WIDE;                // stale, but not overridden
+  book.imageRendering = CrossPointSettings::IMAGES_SUPPRESS;  // stale, but not overridden
+  book.wordSpacing = 2;
+
+  const PerBookReaderSettings merged = mergeReaderSettings(global, book);
+  EXPECT_EQ(merged.fontPointSize, 20);
+  EXPECT_EQ(merged.lineSpacing, global.lineSpacing);
+  EXPECT_EQ(merged.imageRendering, global.imageRendering);
+  EXPECT_EQ(merged.wordSpacing, 2);
+}
+
+TEST(PerBookReaderSettings, ComputesOverridesPerFieldAndClearsValuesEqualToGlobal) {
+  PerBookReaderSettings global;
+  PerBookReaderSettings current = global;
+  current.orientation = CrossPointSettings::LANDSCAPE_CW;
+  current.extraParagraphSpacing = global.extraParagraphSpacing;
+
+  EXPECT_EQ(readerSettingsOverrideMask(current, global), PerBookReaderSettings::OVERRIDE_ORIENTATION);
+  current.orientation = global.orientation;
+  EXPECT_EQ(readerSettingsOverrideMask(current, global), 0);
 }
