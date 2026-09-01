@@ -162,6 +162,26 @@ static void writeBmpHeader2bit(Print& bmpOut, const int width, const int height)
 
 namespace {
 
+class CheckedPrint final : public Print {
+ public:
+  explicit CheckedPrint(Print& output) : output(output) {}
+  using Print::write;
+
+  size_t write(const uint8_t value) override { return write(&value, 1); }
+  size_t write(const uint8_t* data, const size_t length) override {
+    if (writeFailed) return 0;
+    const size_t written = output.write(data, length);
+    if (written != length) writeFailed = true;
+    return written;
+  }
+
+  bool failed() const { return writeFailed; }
+
+ private:
+  Print& output;
+  bool writeFailed = false;
+};
+
 // Max MCU height supported by any JPEG (4:2:0 chroma = 16 rows, 4:4:4 = 8 rows)
 constexpr int MAX_MCU_HEIGHT = 16;
 constexpr size_t JPEG_DECODER_SIZE = 20 * 1024;
@@ -253,6 +273,7 @@ struct BmpConvertCtx {
 
   uint8_t rowsSinceYield;
   uint8_t blocksSinceYield;
+  int rowsWritten;
   bool error;
 };
 
@@ -302,7 +323,11 @@ static void writeOutputRow(BmpConvertCtx* ctx, const uint8_t* srcRow, int outY) 
       ctx->fsDitherer->nextRow();
   }
 
-  ctx->bmpOut->write(ctx->bmpRow.get(), ctx->bytesPerRow);
+  if (ctx->bmpOut->write(ctx->bmpRow.get(), ctx->bytesPerRow) != static_cast<size_t>(ctx->bytesPerRow)) {
+    ctx->error = true;
+    return;
+  }
+  ctx->rowsWritten++;
   yieldDuringDecode(ctx);
 }
 
@@ -424,7 +449,11 @@ static void flushScaledRow(BmpConvertCtx* ctx) {
       ctx->fsDitherer->nextRow();
   }
 
-  ctx->bmpOut->write(ctx->bmpRow.get(), ctx->bytesPerRow);
+  if (ctx->bmpOut->write(ctx->bmpRow.get(), ctx->bytesPerRow) != static_cast<size_t>(ctx->bytesPerRow)) {
+    ctx->error = true;
+    return;
+  }
+  ctx->rowsWritten++;
   ctx->currentOutY++;
   yieldDuringDecode(ctx);
 }
@@ -525,16 +554,21 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(HalFile& jpegFile, Print& b
   const auto jpeg = makeUniqueNoThrow<JPEGDEC>();
   if (!jpeg) {
     LOG_ERR("JPG", "OOM: JPEG decoder");
+    s_jpegFile = nullptr;
     return false;
   }
 
   int rc = jpeg->open("", bmpJpegOpen, bmpJpegClose, bmpJpegRead, bmpJpegSeek, bmpDrawCallback);
   if (rc != 1) {
     LOG_ERR("JPG", "JPEG open failed (err=%d)", jpeg->getLastError());
+    s_jpegFile = nullptr;
     return false;
   }
 
-  const ScopedCleanup cleanup{[&jpeg]() { jpeg->close(); }};
+  const ScopedCleanup cleanup{[&jpeg]() {
+    jpeg->close();
+    s_jpegFile = nullptr;
+  }};
 
   const int srcWidth = jpeg->getWidth();
   const int srcHeight = jpeg->getHeight();
@@ -602,21 +636,19 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(HalFile& jpegFile, Print& b
   const bool smoothUpscale =
       progressiveDecode && needsScaling && scaleSrcWidth <= outWidth && scaleSrcHeight <= outHeight;
 
-  // Write BMP header with output dimensions
+  // Calculate the row layout before allocating conversion buffers. The BMP
+  // header is deliberately written only after every required allocation has
+  // succeeded, so an OOM cannot leave behind a plausible header-only cache.
   int bytesPerRow;
   if (USE_8BIT_OUTPUT && !oneBit) {
-    writeBmpHeader8bit(bmpOut, outWidth, outHeight);
     bytesPerRow = (outWidth + 3) / 4 * 4;
   } else if (oneBit) {
-    writeBmpHeader1bit(bmpOut, outWidth, outHeight);
     bytesPerRow = (outWidth + 31) / 32 * 4;
   } else {
-    writeBmpHeader2bit(bmpOut, outWidth, outHeight);
     bytesPerRow = (outWidth * 2 + 31) / 32 * 4;
   }
 
   BmpConvertCtx ctx = {};
-  ctx.bmpOut = &bmpOut;
   ctx.srcWidth = scaleSrcWidth;
   ctx.srcHeight = scaleSrcHeight;
   ctx.outWidth = outWidth;
@@ -633,6 +665,7 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(HalFile& jpegFile, Print& b
   ctx.smoothPrevY = -1;
   ctx.rowsSinceYield = 0;
   ctx.blocksSinceYield = 0;
+  ctx.rowsWritten = 0;
   ctx.error = false;
 
   // MCU row buffer: MAX_MCU_HEIGHT rows × decoded srcWidth columns of grayscale
@@ -694,6 +727,20 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(HalFile& jpegFile, Print& b
     }
   }
 
+  CheckedPrint checkedOutput(bmpOut);
+  ctx.bmpOut = &checkedOutput;
+  if (USE_8BIT_OUTPUT && !oneBit) {
+    writeBmpHeader8bit(checkedOutput, outWidth, outHeight);
+  } else if (oneBit) {
+    writeBmpHeader1bit(checkedOutput, outWidth, outHeight);
+  } else {
+    writeBmpHeader2bit(checkedOutput, outWidth, outHeight);
+  }
+  if (checkedOutput.failed()) {
+    LOG_ERR("JPG", "Failed to write BMP header");
+    return false;
+  }
+
   jpeg->setPixelType(EIGHT_BIT_GRAYSCALE);
   jpeg->setUserPointer(&ctx);
 
@@ -703,7 +750,7 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(HalFile& jpegFile, Print& b
     finishSmoothUpscale(&ctx);
   }
 
-  if (rc != 1 || ctx.error) {
+  if (rc != 1 || ctx.error || checkedOutput.failed() || ctx.rowsWritten != outHeight) {
     LOG_ERR("JPG", "JPEG decode failed (rc=%d, err=%d)", rc, jpeg->getLastError());
     return false;
   }

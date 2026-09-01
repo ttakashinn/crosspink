@@ -103,6 +103,11 @@ class HalFile : public Print {
   bool seekSet(size_t offset);
   int available() const;
   size_t position() const;
+  // Zero means the preceding operation reached a normal end condition. A
+  // non-zero value lets directory scans distinguish EOF from an SD/wrapper
+  // failure instead of silently returning partial data.
+  uint8_t getError() const;
+  // Returns a non-negative byte count; SdFat block-read errors are normalized to 0.
   int read(void* buf, size_t count);
   int read();  // read a single byte
   size_t write(const uint8_t* buf, size_t count) override;

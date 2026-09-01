@@ -231,6 +231,10 @@ void FrontlightPanelActivity::loop() {
       if (touch.event.dragPermille >= 0) draggingSlider = true;
       return;
     }
+    if (!draggingSlider && mappedInput.wasSwipe() == MappedInputManager::SwipeDir::Up) {
+      close();
+      return;
+    }
     // panelBottom > 0 guards the frame the sheet opens in: the release that
     // opened it (a status-bar tap) is still in the input snapshot when the panel
     // runs its first loop(), and panelBottom is only known once render() has
@@ -263,8 +267,10 @@ void FrontlightPanelActivity::loop() {
 
 int FrontlightPanelActivity::computePanelBottom() const {
   const auto tokens = uiThemeTokens(uiTarget);
+  const auto& metrics = UITheme::getInstance().getMetrics();
   const int16_t lineHeight = uiTarget.lineHeight(tokens.smallText.font);
-  int y = tokens.spaceLg + tokens.spaceMd;  // top padding
+  const int y0 = std::max<int>(metrics.batteryHeight, lineHeight);
+  int y = tokens.spaceMd + y0 + tokens.spaceMd;
   if (Frontlight.present()) {
     // Screen::sliderRow reserves caption + spaceMd + control band, then a
     // spaceMd gap; addSliderRow() adds one more spaceMd of air after each row.
@@ -339,10 +345,17 @@ void FrontlightPanelActivity::buildPanelScreen(UiScreen& screen) {
   screen.sheet(sheetProps, static_cast<int16_t>(panelBottom));
   screen.insetContent(fui::Insets{0, kPanelSideMargin, 0, kPanelSideMargin});
 
-  // The sheet hangs from the very top of the screen, so its content needs a
-  // real top inset of its own — nothing above it reserves space the way a
-  // header band did.
-  screen.spacer(static_cast<int16_t>(theme.spaceLg + theme.spaceMd));
+  // Reuse the header's battery band so quick settings and Home align.
+  {
+    const auto& metrics = UITheme::getInstance().getMetrics();
+    screen.spacer(theme.spaceMd);
+    const int16_t bandH = std::max<int16_t>(static_cast<int16_t>(metrics.batteryHeight),
+                                            screen.target().lineHeight(theme.smallText.font));
+    screen.takeTop(bandH, theme.spaceMd);
+    UITheme::getInstance().getTheme().BaseTheme::drawHeader(
+        renderer, Rect{0, metrics.topPadding, renderer.getScreenWidth(), metrics.homeTopPadding - metrics.topPadding},
+        nullptr);
+  }
 
   if (Frontlight.present()) {
     addSliderRow(screen, tr(STR_BRIGHTNESS), brightness, ACTION_BRIGHTNESS, ACTION_BRIGHTNESS_STEP,

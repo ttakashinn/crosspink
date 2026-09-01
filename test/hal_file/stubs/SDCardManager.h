@@ -9,6 +9,11 @@
 #include <utility>
 #include <vector>
 
+namespace hal_file_test {
+inline uint8_t fileError = 0;
+inline int blockReadResult = 0;
+}  // namespace hal_file_test
+
 class FsFile {
  public:
   FsFile() = default;
@@ -33,7 +38,8 @@ class FsFile {
   bool seekCur(int64_t) { return open_; }
   int available() const { return 0; }
   size_t position() const { return 0; }
-  int read(void*, size_t) { return 0; }
+  uint8_t getError() const { return hal_file_test::fileError; }
+  int read(void*, size_t) { return hal_file_test::blockReadResult; }
   int read() { return -1; }
   size_t write(const uint8_t*, size_t count) { return open_ ? count : 0; }
   size_t write(const void*, size_t count) { return open_ ? count : 0; }
@@ -43,6 +49,7 @@ class FsFile {
   void rewindDirectory() {}
   FsFile openNextFile() { return FsFile(); }
   bool isOpen() const { return open_; }
+  explicit operator bool() const { return open_; }
 
  private:
   bool open_ = false;

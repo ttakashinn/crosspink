@@ -45,6 +45,13 @@ void DictionaryDefinitionActivity::onEnter() {
   requestUpdate();
 }
 
+void DictionaryDefinitionActivity::onExit() {
+  Activity::onExit();
+  if (auto* fontCache = renderer.getFontCacheManager()) {
+    fontCache->releaseSdFontCaches();
+  }
+}
+
 DictionaryDefinitionActivity::BodyArea DictionaryDefinitionActivity::bodyArea() const {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const auto orientation = renderer.getOrientation();

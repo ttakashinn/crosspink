@@ -5,9 +5,9 @@
 
 namespace vannhanso_update_policy {
 
-bool isAutomatic(const UpdateTrigger trigger) { return trigger != UpdateTrigger::MANUAL; }
+bool isDailyInteractive(const UpdateTrigger trigger) { return trigger == UpdateTrigger::FIRST_START_OF_DAY; }
 
-bool maySkipCurrentCache(const UpdateTrigger trigger) { return isAutomatic(trigger); }
+bool maySkipCurrentCache(const UpdateTrigger trigger) { return isDailyInteractive(trigger); }
 
 bool shouldSkipCurrentCache(const UpdateTrigger trigger, const bool cacheMatchesCurrentDate,
                             const uint32_t currentDate) {
@@ -16,10 +16,6 @@ bool shouldSkipCurrentCache(const UpdateTrigger trigger, const bool cacheMatches
 
 bool isManifestDateOlderThanCache(const uint32_t manifestDate, const uint32_t cachedDate) {
   return manifestDate != 0 && cachedDate != 0 && manifestDate < cachedDate;
-}
-
-bool shouldCancelAutomaticUpdate(const bool backPressed, const bool anyButtonPressed, const bool screenTapped) {
-  return backPressed || anyButtonPressed || screenTapped;
 }
 
 uint32_t pendingProfileHash(const bool hasCurrentProfileImage, const uint32_t currentProfileHash) {

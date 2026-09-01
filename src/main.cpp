@@ -810,7 +810,9 @@ void loop() {
 
   // Refresh the battery icon when USB is plugged or unplugged.
   // Placed after sleep guards so we never queue a render that won't be processed.
-  if (gpio.wasUsbStateChanged()) {
+  // Avoid a full reader-page repaint merely because charging state changed;
+  // the reader status bar will pick it up on the next normal page render.
+  if (gpio.wasUsbStateChanged() && !activityManager.isReaderActivity()) {
     activityManager.requestUpdate();
   }
 

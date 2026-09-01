@@ -17,15 +17,15 @@ void VanNhanSoUpdateCoordinator::startDailyUpdateIfEligible(const bool eligible)
     return;
   }
 
-  // Commit the destination screen first. The updater is then invisible and
-  // cancellable, so it never blocks entry to the reader/home screen.
+  // Materialize the Reader/Home route before stacking the interactive daily
+  // update. Do not wait for a full reader paint: Wi-Fi selection is now the
+  // intentional foreground screen whenever network work is required.
   activityManager.loop();
-  activityManager.requestUpdateAndWait();
   auto updateActivity = makeUniqueNoThrow<VanNhanSoUpdateActivity>(
       renderer, mappedInput, vannhanso_update_policy::UpdateTrigger::FIRST_START_OF_DAY);
   if (updateActivity) {
     activityManager.pushActivity(std::move(updateActivity));
   } else {
-    LOG_ERR("VNS", "OOM: automatic update activity");
+    LOG_ERR("VNS", "OOM: daily interactive update activity");
   }
 }

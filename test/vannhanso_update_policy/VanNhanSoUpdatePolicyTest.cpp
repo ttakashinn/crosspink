@@ -4,11 +4,13 @@
 
 namespace policy = vannhanso_update_policy;
 
-TEST(VanNhanSoUpdatePolicy, OnlyDailyAutomaticUpdatesMayTrustTheCache) {
-  EXPECT_FALSE(policy::isAutomatic(policy::UpdateTrigger::MANUAL));
-  EXPECT_FALSE(policy::maySkipCurrentCache(policy::UpdateTrigger::MANUAL));
+TEST(VanNhanSoUpdatePolicy, DailyTriggerUsesInteractiveNetworkFlow) {
+  EXPECT_FALSE(policy::isDailyInteractive(policy::UpdateTrigger::MANUAL));
+  EXPECT_TRUE(policy::isDailyInteractive(policy::UpdateTrigger::FIRST_START_OF_DAY));
+}
 
-  EXPECT_TRUE(policy::isAutomatic(policy::UpdateTrigger::FIRST_START_OF_DAY));
+TEST(VanNhanSoUpdatePolicy, OnlyDailyUpdateMayTrustTheCurrentCache) {
+  EXPECT_FALSE(policy::maySkipCurrentCache(policy::UpdateTrigger::MANUAL));
   EXPECT_TRUE(policy::maySkipCurrentCache(policy::UpdateTrigger::FIRST_START_OF_DAY));
 }
 
@@ -28,13 +30,6 @@ TEST(VanNhanSoUpdatePolicy, RejectsOnlyManifestDatesOlderThanTheInstalledServerD
   EXPECT_FALSE(policy::isManifestDateOlderThanCache(20260830U, 20260829U));
   EXPECT_FALSE(policy::isManifestDateOlderThanCache(0U, 20260829U));
   EXPECT_FALSE(policy::isManifestDateOlderThanCache(20260829U, 0U));
-}
-
-TEST(VanNhanSoUpdatePolicy, DailyRefreshYieldsToNormalUse) {
-  EXPECT_FALSE(policy::shouldCancelAutomaticUpdate(false, false, false));
-  EXPECT_TRUE(policy::shouldCancelAutomaticUpdate(true, false, false));
-  EXPECT_TRUE(policy::shouldCancelAutomaticUpdate(false, true, false));
-  EXPECT_TRUE(policy::shouldCancelAutomaticUpdate(false, false, true));
 }
 
 TEST(VanNhanSoUpdatePolicy, MarksOnlyMissingCurrentProfileAsPending) {

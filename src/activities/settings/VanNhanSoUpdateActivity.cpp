@@ -21,7 +21,6 @@
 
 #include "MappedInputManager.h"
 #include "SilentRestart.h"
-#include "WifiCredentialStore.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "components/UITheme.h"
 #include "features/vannhanso/VanNhanSoCache.h"
@@ -30,8 +29,6 @@
 #include "fontIds.h"
 #include "network/HttpDownloader.h"
 #include "network/WifiConnectionDiagnostics.h"
-#include "network/WifiConnectionPlatform.h"
-#include "network/WifiConnectionPolicy.h"
 
 #ifndef VANNHANSO_X3_MANIFEST_URL
 #define VANNHANSO_X3_MANIFEST_URL "https://vannhanso.com/eink/v2/xteink-x3/manifest/today"
@@ -241,8 +238,8 @@ void VanNhanSoUpdateActivity::onEnter() {
   vannhanso_cache::recoverInterruptedInstall(renderer.getScreenWidth(), renderer.getScreenHeight());
   syncPendingProfile();
 
-  if (automatic) {
-    startAutomaticUpdate();
+  if (dailyInteractive) {
+    startDailyInteractiveUpdate();
     return;
   }
 
@@ -259,7 +256,7 @@ void VanNhanSoUpdateActivity::onExit() {
     WiFi.disconnect(false);
     delay(30);
     WiFi.mode(WIFI_OFF);
-    if (!automatic) {
+    if (!dailyInteractive) {
       if (returnToVanNhanSoSettings) {
         silentRestartToVanNhanSoSettings();
       } else {
@@ -271,7 +268,7 @@ void VanNhanSoUpdateActivity::onExit() {
   renderer.setOrientation(previousOrientation);
 }
 
-void VanNhanSoUpdateActivity::beginManualUpdate() {
+void VanNhanSoUpdateActivity::beginInteractiveUpdate() {
   shouldTearDownWifiOnExit = WiFi.status() != WL_CONNECTED;
   cancelDownload = false;
 
@@ -294,7 +291,7 @@ void VanNhanSoUpdateActivity::beginManualUpdate() {
                          [this](const ActivityResult& result) { onWifiSelectionComplete(!result.isCancelled); });
 }
 
-void VanNhanSoUpdateActivity::startAutomaticUpdate() {
+void VanNhanSoUpdateActivity::startDailyInteractiveUpdate() {
   state = WIFI_SELECTION;
 
   const bool haveCurrentDate = resolveCurrentDate(false);
@@ -312,7 +309,7 @@ void VanNhanSoUpdateActivity::startAutomaticUpdate() {
                               APP_STATE.vanNhanSoAutoRetrySkipsRemaining)) {
     --APP_STATE.vanNhanSoAutoRetrySkipsRemaining;
     APP_STATE.saveToFile();
-    LOG_INF("VNS", "Automatic update delayed for %u more trigger(s): clock unavailable",
+    LOG_INF("VNS", "Daily update delayed for %u more trigger(s): clock unavailable",
             APP_STATE.vanNhanSoAutoRetrySkipsRemaining);
     state = SKIPPED;
     finish();
@@ -320,100 +317,24 @@ void VanNhanSoUpdateActivity::startAutomaticUpdate() {
   }
 
   if (isBackoffActive()) {
-    LOG_INF("VNS", "Automatic update delayed by retry backoff");
+    LOG_INF("VNS", "Daily update delayed by retry backoff");
     state = SKIPPED;
     finish();
     return;
   }
 
-  WIFI_STORE.loadFromFile();
-  const std::string lastSsid = WIFI_STORE.getLastConnectedSsid();
-  const auto credential = lastSsid.empty() ? std::nullopt : WIFI_STORE.findCredential(lastSsid);
-  if (!credential) {
-    LOG_INF("VNS", "Automatic update skipped: no saved WiFi credential");
-    fail(CrossPointState::VanNhanSoUpdateError::NO_WIFI);
-    finish();
-    return;
-  }
-
-  WiFi.persistent(false);
-  const bool stationModeReady = wifi_connection_platform::enterStationMode();
-  if (!wifi_connection_platform::disconnectForRetry(1000)) {
-    LOG_INF("VNS", "Previous STA disconnect did not settle within 1000ms; continuing");
-  }
-  delay(100);
-  if (!wifi_connection_platform::disablePowerSave()) {
-    LOG_INF("VNS", "Could not disable WiFi power save during association");
-  }
-  WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
-  WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
-
-  connectionStartTime = millis();
-  wifi_connection_diagnostics::beginAttempt();
-  const wl_status_t beginStatus = WiFi.begin(credential->ssid.c_str(), credential->password.c_str());
-  connectionBeginAccepted = wifi_connection_platform::beginAccepted(stationModeReady, beginStatus);
-  lastConnectionStatusLogTime = 0;
-  lastLoggedWifiStatus = -1;
-  LOG_INF("VNS", "Automatic WiFi begin status=%d accepted=%d", static_cast<int>(beginStatus), connectionBeginAccepted);
-
-  shouldTearDownWifiOnExit = true;
-  state = AUTO_CONNECTING;
-  if (pendingProfileRequired) requestUpdate();
-}
-
-void VanNhanSoUpdateActivity::checkAutomaticConnection() {
-  const wl_status_t status = WiFi.status();
-  const unsigned long now = millis();
-  const unsigned long elapsed = now - connectionStartTime;
-  if (lastLoggedWifiStatus != static_cast<int>(status) ||
-      now - lastConnectionStatusLogTime >= CONNECTION_STATUS_LOG_INTERVAL_MS) {
-    LOG_INF("VNS", "Automatic WiFi poll elapsed=%lums status=%d", elapsed, static_cast<int>(status));
-    lastLoggedWifiStatus = static_cast<int>(status);
-    lastConnectionStatusLogTime = now;
-  }
-
-  const auto outcome = wifi_connection_policy::evaluate(
-      {wifi_connection_platform::policyStatus(status), wifi_connection_diagnostics::failureHint(),
-       connectionBeginAccepted, static_cast<uint32_t>(elapsed), static_cast<uint32_t>(AUTO_CONNECTION_TIMEOUT_MS)});
-  if (outcome == wifi_connection_policy::Outcome::CONNECTED) {
-    wifi_connection_diagnostics::endAttempt();
-    const bool haveCurrentDate = resolveCurrentDate(false);
-    if (haveCurrentDate && vannhanso_update_policy::shouldSkipCurrentCache(trigger, isCurrentCache(), currentDateKey)) {
-      LOG_INF("VNS", "Sleep screen already current for %lu", static_cast<unsigned long>(currentDateKey));
-      clearPendingProfile();
-      state = SKIPPED;
-      finish();
-      return;
-    }
-
-    recordAttempt();
-    state = DOWNLOADING;
-    downloadSleepScreen();
-    finish();
-    return;
-  }
-
-  if (outcome != wifi_connection_policy::Outcome::PENDING) {
-    wifi_connection_diagnostics::endAttempt();
-    LOG_ERR("VNS", "Automatic update WiFi failed outcome=%d status=%d elapsed=%lums", static_cast<int>(outcome),
-            static_cast<int>(status), elapsed);
-    fail(outcome == wifi_connection_policy::Outcome::TIMED_OUT ? CrossPointState::VanNhanSoUpdateError::WIFI_TIMEOUT
-                                                               : CrossPointState::VanNhanSoUpdateError::CONNECT);
-    finish();
-  }
-}
-
-bool VanNhanSoUpdateActivity::automaticCancellationRequested() {
-  int x = 0;
-  int y = 0;
-  const bool backPressed = mappedInput.wasPressed(MappedInputManager::Button::Back);
-  const bool anyButtonPressed = mappedInput.wasAnyPressed();
-  const bool screenTapped = mappedInput.wasScreenTapped(x, y);
-  return vannhanso_update_policy::shouldCancelAutomaticUpdate(backPressed, anyButtonPressed, screenTapped);
+  // Reuse the full Wi-Fi picker used by manual updates. It first tries saved
+  // networks visibly, then exposes scan/select/retry/cancel instead of failing
+  // silently against only the last credential.
+  beginInteractiveUpdate();
 }
 
 void VanNhanSoUpdateActivity::onWifiSelectionComplete(const bool connected) {
   if (!connected) {
+    if (dailyInteractive) {
+      finish();
+      return;
+    }
     state = STATUS;
     requestUpdate();
     return;
@@ -426,17 +347,6 @@ void VanNhanSoUpdateActivity::onWifiSelectionComplete(const bool connected) {
 }
 
 void VanNhanSoUpdateActivity::loop() {
-  if (state == AUTO_CONNECTING) {
-    if (automaticCancellationRequested()) {
-      LOG_INF("VNS", "Automatic update cancelled by user input");
-      if (pendingProfileRequired) recordCancelled();
-      finish();
-      return;
-    }
-    checkAutomaticConnection();
-    return;
-  }
-
   if (state == DOWNLOADING) {
     requestUpdateAndWait();
     // The manifest calendar_date and X-Calendar-Date response header are
@@ -444,7 +354,6 @@ void VanNhanSoUpdateActivity::loop() {
     // trip before downloading it.
     resolveCurrentDate(false);
     downloadSleepScreen();
-    if (automatic) finish();
     return;
   }
 
@@ -457,16 +366,12 @@ void VanNhanSoUpdateActivity::loop() {
     finish();
     return;
   }
-  if (!automatic && mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    beginManualUpdate();
+  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    beginInteractiveUpdate();
     return;
   }
   if (mappedInput.wasScreenTapped(x, y)) {
-    if (automatic) {
-      finish();
-    } else {
-      beginManualUpdate();
-    }
+    beginInteractiveUpdate();
   }
 }
 
@@ -599,15 +504,13 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
   downloadedBytes = 0;
   totalBytes = 0;
   cancelDownload = false;
-  const uint32_t timeoutMs = automatic ? AUTOMATIC_DOWNLOAD_TIMEOUT_MS : MANUAL_DOWNLOAD_TIMEOUT_MS;
+  const uint32_t timeoutMs = MANUAL_DOWNLOAD_TIMEOUT_MS;
 
   const auto pollCancellation = [this](const size_t, const size_t) {
     mappedInput.update();
     int x = 0;
     int y = 0;
-    if (automatic) {
-      cancelDownload = automaticCancellationRequested();
-    } else if (mappedInput.wasReleased(MappedInputManager::Button::Back) || mappedInput.wasScreenTapped(x, y)) {
+    if (mappedInput.wasReleased(MappedInputManager::Button::Back) || mappedInput.wasScreenTapped(x, y)) {
       cancelDownload = true;
     }
   };
@@ -617,7 +520,7 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
                                                              "", "", &manifestResponse, timeoutMs, VNS_TRANSPORT);
   if (manifestResult == HttpDownloader::ABORTED) {
     Storage.remove(MANIFEST_TEMP_PATH);
-    recordCancelled(/*returnToStatus=*/!automatic);
+    recordCancelled(/*returnToStatus=*/!dailyInteractive);
     return;
   }
   if (cancelDownload) {
@@ -625,7 +528,7 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
     // aborted request. User cancellation wins over that implementation detail:
     // it is not an HTTPS failure and the manual flow returns to its status page.
     Storage.remove(MANIFEST_TEMP_PATH);
-    recordCancelled(/*returnToStatus=*/!automatic);
+    recordCancelled(/*returnToStatus=*/!dailyInteractive);
     return;
   }
   if (manifestResult != HttpDownloader::OK) {
@@ -764,17 +667,14 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
         downloadedBytes = downloaded;
         totalBytes = total;
         const int newPercentage = total > 0 ? static_cast<int>(downloaded * 100 / total) : -1;
-        if ((!automatic || pendingProfileRequired) && newPercentage != oldPercentage) requestUpdate(true);
+        if (newPercentage != oldPercentage) requestUpdate(true);
 
-        // Automatic refresh must yield to the user. A transfer that is already
-        // receiving data can be cancelled immediately; a stalled socket is
-        // bounded by the per-mode timeout below.
+        // Keep the foreground update cancellable while bytes are arriving. A
+        // stalled socket is bounded by the same timeout as a manual update.
         mappedInput.update();
         int x = 0;
         int y = 0;
-        if (automatic) {
-          cancelDownload = automaticCancellationRequested();
-        } else if (mappedInput.wasReleased(MappedInputManager::Button::Back) || mappedInput.wasScreenTapped(x, y)) {
+        if (mappedInput.wasReleased(MappedInputManager::Button::Back) || mappedInput.wasScreenTapped(x, y)) {
           cancelDownload = true;
         }
       },
@@ -782,12 +682,12 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
 
   if (result == HttpDownloader::ABORTED) {
     Storage.remove(TEMP_PATH);
-    recordCancelled(/*returnToStatus=*/!automatic);
+    recordCancelled(/*returnToStatus=*/!dailyInteractive);
     return;
   }
   if (cancelDownload) {
     Storage.remove(TEMP_PATH);
-    recordCancelled(/*returnToStatus=*/!automatic);
+    recordCancelled(/*returnToStatus=*/!dailyInteractive);
     return;
   }
   if (result != HttpDownloader::OK) {
@@ -806,7 +706,7 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
   downloadedFile.close();
 
   state = VERIFYING;
-  if (!automatic || pendingProfileRequired) requestUpdateAndWait();
+  requestUpdateAndWait();
   if (!validateChecksum(TEMP_PATH, expectedChecksum)) {
     Storage.remove(TEMP_PATH);
     fail(CrossPointState::VanNhanSoUpdateError::CHECKSUM_MISMATCH);
@@ -819,7 +719,7 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
   }
 
   state = INSTALLING;
-  if (!automatic || pendingProfileRequired) requestUpdateAndWait();
+  requestUpdateAndWait();
   if (!vannhanso_cache::installDownloadedImage(renderer.getScreenWidth(), renderer.getScreenHeight())) {
     Storage.remove(TEMP_PATH);
     fail(CrossPointState::VanNhanSoUpdateError::INSTALL);
@@ -901,7 +801,7 @@ void VanNhanSoUpdateActivity::fail(const CrossPointState::VanNhanSoUpdateError e
     APP_STATE.vanNhanSoConsecutiveFailures = std::min<uint8_t>(APP_STATE.vanNhanSoConsecutiveFailures + 1, 4);
     APP_STATE.vanNhanSoFailureProfileHash = currentProfileHash;
     APP_STATE.vanNhanSoAutoRetrySkipsRemaining =
-        automatic && currentDateKey == 0
+        dailyInteractive && currentDateKey == 0
             ? vannhanso_update_policy::automaticRetrySkipsAfterFailure(APP_STATE.vanNhanSoConsecutiveFailures)
             : 0;
     APP_STATE.saveToFile();
@@ -1010,11 +910,6 @@ const char* VanNhanSoUpdateActivity::errorText(const CrossPointState::VanNhanSoU
 }
 
 void VanNhanSoUpdateActivity::render(RenderLock&&) {
-  // Routine automatic updates intentionally leave the reader/home frame
-  // untouched. A missing profile is the exception: show bounded progress so
-  // the wake button cannot silently cancel the only usable download.
-  if (automatic && !pendingProfileRequired) return;
-
   const auto& metrics = UITheme::getInstance().getMetrics();
   const auto pageWidth = renderer.getScreenWidth();
   const auto pageHeight = renderer.getScreenHeight();
@@ -1043,7 +938,7 @@ void VanNhanSoUpdateActivity::render(RenderLock&&) {
   snprintf(attemptText, sizeof(attemptText), tr(STR_VANNHANSO_LAST_ATTEMPT), lastAttempt.c_str());
   snprintf(successText, sizeof(successText), tr(STR_VANNHANSO_LAST_SUCCESS), lastSuccess.c_str());
 
-  if (state == WIFI_SELECTION || state == AUTO_CONNECTING) {
+  if (state == WIFI_SELECTION) {
     renderer.drawCenteredText(UI_10_FONT_ID, midY, tr(STR_CONNECTING));
   } else if (state == DOWNLOADING) {
     renderer.drawCenteredText(UI_10_FONT_ID, midY - 20, tr(STR_VANNHANSO_DOWNLOADING));
@@ -1094,11 +989,10 @@ void VanNhanSoUpdateActivity::render(RenderLock&&) {
     }
   }
 
-  if (!automatic &&
-      (state == STATUS || state == SUCCESS || state == FAILED || state == CANCELLED || state == SKIPPED)) {
+  if (state == STATUS || state == SUCCESS || state == FAILED || state == CANCELLED || state == SKIPPED) {
     const auto labels = mappedInput.mapLabels(tr(STR_BACK), state == FAILED ? tr(STR_RETRY) : tr(STR_UPDATE), "", "");
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-  } else if (state == WIFI_SELECTION || state == AUTO_CONNECTING || state == DOWNLOADING) {
+  } else if (state == WIFI_SELECTION || state == DOWNLOADING) {
     const auto labels = mappedInput.mapLabels(tr(STR_CANCEL), "", "", "");
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   }

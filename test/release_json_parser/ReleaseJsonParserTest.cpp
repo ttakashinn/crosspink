@@ -619,6 +619,9 @@ TEST(FirmwareReleaseValidation, ComparesCrossPinkVersionsAndRejectsOtherEditions
   ASSERT_TRUE(firmware_release::parseVersion("1.6.0-cp.1.1", candidate));
   EXPECT_TRUE(firmware_release::isNewerVersion(candidate, current));
 
+  ASSERT_TRUE(firmware_release::parseVersion("1.6.0-cp.2.0", candidate));
+  EXPECT_TRUE(firmware_release::isNewerVersion(candidate, current));
+
   ASSERT_TRUE(firmware_release::parseVersion("1.6.0-vns.9", candidate));
   EXPECT_FALSE(firmware_release::isNewerVersion(candidate, current));
 

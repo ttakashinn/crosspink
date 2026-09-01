@@ -8,6 +8,7 @@
 #endif
 
 #include <cassert>
+#include <new>
 
 #define SDCard SDCardManager::getInstance()
 
@@ -156,6 +157,7 @@ class HalFile::Impl {
     file.close();
   }
   FsFile file;
+  bool localError = false;
 };
 
 HalFile::HalFile() = default;
@@ -238,7 +240,17 @@ bool HalFile::seekCur(int64_t offset) { HAL_FILE_WRAPPED_CALL(seekCur, offset); 
 bool HalFile::seekSet(size_t offset) { HAL_FILE_WRAPPED_CALL(seekSet, offset); }
 int HalFile::available() const { HAL_FILE_WRAPPED_CALL(available, ); }
 size_t HalFile::position() const { HAL_FILE_WRAPPED_CALL(position, ); }
-int HalFile::read(void* buf, size_t count) { HAL_FILE_WRAPPED_CALL(read, buf, count); }
+uint8_t HalFile::getError() const {
+  HalStorage::StorageLock lock;
+  assert(impl != nullptr);
+  return impl->localError ? 1 : impl->file.getError();
+}
+int HalFile::read(void* buf, size_t count) {
+  HalStorage::StorageLock lock;
+  assert(impl != nullptr);
+  const int bytesRead = impl->file.read(buf, count);
+  return bytesRead < 0 ? 0 : bytesRead;
+}
 int HalFile::read() { HAL_FILE_WRAPPED_CALL(read, ); }
 size_t HalFile::write(const uint8_t* buf, size_t count) { HAL_FILE_WRAPPED_CALL(write, buf, count); }
 size_t HalFile::write(const void* buf, size_t count) { HAL_FILE_WRAPPED_CALL(write, buf, count); }
@@ -257,7 +269,16 @@ bool HalFile::close() {
 HalFile HalFile::openNextFile() {
   HalStorage::StorageLock lock;
   assert(impl != nullptr);
-  return HalFile(std::make_unique<Impl>(impl->file.openNextFile()));
+  FsFile fsFile = impl->file.openNextFile();
+  if (!fsFile) return {};
+
+  auto next = std::unique_ptr<Impl>(new (std::nothrow) Impl(std::move(fsFile)));
+  if (!next) {
+    impl->localError = true;
+    LOG_ERR("HAL", "Out of memory while opening next directory entry");
+    return {};
+  }
+  return HalFile(std::move(next));
 }
 bool HalFile::isOpen() const { return impl != nullptr && impl->file.isOpen(); }  // already thread-safe, no need to wrap
 HalFile::operator bool() const { return isOpen(); }

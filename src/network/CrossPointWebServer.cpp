@@ -428,25 +428,34 @@ void CrossPointWebServer::handleStatus() const {
   server->send(200, "application/json", response);
 }
 
-void CrossPointWebServer::scanFiles(const char* path, const std::function<void(FileInfo)>& callback) const {
+bool CrossPointWebServer::scanFiles(const char* path, const std::function<bool(FileInfo)>& callback) const {
   HalFile root = Storage.open(path);
   if (!root) {
     LOG_DBG("WEB", "Failed to open directory: %s", path);
-    return;
+    return false;
   }
 
   if (!root.isDirectory()) {
     LOG_DBG("WEB", "Not a directory: %s", path);
     root.close();
-    return;
+    return false;
   }
 
   LOG_DBG("WEB", "Scanning files in: %s", path);
 
   HalFile file = root.openNextFile();
   char name[500];
+  bool complete = true;
   while (file) {
-    file.getName(name, sizeof(name));
+    name[0] = '\0';
+    name[sizeof(name) - 1] = '\0';
+    const size_t nameLength = file.getName(name, sizeof(name));
+    if (nameLength == 0 || nameLength >= sizeof(name) || name[0] == '\0' || name[nameLength] != '\0') {
+      LOG_ERR("WEB", "Failed to read a directory entry name in: %s", path);
+      file.close();
+      complete = false;
+      break;
+    }
     auto fileName = String(name);
 
     // Skip hidden items (starting with ".")
@@ -475,7 +484,11 @@ void CrossPointWebServer::scanFiles(const char* path, const std::function<void(F
         info.isEpub = isEpubFile(info.name);
       }
 
-      callback(info);
+      if (!callback(info)) {
+        file.close();
+        complete = false;
+        break;
+      }
     }
 
     file.close();
@@ -483,7 +496,12 @@ void CrossPointWebServer::scanFiles(const char* path, const std::function<void(F
     resetTaskWatchdogIfSubscribed();  // Reset watchdog to prevent timeout on large directories
     file = root.openNextFile();
   }
+#ifndef SIMULATOR
+  complete = complete && root.getError() == 0;
+#endif
+  if (!complete) LOG_ERR("WEB", "Directory listing failed before completion: %s", path);
   root.close();
+  return complete;
 }
 
 bool CrossPointWebServer::isEpubFile(const String& filename) const { return FsHelpers::hasEpubExtension(filename); }
@@ -515,7 +533,7 @@ void CrossPointWebServer::handleFileListData() const {
   bool seenFirst = false;
   JsonDocument doc;
 
-  scanFiles(currentPath.c_str(), [this, &output, &doc, seenFirst](const FileInfo& info) mutable {
+  const bool complete = scanFiles(currentPath.c_str(), [this, &output, &doc, seenFirst](const FileInfo& info) mutable {
     doc.clear();
     doc["name"] = info.name;
     doc["size"] = info.size;
@@ -524,9 +542,9 @@ void CrossPointWebServer::handleFileListData() const {
 
     const size_t written = serializeJson(doc, output, outputSize);
     if (written >= outputSize) {
-      // JSON output truncated; skip this entry to avoid sending malformed JSON
-      LOG_DBG("WEB", "Skipping file entry with oversized JSON for name: %s", info.name.c_str());
-      return;
+      // Abort the stream rather than presenting a partial directory as complete.
+      LOG_ERR("WEB", "File entry JSON is too large for name: %s", info.name.c_str());
+      return false;
     }
 
     if (seenFirst) {
@@ -535,7 +553,12 @@ void CrossPointWebServer::handleFileListData() const {
       seenFirst = true;
     }
     server->sendContent(output);
+    return true;
   });
+  if (!complete) {
+    server->client().stop();
+    return;
+  }
   server->sendContent("]");
   // End of streamed response, empty chunk to signal client
   server->sendContent("");

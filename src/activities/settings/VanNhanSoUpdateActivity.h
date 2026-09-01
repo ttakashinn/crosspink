@@ -16,21 +16,20 @@ class VanNhanSoUpdateActivity final : public Activity {
       bool returnToVanNhanSoSettings = false)
       : Activity("VanNhanSoUpdate", renderer, mappedInput),
         trigger(trigger),
-        automatic(vannhanso_update_policy::isAutomatic(trigger)),
+        dailyInteractive(vannhanso_update_policy::isDailyInteractive(trigger)),
         returnToVanNhanSoSettings(returnToVanNhanSoSettings) {}
 
   void onEnter() override;
   void onExit() override;
   void loop() override;
   void render(RenderLock&&) override;
-  bool preventAutoSleep() override { return state == AUTO_CONNECTING || state == DOWNLOADING; }
-  bool skipLoopDelay() override { return state == AUTO_CONNECTING || state == DOWNLOADING; }
+  bool preventAutoSleep() override { return state == DOWNLOADING; }
+  bool skipLoopDelay() override { return state == DOWNLOADING; }
 
  private:
   enum State {
     STATUS,
     WIFI_SELECTION,
-    AUTO_CONNECTING,
     DOWNLOADING,
     VERIFYING,
     INSTALLING,
@@ -42,7 +41,7 @@ class VanNhanSoUpdateActivity final : public Activity {
 
   std::atomic<State> state{STATUS};
   const vannhanso_update_policy::UpdateTrigger trigger;
-  const bool automatic;
+  const bool dailyInteractive;
   const bool returnToVanNhanSoSettings;
   // Văn Nhân Số is always shown by SleepActivity on the portrait canvas. An
   // updater entered from a landscape reader must use that same cache profile
@@ -51,26 +50,17 @@ class VanNhanSoUpdateActivity final : public Activity {
   bool shouldTearDownWifiOnExit = false;
   bool cancelDownload = false;
   bool pendingProfileRequired = false;
-  unsigned long connectionStartTime = 0;
-  unsigned long lastConnectionStatusLogTime = 0;
-  int lastLoggedWifiStatus = -1;
-  bool connectionBeginAccepted = true;
   uint32_t currentProfileHash = 0;
   uint32_t currentDateKey = 0;
   uint16_t currentMinute = UINT16_MAX;
   std::atomic<size_t> downloadedBytes{0};
   std::atomic<size_t> totalBytes{0};
 
-  static constexpr unsigned long AUTO_CONNECTION_TIMEOUT_MS = 20000;
-  static constexpr unsigned long CONNECTION_STATUS_LOG_INTERVAL_MS = 2000;
-  static constexpr uint32_t AUTOMATIC_DOWNLOAD_TIMEOUT_MS = 12000;
   static constexpr uint32_t MANUAL_DOWNLOAD_TIMEOUT_MS = 20000;
 
   void onWifiSelectionComplete(bool connected);
-  void beginManualUpdate();
-  void startAutomaticUpdate();
-  void checkAutomaticConnection();
-  bool automaticCancellationRequested();
+  void beginInteractiveUpdate();
+  void startDailyInteractiveUpdate();
   bool resolveCurrentDate(bool allowNetworkSync);
   void syncPendingProfile();
   void clearPendingProfile();

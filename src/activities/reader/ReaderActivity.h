@@ -46,6 +46,7 @@ class ReaderActivity : public Activity {
   virtual std::pair<int32_t, int32_t> readerTelemetryPosition() const { return {-1, -1}; }
 
   bool handleBackNavigation();
+  bool endOfBookMenuActive() const;
   bool handleEndOfBookMenu(bool suppressConfirmRelease = false);
   bool handleEndOfBookPageTurn(bool prevTriggered, bool nextTriggered);
   void clearEndOfBookOptionsIfNeeded();

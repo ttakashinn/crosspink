@@ -1030,6 +1030,38 @@ void EpubReaderActivity::loop() {
     pendingReadFolderMove = false;
   }
 
+  if (showBookmarkMessage && (millis() - bookmarkMessageTime) >= ReaderUtils::BOOKMARK_MESSAGE_DURATION_MS) {
+    showBookmarkMessage = false;
+    requestUpdate();
+  }
+
+  if (showDictionaryMessage && (millis() - dictionaryMessageTime) >= ReaderUtils::BOOKMARK_MESSAGE_DURATION_MS) {
+    showDictionaryMessage = false;
+    requestUpdate();
+  }
+
+  if (showClippingMessage && (millis() - clippingMessageTime) >= ReaderUtils::BOOKMARK_MESSAGE_DURATION_MS) {
+    showClippingMessage = false;
+    requestUpdate();
+  }
+
+  // The toolbar owns input before automatic page turning. Opening its rate
+  // picker can enable auto-turn while the panel remains visible; a fresh
+  // interval starts only after the panel closes.
+  if (overlay != Overlay::None) {
+    if (usesToolbarMenu()) {
+      lastPageTurnTime = millis();
+      handleOverlayInput();
+      return;
+    }
+    // The style was switched off while an overlay was up (Settings reached via
+    // the More panel); fall back to the clean page.
+    overlay = Overlay::None;
+    discardOverlayPage();
+    requestUpdate();
+    return;
+  }
+
   if (automaticPageTurnActive) {
     if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) ||
         mappedInput.wasReleased(MappedInputManager::Button::Back) ||
@@ -1056,38 +1088,15 @@ void EpubReaderActivity::loop() {
     }
   }
 
-  if (showBookmarkMessage && (millis() - bookmarkMessageTime) >= ReaderUtils::BOOKMARK_MESSAGE_DURATION_MS) {
-    showBookmarkMessage = false;
-    requestUpdate();
-  }
-
-  if (showDictionaryMessage && (millis() - dictionaryMessageTime) >= ReaderUtils::BOOKMARK_MESSAGE_DURATION_MS) {
-    showDictionaryMessage = false;
-    requestUpdate();
-  }
-
-  if (showClippingMessage && (millis() - clippingMessageTime) >= ReaderUtils::BOOKMARK_MESSAGE_DURATION_MS) {
-    showClippingMessage = false;
-    requestUpdate();
-  }
-
-  // The toolbar reader menu owns all input while shown.
-  if (overlay != Overlay::None) {
-    if (usesToolbarMenu()) {
-      handleOverlayInput();
-      return;
-    }
-    // The style was switched off while an overlay was up (Settings reached via
-    // the More panel); fall back to the clean page.
-    overlay = Overlay::None;
-    discardOverlayPage();
-    requestUpdate();
-    return;
-  }
+  // The end-of-book suggestion menu owns Confirm/Back/navigation before the
+  // long-press shortcuts below. Polling wasLongPressed() while it is open can
+  // suppress the release the menu needs to activate its selected row.
+  if (handleEndOfBookMenu()) return;
+  const bool endMenuOpen = endOfBookMenuActive();
 
   const unsigned long confirmHoldMs = confirmLongPressThreshold();
-  const bool confirmLongPressed =
-      confirmHoldMs != 0 && mappedInput.wasLongPressed(MappedInputManager::Button::Confirm, confirmHoldMs);
+  const bool confirmLongPressed = !endMenuOpen && confirmHoldMs != 0 &&
+                                  mappedInput.wasLongPressed(MappedInputManager::Button::Confirm, confirmHoldMs);
   const bool confirmReleased = mappedInput.wasReleased(MappedInputManager::Button::Confirm);
   if (confirmLongPressed) {
     switch (SETTINGS.longPressMenuFunction) {
@@ -1115,7 +1124,7 @@ void EpubReaderActivity::loop() {
   // Home-key boards have no front Confirm button, so a Home-key hold runs the
   // same user-selected long-press action. The SDK emits this event once per
   // hold and suppresses the short Home tap for the same contact.
-  if (mappedInput.wasHomeKeyHold()) {
+  if (mappedInput.wasHomeKeyHold() && !endMenuOpen) {
     switch (SETTINGS.longPressMenuFunction) {
       case CrossPointSettings::LP_MENU_BOOKMARK:
         if (!showBookmarkMessage) {
@@ -1144,10 +1153,6 @@ void EpubReaderActivity::loop() {
       default:
         break;
     }
-  }
-
-  if (handleEndOfBookMenu()) {
-    return;
   }
 
   // Internal EPUB links take priority over the menu and page-turn touch zones.
@@ -2189,6 +2194,10 @@ void EpubReaderActivity::renderBook() {
     currentPageLinkMarginTop = orientedMarginTop;
     currentPublisherPageLabel = p->publisherPageLabel;
 
+    // The overlay and non-tiled grayscale renderer share one stored-BW slot.
+    // Release the stale page before renderContents() may need that slot.
+    discardOverlayPage();
+
     const auto start = millis();
     renderContents(std::move(p), orientedMarginTop, orientedMarginRight, orientedMarginBottom, orientedMarginLeft);
     rememberRenderedFallback();
@@ -2231,7 +2240,6 @@ void EpubReaderActivity::renderBook() {
   if (overlay != Overlay::None && usesToolbarMenu()) {
     // The page just re-rendered under the overlay: refresh the snapshot that
     // backs panel->toolbar restores (any previous copy is stale).
-    discardOverlayPage();
     overlayPageStored = renderer.storeBwBuffer();
     renderOverlay();
     // An open option picker rides on top of the freshly drawn panel.
@@ -2356,8 +2364,9 @@ void EpubReaderActivity::rememberCurrentContentOffset() {
   if (!section || section->currentPage < 0 || section->currentPage >= section->pageCount) return;
 
   const uint16_t currentPage = static_cast<uint16_t>(section->currentPage);
-  const std::optional<uint32_t> pageStart =
-      currentPageVisibleOffset.has_value() ? currentPageVisibleOffset : section->getVisibleTextOffsetForPage(currentPage);
+  const std::optional<uint32_t> pageStart = currentPageVisibleOffset.has_value()
+                                                ? currentPageVisibleOffset
+                                                : section->getVisibleTextOffsetForPage(currentPage);
   std::optional<uint32_t> nextPageStart;
   if (section->currentPage + 1 < section->pageCount) {
     nextPageStart = section->getVisibleTextOffsetForPage(static_cast<uint16_t>(section->currentPage + 1));
@@ -2762,7 +2771,7 @@ static_assert(std::size(kAlignIds) == CrossPointSettings::PARAGRAPH_ALIGNMENT_CO
 }  // namespace
 
 bool EpubReaderActivity::usesToolbarMenu() const {
-  return SETTINGS.readerMenuStyle == CrossPointSettings::READER_MENU_TOOLBAR;
+  return mappedInput.hasTouch() && SETTINGS.readerMenuStyle == CrossPointSettings::READER_MENU_TOOLBAR;
 }
 
 std::string EpubReaderActivity::currentChapterTitle() const {

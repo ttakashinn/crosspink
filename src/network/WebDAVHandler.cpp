@@ -220,11 +220,20 @@ void WebDAVHandler::handlePropfind(WebServer& s) {
   }
 
   // If depth > 0 and it's a directory, list children
+  bool listingComplete = true;
   if (depth > 0) {
     HalFile file = root.openNextFile();
     char name[500];
     while (file) {
-      file.getName(name, sizeof(name));
+      name[0] = '\0';
+      name[sizeof(name) - 1] = '\0';
+      const size_t nameLength = file.getName(name, sizeof(name));
+      if (nameLength == 0 || nameLength >= sizeof(name) || name[0] == '\0' || name[nameLength] != '\0') {
+        LOG_ERR("DAV", "Failed to read an entry name in: %s", path.c_str());
+        file.close();
+        listingComplete = false;
+        break;
+      }
       String fileName(name);
 
       // Skip hidden/protected items
@@ -255,6 +264,16 @@ void WebDAVHandler::handlePropfind(WebServer& s) {
       resetTaskWatchdogIfSubscribed();
       file = root.openNextFile();
     }
+  }
+
+#ifndef SIMULATOR
+  listingComplete = listingComplete && root.getError() == 0;
+#endif
+  if (!listingComplete) {
+    LOG_ERR("DAV", "Directory listing failed before completion: %s", path.c_str());
+    root.close();
+    s.client().stop();
+    return;
   }
 
   root.close();
