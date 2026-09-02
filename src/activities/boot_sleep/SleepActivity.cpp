@@ -16,6 +16,7 @@
 #include <Xtc.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -27,12 +28,14 @@
 #include "activities/reader/ReaderUtils.h"
 #include "components/UITheme.h"
 #include "features/dictionary_review/DictionaryReviewCard.h"
+#include "features/dictionary_review/DictionaryReviewLayout.h"
 #include "features/vannhanso/VanNhanSoCache.h"
 #include "fontIds.h"
 #include "images/Logo120.h"
 #include "images/MoonIcon.h"
 #include "util/Dictionary.h"
 #include "util/DictionaryHistoryStore.h"
+#include "util/DictionaryTypography.h"
 #include "util/HtmlToPlainText.h"
 
 namespace {
@@ -668,6 +671,7 @@ void SleepActivity::renderDictionaryReviewSleepScreen() const {
   const int pageHeight = renderer.getScreenHeight();
   const int side = std::max(24, pageWidth / 16);
   const int contentWidth = pageWidth - side * 2;
+  const int detailFontId = dictionary_typography::bodyFontId(14);
   renderer.clearScreen();
 
   int y = 24;
@@ -681,10 +685,10 @@ void SleepActivity::renderDictionaryReviewSleepScreen() const {
   }
   y += 8;
   if (!selected.phonetic.empty()) {
-    const auto phoneticLines = renderer.wrappedText(NOTOSANS_14_FONT_ID, selected.phonetic.c_str(), contentWidth, 2);
+    const auto phoneticLines = renderer.wrappedText(detailFontId, selected.phonetic.c_str(), contentWidth, 2);
     for (const auto& line : phoneticLines) {
-      renderer.drawCenteredText(NOTOSANS_14_FONT_ID, y, line.c_str());
-      y += renderer.getLineHeight(NOTOSANS_14_FONT_ID);
+      renderer.drawCenteredText(detailFontId, y, line.c_str());
+      y += renderer.getLineHeight(detailFontId);
     }
     y += 16;
   } else {
@@ -693,23 +697,33 @@ void SleepActivity::renderDictionaryReviewSleepScreen() const {
   renderer.drawLine(side, y, pageWidth - side, y, 2, true);
   y += 18;
 
-  const auto drawSection = [&](const StrId label, const std::string& text, const int requestedMaxLines) {
-    const int labelHeight = renderer.getLineHeight(UI_10_FONT_ID) + 4;
-    const int textLineHeight = renderer.getLineHeight(NOTOSERIF_14_FONT_ID);
-    const int availableLines = (pageHeight - 30 - y - labelHeight) / std::max(1, textLineHeight);
-    const int maxLines = std::min(requestedMaxLines, availableLines);
-    if (text.empty() || maxLines <= 0) return;
-    renderer.drawText(UI_10_FONT_ID, side, y, I18N.get(label), true, EpdFontFamily::BOLD);
-    y += labelHeight;
-    y = drawWrappedSleepText(renderer, NOTOSERIF_14_FONT_ID, side, y, contentWidth, text, maxLines);
-    y += 14;
+  struct ReviewSection {
+    StrId label;
+    const std::string* text;
   };
+  const std::array<ReviewSection, 3> sections = {{{StrId::STR_DICTIONARY_MEANING, &selected.meaning},
+                                                  {StrId::STR_DICTIONARY_EXAMPLE, &selected.example},
+                                                  {StrId::STR_DICTIONARY_COLLOCATION, &selected.collocation}}};
 
-  // Meaning is the only required detail and therefore owns the page before
-  // optional enrichment is considered.
-  drawSection(StrId::STR_DICTIONARY_MEANING, selected.meaning, 10);
-  drawSection(StrId::STR_DICTIONARY_EXAMPLE, selected.example, 4);
-  drawSection(StrId::STR_DICTIONARY_COLLOCATION, selected.collocation, 3);
+  size_t populatedSections = static_cast<size_t>(std::count_if(
+      sections.begin(), sections.end(), [](const ReviewSection& section) { return !section.text->empty(); }));
+  const int labelHeight = renderer.getLineHeight(UI_10_FONT_ID) + 4;
+  const int textLineHeight = renderer.getLineHeight(detailFontId);
+  constexpr int SECTION_GAP = 14;
+  const int contentBottom = pageHeight - 30;
+
+  for (const auto& section : sections) {
+    if (section.text->empty()) continue;
+    --populatedSections;
+    const int maxLines = dictionary_review::availableLinesForSection(y, contentBottom, labelHeight, textLineHeight,
+                                                                     SECTION_GAP, populatedSections);
+    if (maxLines <= 0) break;
+
+    renderer.drawText(UI_10_FONT_ID, side, y, I18N.get(section.label), true, EpdFontFamily::BOLD);
+    y += labelHeight;
+    y = drawWrappedSleepText(renderer, detailFontId, side, y, contentWidth, *section.text, maxLines);
+    if (populatedSections > 0) y += SECTION_GAP;
+  }
 
   renderer.displayBuffer(HalDisplay::HALF_REFRESH);
   APP_STATE.lastDictionaryReviewWordHash = selectedHash;

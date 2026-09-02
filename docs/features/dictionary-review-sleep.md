@@ -22,10 +22,10 @@ Lịch sử hiện hành tại `/.crosspoint/vns_dictionary_history.txt` chỉ l
 
 - Tiêu đề nhỏ **ÔN TỪ ĐÃ TRA** ở đầu trang.
 - Từ chính dùng Noto Serif 18 đậm, căn giữa và tối đa 2 dòng; token quá dài được cắt tại biên UTF-8 với dấu `…`.
-- Phiên âm dùng cỡ UI 10, tối đa 2 dòng và không chiếm vùng khi không có.
-- Nghĩa được ưu tiên tối đa 10 dòng; ví dụ tối đa 4 dòng; collocation tối đa 3 dòng. Các vùng tùy chọn chỉ xuất hiện khi còn đủ chỗ sau phần nghĩa.
+- Phiên âm, nghĩa, ví dụ và collocation dùng Noto Sans 14 tích hợp để giữ coverage IPA ổn định; phiên âm tối đa 2 dòng và không chiếm vùng khi không có.
+- Các mục có nội dung chia sẻ động toàn bộ chiều cao còn lại. Mỗi mục phía sau được giữ tối thiểu nhãn và 1 dòng nội dung; mục cuối cùng dùng hết số dòng còn lại. Mục không có dữ liệu không được giữ chỗ.
 - Text được wrap theo biên UTF-8 và chiều rộng thật của font. Nội dung vượt giới hạn kết thúc bằng dấu `…`.
-- Các vùng trống được co lại để nghĩa có ưu tiên cao nhất và không để lại nhãn rỗng.
+- Nghĩa vẫn có ưu tiên cao nhất nhưng không còn bị cắt ở giới hạn 10 dòng khi cuối màn hình vẫn còn chỗ.
 
 Lookup dành cho màn ngủ chỉ đọc tối đa 8 KiB định nghĩa. Chuyển HTML sang text chỉ chạy khi heap vượt ngưỡng an toàn; nếu không, firmware phân tích trực tiếp nội dung đã đọc. Kết quả được chặn ở 96 byte cho từ, 160 byte cho phiên âm, 900 byte cho nghĩa, 420 byte cho ví dụ và 360 byte cho collocation. Đây là giới hạn byte UTF-8; hàm cắt lùi về biên codepoint để không tạo chuỗi lỗi.
 
