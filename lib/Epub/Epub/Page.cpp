@@ -21,7 +21,18 @@ void renderFilteredPageElements(const std::vector<std::shared_ptr<PageElement>>&
 }  // namespace
 
 void PageLine::render(GfxRenderer& renderer, const int fontId, const int xOffset, const int yOffset) {
-  block->render(renderer, fontId, xPos + xOffset, yPos + yOffset);
+  const int x = xPos + xOffset;
+  const int y = yPos + yOffset;
+  const int lineHeight = renderer.getLineHeight(fontId);
+  // A strip render used to traverse and shape every word on every line even
+  // though drawText() later discarded all glyphs outside the active band.
+  // Keep deliberately generous vertical bounds for ruby, superscript,
+  // subscript and decorations. Full logical width makes this conservative for
+  // rotated layouts too (where physical strip Y is derived from logical X).
+  if (!renderer.glyphIntersectsStrip(0, y - lineHeight * 3, renderer.getScreenWidth() - 1, y + lineHeight * 2)) {
+    return;
+  }
+  block->render(renderer, fontId, x, y);
 }
 
 bool PageLine::serialize(HalFile& file) {
@@ -54,7 +65,12 @@ std::unique_ptr<PageLine> PageLine::deserialize(HalFile& file) {
 
 void PageImage::render(GfxRenderer& renderer, const int fontId, const int xOffset, const int yOffset) {
   // Images don't use fontId or text rendering
-  imageBlock->render(renderer, xPos + xOffset, yPos + yOffset);
+  const int x = xPos + xOffset;
+  const int y = yPos + yOffset;
+  if (!renderer.glyphIntersectsStrip(x, y, x + imageBlock->getWidth() - 1, y + imageBlock->getHeight() - 1)) {
+    return;
+  }
+  imageBlock->render(renderer, x, y);
 }
 
 void PageImage::renderPlaceholder(GfxRenderer& renderer, const int xOffset, const int yOffset) const {
@@ -84,8 +100,10 @@ void PageHorizontalRule::render(GfxRenderer& renderer, const int fontId, const i
   if (width == 0 || thickness == 0) {
     return;
   }
-
-  renderer.drawLine(xPos + xOffset, yPos + yOffset, xPos + xOffset + width - 1, yPos + yOffset, thickness, true);
+  const int x = xPos + xOffset;
+  const int y = yPos + yOffset;
+  if (!renderer.glyphIntersectsStrip(x, y, x + width - 1, y + thickness - 1)) return;
+  renderer.drawLine(x, y, x + width - 1, y, thickness, true);
 }
 
 bool PageHorizontalRule::serialize(HalFile& file) {

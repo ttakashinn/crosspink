@@ -53,6 +53,7 @@ class ReaderActivity : public Activity {
   void disableFastInitialRefresh();
   void noteReaderInput(uint32_t atMs);
   void beginReaderTurn(int direction, int queueDepth = 1);
+  void cancelReaderTurn();
   void updateReaderTurnQueueDepth(int queueDepth);
   bool canRunDeferredReaderWork(uint32_t nowMs) const;
   uint32_t beginReaderIdleWork(const char* kind) const;

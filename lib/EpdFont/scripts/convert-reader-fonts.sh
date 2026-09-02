@@ -15,6 +15,7 @@ READER_FONT_SIZES=(12 14 16 18)
 READER_SYMBOL_INTERVALS=(
   --additional-intervals 0x2190,0x2190  # leftwards arrow
   --additional-intervals 0x2192,0x2192  # rightwards arrow
+  --additional-intervals 0x2194,0x2194  # left right arrow (StarDict definition separator)
   --additional-intervals 0x25A0,0x25A1  # black/white square
   --additional-intervals 0x25C6,0x25C7  # black/white diamond
   --additional-intervals 0x25CB,0x25CB  # white circle

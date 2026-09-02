@@ -62,6 +62,8 @@ void ReaderActivity::beginReaderTurn(const int direction, const int queueDepth) 
 #endif
 }
 
+void ReaderActivity::cancelReaderTurn() { turnTelemetry.cancelNewest(); }
+
 void ReaderActivity::updateReaderTurnQueueDepth(const int queueDepth) {
   const uint32_t now = static_cast<uint32_t>(millis());
   turnTelemetry.queueDepth(queueDepth);
@@ -222,20 +224,25 @@ void ReaderActivity::loop() {
   const bool skip =
       !fromTilt && SETTINGS.longPressButtonBehavior == SETTINGS.CHAPTER_SKIP && heldMs >= ReaderUtils::SKIP_HOLD_MS;
 
+  bool moved = false;
   if (prevTriggered) {
     beginReaderTurn(-1);
     if (skip) {
-      skipPages(-10);
+      moved = skipPages(-10);
     } else {
-      pageTurn(false);
+      moved = pageTurn(false);
     }
   } else {
     beginReaderTurn(1);
     if (skip) {
-      skipPages(10);
+      moved = skipPages(10);
     } else {
-      pageTurn(true);
+      moved = pageTurn(true);
     }
+  }
+  if (!moved) {
+    cancelReaderTurn();
+    return;
   }
   requestUpdate();
 }

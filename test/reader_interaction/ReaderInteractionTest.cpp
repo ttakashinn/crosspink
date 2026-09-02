@@ -90,3 +90,30 @@ TEST(TurnTelemetry, PreservesBurstInputsInFifoOrderAndFirstQueuedTimestamp) {
   EXPECT_EQ(second.inputAtMs, 110U);
   EXPECT_EQ(second.visibleAtMs, 200U);
 }
+
+TEST(TurnTelemetry, CancelsOnlyTheNewestNoOpTurn) {
+  TurnTelemetry telemetry;
+  telemetry.input(100, 1, 0, 1);
+  telemetry.queued(101, 1);
+  telemetry.input(110, -1, 0, 1);
+  telemetry.queued(111, 2);
+
+  telemetry.cancelNewest();
+  const auto remaining = telemetry.snapshot();
+  EXPECT_EQ(remaining.sequence, 1U);
+  EXPECT_EQ(remaining.direction, 1);
+
+  telemetry.renderBegin(130);
+  EXPECT_EQ(telemetry.visible(160, 0, 2).sequence, 1U);
+  telemetry.cancelNewest();
+  EXPECT_EQ(telemetry.snapshot().sequence, 0U);
+}
+
+TEST(TurnTelemetry, ClearDropsEveryPendingTurnButKeepsSequenceMonotonic) {
+  TurnTelemetry telemetry;
+  telemetry.input(100, 1);
+  telemetry.input(110, 1);
+  telemetry.clear();
+  EXPECT_EQ(telemetry.snapshot().sequence, 0U);
+  EXPECT_EQ(telemetry.input(120, -1), 3U);
+}

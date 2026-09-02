@@ -26,6 +26,7 @@ class TxtReaderActivity final : public ReaderActivity {
 
   // Cached settings for cache validation
   int cachedFontId = 0;
+  float cachedLineCompression = 1.0f;
   uint8_t cachedScreenMargin = 0;
   uint8_t cachedParagraphAlignment = CrossPointSettings::LEFT_ALIGN;
   int cachedOrientedMarginTop = 0;

@@ -184,6 +184,6 @@ bool Txt::readContent(uint8_t* buffer, size_t offset, size_t length) const {
     return false;
   }
 
-  size_t bytesRead = file.read(buffer, length);
-  return bytesRead > 0;
+  const size_t bytesRead = file.read(buffer, length);
+  return bytesRead == length;
 }

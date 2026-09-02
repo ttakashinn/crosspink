@@ -223,6 +223,8 @@ class EpubReaderActivity final : public ReaderActivity {
   int currentBookProgressPercent() const;
   uint32_t estimatedTimeLeftForCurrentPosition(const BookReadingStats& stats) const;
   bool pageTurnInternal(bool isForward, bool countForwardPace);
+  void clearPendingManualTurns();
+  void queueManualTurn(bool forward);
 
   void navigateToHref(const std::string& href, bool savePosition = false);
   void restoreSavedPosition();

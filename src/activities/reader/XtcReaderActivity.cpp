@@ -7,6 +7,7 @@
 #include <Memory.h>
 
 #include <algorithm>
+#include <utility>
 
 #include "CrossPointSettings.h"
 #include "ProgressFile.h"
@@ -15,6 +16,7 @@
 #include "XtcReaderChapterSelectionActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "util/XtcPixelPlanes.h"
 
 bool XtcReaderActivity::loadBook() {
   auto loadedXtc = makeUniqueNoThrow<Xtc>(bookPath, "/.crosspoint");
@@ -174,31 +176,17 @@ void XtcReaderActivity::renderPage() {
 
   renderer.clearScreen();
 
-  const uint16_t maxSrcY = pageHeight;
-
   if (bitDepth == 2) {
     const size_t planeSize = (static_cast<size_t>(pageWidth) * pageHeight + 7) / 8;
     const uint8_t* plane1 = pageBuffer;
     const uint8_t* plane2 = pageBuffer + planeSize;
-    const size_t colBytes = (pageHeight + 7) / 8;
-
-    auto getPixelValue = [&](uint16_t x, uint16_t y) -> uint8_t {
-      const size_t colIndex = pageWidth - 1 - x;
-      const size_t byteInCol = y / 8;
-      const size_t bitInByte = 7 - (y % 8);
-      const size_t byteOffset = colIndex * colBytes + byteInCol;
-      const uint8_t bit1 = (plane1[byteOffset] >> bitInByte) & 1;
-      const uint8_t bit2 = (plane2[byteOffset] >> bitInByte) & 1;
-      return (bit1 << 1) | bit2;
+    auto visitPixels = [&](auto&& visit) {
+      xtc_pixels::forEach2BitPixel(plane1, plane2, pageWidth, pageHeight, std::forward<decltype(visit)>(visit));
     };
 
-    for (uint16_t y = 0; y < pageHeight; y++) {
-      for (uint16_t x = 0; x < pageWidth; x++) {
-        if (getPixelValue(x, y) >= 1) {
-          renderer.drawPixel(x, y, true);
-        }
-      }
-    }
+    visitPixels([&](const uint16_t x, const uint16_t y, const uint8_t value) {
+      if (value >= 1) renderer.drawPixel(x, y, true);
+    });
 
     if (pagesUntilFullRefresh <= 1) {
       // Periodic ghost cleanup: scrub via the normal path, then run the
@@ -219,36 +207,23 @@ void XtcReaderActivity::renderPage() {
     }
 
     renderer.clearScreen(0x00);
-    for (uint16_t y = 0; y < pageHeight; y++) {
-      for (uint16_t x = 0; x < pageWidth; x++) {
-        if (getPixelValue(x, y) == 1) {
-          renderer.drawPixel(x, y, false);
-        }
-      }
-    }
+    visitPixels([&](const uint16_t x, const uint16_t y, const uint8_t value) {
+      if (value == 1) renderer.drawPixel(x, y, false);
+    });
     renderer.copyGrayscaleLsbBuffers();
 
     renderer.clearScreen(0x00);
-    for (uint16_t y = 0; y < pageHeight; y++) {
-      for (uint16_t x = 0; x < pageWidth; x++) {
-        const uint8_t pv = getPixelValue(x, y);
-        if (pv == 1 || pv == 2) {
-          renderer.drawPixel(x, y, false);
-        }
-      }
-    }
+    visitPixels([&](const uint16_t x, const uint16_t y, const uint8_t value) {
+      if (value == 1 || value == 2) renderer.drawPixel(x, y, false);
+    });
     renderer.copyGrayscaleMsbBuffers();
 
     renderer.displayGrayBuffer();
 
     renderer.clearScreen();
-    for (uint16_t y = 0; y < pageHeight; y++) {
-      for (uint16_t x = 0; x < pageWidth; x++) {
-        if (getPixelValue(x, y) >= 1) {
-          renderer.drawPixel(x, y, true);
-        }
-      }
-    }
+    visitPixels([&](const uint16_t x, const uint16_t y, const uint8_t value) {
+      if (value >= 1) renderer.drawPixel(x, y, true);
+    });
 
     renderer.cleanupGrayscaleWithFrameBuffer();
 
@@ -257,21 +232,8 @@ void XtcReaderActivity::renderPage() {
     LOG_DBG("XTR", "Rendered page %lu/%lu (2-bit grayscale)", currentPage + 1, xtc->getPageCount());
     return;
   } else {
-    const size_t srcRowBytes = (pageWidth + 7) / 8;
-
-    for (uint16_t srcY = 0; srcY < maxSrcY; srcY++) {
-      const size_t srcRowStart = srcY * srcRowBytes;
-
-      for (uint16_t srcX = 0; srcX < pageWidth; srcX++) {
-        const size_t srcByte = srcRowStart + srcX / 8;
-        const size_t srcBit = 7 - (srcX % 8);
-        const bool isBlack = !((pageBuffer[srcByte] >> srcBit) & 1);
-
-        if (isBlack) {
-          renderer.drawPixel(srcX, srcY, true);
-        }
-      }
-    }
+    xtc_pixels::forEachBlack1BitPixel(pageBuffer, pageWidth, pageHeight,
+                                      [&](const uint16_t x, const uint16_t y) { renderer.drawPixel(x, y, true); });
   }
 
   free(pageBuffer);

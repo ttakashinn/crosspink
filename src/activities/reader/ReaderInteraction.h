@@ -103,6 +103,21 @@ class TurnTelemetry {
     newest().queueDepth = static_cast<int8_t>(std::clamp(queueDepth, -127, 127));
   }
 
+  void cancelNewest() {
+    Guard guard(lock_);
+    if (count_ == 0) return;
+    const size_t tail = (head_ + count_ - 1) % records_.size();
+    records_[tail] = {};
+    --count_;
+  }
+
+  void clear() {
+    Guard guard(lock_);
+    records_ = {};
+    head_ = 0;
+    count_ = 0;
+  }
+
   void renderBegin(const uint32_t atMs) {
     Guard guard(lock_);
     if (count_ > 0 && records_[head_].renderBeginAtMs == 0) records_[head_].renderBeginAtMs = atMs;
