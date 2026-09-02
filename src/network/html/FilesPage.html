@@ -2063,7 +2063,7 @@
           const fileIsImage = isImageFile(file.name);
           fileTableContent += `<td><span class="file-icon">${file.isEpub ? '📗' : (fileIsImage ? '🖼️' : '📄')}</span>`;
           if (fileIsImage) {
-            fileTableContent += `<a href="${downloadUrl(filePath)}" class="file-link image-preview-link">${escapeHtml(file.name)}</a>`;
+            fileTableContent += `<a href="${previewUrl(filePath)}" data-download-url="${downloadUrl(filePath)}" class="file-link image-preview-link">${escapeHtml(file.name)}</a>`;
           } else {
             fileTableContent += `<a rel="noopener noreferrer" target="_blank" href="${downloadUrl(filePath)}" class="file-link">${escapeHtml(file.name)}</a>`;
           }
@@ -2093,12 +2093,16 @@
     return `/download?path=${encodeURIComponent(filePath)}`;
   }
 
-  function openImagePreview(url, name) {
+  function previewUrl(filePath) {
+    return `/download?preview=1&path=${encodeURIComponent(filePath)}`;
+  }
+
+  function openImagePreview(url, downloadHref, name) {
     const img = document.getElementById('imagePreviewImg');
     document.getElementById('imagePreviewName').textContent = name;
     img.src = url;
     img.alt = name;
-    document.getElementById('imagePreviewDownload').href = url;
+    document.getElementById('imagePreviewDownload').href = downloadHref;
     document.getElementById('imagePreviewModal').classList.add('open');
   }
 
@@ -2182,6 +2186,7 @@
     document.getElementById('convertInfo').style.display = 'none';
     document.getElementById('convertWarning').style.display = 'none';
     // Clear image picker cache and reset layout
+    releaseEpubImageUrls();
     epubImagesCache = [];
     imageStates = {};
     autoCropProtectedPaths = new Set();
@@ -2336,6 +2341,19 @@
       img.onerror = () => reject(new Error('Preview image load failed'));
       img.src = dataUrl;
     });
+  }
+
+  function imageMimeType(path) {
+    const extension = path.substring(path.lastIndexOf('.')).toLowerCase();
+    const mimeTypes = {
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.png': 'image/png',
+      '.bmp': 'image/bmp',
+      '.gif': 'image/gif',
+      '.webp': 'image/webp'
+    };
+    return mimeTypes[extension] || 'application/octet-stream';
   }
 
   async function createAutoCropPreview(dataUrl, imagePath, width, height) {
@@ -2545,11 +2563,12 @@
     const images = [];
     for (const path of orderedImages) {
       const data = await zip.files[path].async('arraybuffer');
-      const blob = new Blob([data]);
+      const mimeType = imageMimeType(path);
+      const blob = new Blob([data], { type: mimeType });
       const dataUrl = URL.createObjectURL(blob);
 
       // Get dimensions
-      const dims = await getImageDimensions(data);
+      const dims = await getImageDimensions(data, mimeType);
       
       // Check if this is the cover image
       const isCover = (path === coverImagePath) || 
@@ -2608,9 +2627,9 @@
   /**
    * Get image dimensions from array buffer
    */
-  function getImageDimensions(data) {
+  function getImageDimensions(data, mimeType) {
     return new Promise((resolve, reject) => {
-      const url = URL.createObjectURL(new Blob([data]));
+      const url = URL.createObjectURL(new Blob([data], { type: mimeType }));
       const img = new Image();
       img.onload = () => {
         URL.revokeObjectURL(url);
@@ -2728,7 +2747,9 @@
 
     // Reset state
     imageStates = {};
+    releaseEpubImageUrls();
     epubImagesCache = [];
+    imageGrid.innerHTML = '';
     autoCropProtectedPaths = new Set();
     pendingConversionFile = file;
 
@@ -2973,7 +2994,7 @@
       const link = e.target.closest('.image-preview-link');
       if (!link) return;
       e.preventDefault();
-      openImagePreview(link.getAttribute('href'), link.textContent);
+      openImagePreview(link.getAttribute('href'), link.dataset.downloadUrl, link.textContent);
     });
 
     const qualitySlider = document.getElementById('qualitySlider');
@@ -3121,7 +3142,16 @@
   }
 
   // Helper to clear image picker state
+  function releaseEpubImageUrls() {
+    epubImagesCache.forEach(img => {
+      if (typeof img.dataUrl === 'string' && img.dataUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(img.dataUrl);
+      }
+    });
+  }
+
   function clearImagePicker() {
+    releaseEpubImageUrls();
     epubImagesCache = [];
     imageStates = {};
     autoCropProtectedPaths = new Set();

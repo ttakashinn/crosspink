@@ -122,8 +122,9 @@ void CalibreConnectActivity::loop() {
     }
 
     resetTaskWatchdogIfSubscribed();
-    constexpr int MAX_ITERATIONS = 80;
-    for (int i = 0; i < MAX_ITERATIONS && webServer->isRunning(); i++) {
+    constexpr int TRANSFER_ITERATIONS = 80;
+    const int maxIterations = web_server_loop_policy::iterations(webServer->hasActiveTransfer(), TRANSFER_ITERATIONS);
+    for (int i = 0; i < maxIterations && webServer->isRunning(); i++) {
       webServer->handleClient();
       if ((i & 0x07) == 0x07) {
         resetTaskWatchdogIfSubscribed();

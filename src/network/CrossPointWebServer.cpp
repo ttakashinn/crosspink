@@ -19,6 +19,7 @@
 #include "SdCardFontSystem.h"
 #include "SettingsList.h"
 #include "WebDAVHandler.h"
+#include "WebFileResponsePolicy.h"
 #include "WifiCredentialStore.h"
 #include "html/FilesPageHtml.generated.h"
 #include "html/FontsPageHtml.generated.h"
@@ -116,6 +117,18 @@ void CrossPointWebServer::begin() {
   LOG_DBG("WEB", "Creating web server on port %d...", port);
   server.reset(new WebServer(port));
 
+  if (!server) {
+    LOG_ERR("WEB", "Failed to create WebServer!");
+    return;
+  }
+
+  // CrossPoint drives the server from a bounded activity loop. The framework's
+  // default 1 ms delay on every idle poll compounds across that burst and used
+  // to hold the activity for roughly half a second at a time.
+#ifndef SIMULATOR
+  server->enableDelay(false);
+#endif
+
   // Disable WiFi sleep to improve responsiveness and prevent 'unreachable' errors.
   // This is critical for reliable web server operation on ESP32.
   WiFi.setSleep(false);
@@ -127,11 +140,6 @@ void CrossPointWebServer::begin() {
   // We rely on disabling WiFi sleep for responsiveness.
 
   LOG_DBG("WEB", "[MEM] Free heap after WebServer allocation: %d bytes", ESP.getFreeHeap());
-
-  if (!server) {
-    LOG_ERR("WEB", "Failed to create WebServer!");
-    return;
-  }
 
   // Add Access-Control-Allow-* headers to every response so web-based clients
   // and PWAs on other origins can use the HTTP API. Preflight OPTIONS requests
@@ -345,6 +353,10 @@ CrossPointWebServer::WsUploadStatus CrossPointWebServer::getWsUploadStatus() con
   status.lastCompleteSize = wsLastCompleteSize;
   status.lastCompleteAt = wsLastCompleteAt;
   return status;
+}
+
+bool CrossPointWebServer::hasActiveTransfer() const {
+  return wsUploadInProgress || static_cast<bool>(upload.file) || static_cast<bool>(fontUpload.file);
 }
 
 static void sendHtmlContent(WebServer* server, const char* data, size_t len) {
@@ -608,10 +620,10 @@ void CrossPointWebServer::handleDownload() const {
     return;
   }
 
-  String contentType = "application/octet-stream";
-  if (isEpubFile(itemPath)) {
-    contentType = "application/epub+zip";
-  }
+  const std::string_view itemPathView{itemPath.c_str(), itemPath.length()};
+  const char* contentType = WebFileResponsePolicy::contentTypeForPath(itemPathView);
+  const bool previewRequested = server->hasArg("preview") && server->arg("preview") == "1";
+  const bool serveInline = WebFileResponsePolicy::shouldServeInline(itemPathView, previewRequested);
 
   char nameBuf[128] = {0};
   String filename = "download";
@@ -620,8 +632,9 @@ void CrossPointWebServer::handleDownload() const {
   }
 
   server->setContentLength(file.size());
-  server->sendHeader("Content-Disposition", "attachment; filename=\"" + filename + "\"");
-  server->send(200, contentType.c_str(), "");
+  server->sendHeader("Content-Disposition",
+                     String(serveInline ? "inline" : "attachment") + "; filename=\"" + filename + "\"");
+  server->send(200, contentType, "");
 
   NetworkClient client = server->client();
   const size_t chunkSize = 4096;
@@ -635,6 +648,7 @@ void CrossPointWebServer::handleDownload() const {
     size_t totalWritten = 0;
     while (totalWritten < bytesRead) {
       resetTaskWatchdogIfSubscribed();
+      yield();
       size_t wrote = client.write(buffer + totalWritten, bytesRead - totalWritten);
       if (wrote == 0) {
         downloadOk = false;
@@ -643,7 +657,11 @@ void CrossPointWebServer::handleDownload() const {
       totalWritten += wrote;
     }
   }
+  if (!downloadOk) {
+    LOG_ERR("WEB", "Download interrupted: %s", itemPath.c_str());
+  }
   client.clear();
+  client.stop();
   file.close();
 }
 

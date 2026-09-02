@@ -63,6 +63,9 @@ class CrossPointWebServer {
   // Check if server is running
   bool isRunning() const { return running; }
 
+  // True while a file payload is actively being received.
+  bool hasActiveTransfer() const;
+
   WsUploadStatus getWsUploadStatus() const;
 
   // Get the port number

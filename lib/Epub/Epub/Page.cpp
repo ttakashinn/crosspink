@@ -152,6 +152,20 @@ void Page::renderImages(GfxRenderer& renderer, const int fontId, const int xOffs
                              [](const PageElement& element) { return element.getTag() == TAG_PageImage; });
 }
 
+bool Page::warmImageCaches(GfxRenderer& renderer, const int fontId, const int xOffset, const int yOffset) const {
+  bool attemptedDecode = false;
+  for (const auto& element : elements) {
+    if (element->getTag() != TAG_PageImage) continue;
+
+    const auto& image = static_cast<const PageImage&>(*element);
+    if (!image.getImageBlock().needsDecode()) continue;
+
+    attemptedDecode = true;
+    element->render(renderer, fontId, xOffset, yOffset);
+  }
+  return attemptedDecode;
+}
+
 void Page::renderWithImagePlaceholders(GfxRenderer& renderer, const int fontId, const int xOffset,
                                        const int yOffset) const {
   for (const auto& element : elements) {

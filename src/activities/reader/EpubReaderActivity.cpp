@@ -2490,6 +2490,25 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
     ~PxcSlotGuard() { ImageBlock::releaseRenderCache(); }
   } pxcSlotGuard;
 
+  // First visits have neither the extracted source image nor its .pxc cache.
+  // Decode while contiguous heap is still at its peak; font prewarm can
+  // otherwise leave the PNG/JPEG decoder without a sufficiently large block.
+  // A revisit succeeds more often only because this cache was created by the
+  // first attempt. The decoder paints as it caches, so discard that scratch
+  // output before scanning fonts and rendering the visible page.
+  const bool pageHasImages = page->hasImages();
+  if (pageHasImages && page->hasImagesNeedingDecode()) {
+    const auto imageWarmStarted = millis();
+    const uint32_t imageWarmFreeBefore = ESP.getFreeHeap();
+    const uint32_t imageWarmLargestBefore = ESP.getMaxAllocHeap();
+    if (page->warmImageCaches(renderer, fontId, orientedMarginLeft, orientedMarginTop)) {
+      renderer.clearScreen();
+      LOG_DBG("ERS", "Image cache warmup: elapsed=%lums free=%u->%u largest=%u->%u", millis() - imageWarmStarted,
+              static_cast<unsigned>(imageWarmFreeBefore), static_cast<unsigned>(ESP.getFreeHeap()),
+              static_cast<unsigned>(imageWarmLargestBefore), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+    }
+  }
+
   auto* fcm = renderer.getFontCacheManager();
   auto scope = fcm->createPrewarmScope();
   page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop);
@@ -2513,7 +2532,6 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
       static_cast<uint16_t>(currentSpineIndex), static_cast<uint16_t>(section ? section->currentPage : 0),
       page->visibleTextOffset, nextPageVisibleOffset);
 
-  const bool pageHasImages = page->hasImages();
   const bool pageHasImagesNeedingDecode = pageHasImages && page->hasImagesNeedingDecode();
   const bool manualRefreshPending = forcedRefreshPending;
   forcedRefreshPending = false;

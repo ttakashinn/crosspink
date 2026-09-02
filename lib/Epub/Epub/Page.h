@@ -129,6 +129,11 @@ class Page {
   // rule paths while the user is looking at an already rendered page.
   void renderText(GfxRenderer& renderer, int fontId, int xOffset, int yOffset) const;
   void renderImages(GfxRenderer& renderer, int fontId, int xOffset, int yOffset) const;
+  // Decode only images whose validated .pxc cache is missing. Run this before
+  // font prewarm so PNG/JPEG decoders get the largest available contiguous heap.
+  // Decoding writes to the framebuffer as a side effect; true means the caller
+  // must clear it before the real page render.
+  bool warmImageCaches(GfxRenderer& renderer, int fontId, int xOffset, int yOffset) const;
   void renderWithImagePlaceholders(GfxRenderer& renderer, int fontId, int xOffset, int yOffset) const;
   bool serialize(HalFile& file) const;
   static std::unique_ptr<Page> deserialize(HalFile& file);

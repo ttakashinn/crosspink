@@ -309,10 +309,12 @@ void CrossPointWebServerActivity::loop() {
       if (millis() - lastWifiCheck > 2000) {  // Check every 2 seconds
         lastWifiCheck = millis();
         const wl_status_t wifiStatus = WiFi.status();
+        const IPAddress localIP = WiFi.localIP();
+        const bool wifiReady = wifiStatus == WL_CONNECTED && localIP != IPAddress(0, 0, 0, 0);
         // Driver auto-reconnect handles retries; abandon (via onGoHome) only
         // after WIFI_ABANDON_MS, otherwise the activity freezes on a blip.
         bool repaint = false;
-        if (wifiStatus != WL_CONNECTED) {
+        if (!wifiReady) {
           if (consecutiveDisconnects == 0) {
             firstDisconnectAt = millis();
             repaint = true;
@@ -330,6 +332,8 @@ void CrossPointWebServerActivity::loop() {
           if (consecutiveDisconnects > 0) {
             LOG_DBG("WEBACT", "WiFi recovered after %d failed checks (%lu ms)", consecutiveDisconnects,
                     millis() - firstDisconnectAt);
+            connectedIP = localIP.toString().c_str();
+            restartMdns(AP_HOSTNAME, "WEBACT");
             repaint = true;
           }
           consecutiveDisconnects = 0;
@@ -360,10 +364,11 @@ void CrossPointWebServerActivity::loop() {
       // Reset watchdog BEFORE processing - HTTP header parsing can be slow
       resetTaskWatchdogIfSubscribed();
 
-      // Process HTTP requests in tight loop for maximum throughput
-      // More iterations = more data processed per main loop cycle
-      constexpr int MAX_ITERATIONS = 500;
-      for (int i = 0; i < MAX_ITERATIONS && webServer->isRunning(); i++) {
+      // Keep idle polling bounded. Active WebSocket uploads retain the larger
+      // burst that provides their throughput.
+      constexpr int TRANSFER_ITERATIONS = 500;
+      const int maxIterations = web_server_loop_policy::iterations(webServer->hasActiveTransfer(), TRANSFER_ITERATIONS);
+      for (int i = 0; i < maxIterations && webServer->isRunning(); i++) {
         webServer->handleClient();
         // Reset watchdog every 32 iterations
         if ((i & 0x1F) == 0x1F) {

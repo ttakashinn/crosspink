@@ -7,6 +7,7 @@
 #include "NetworkModeSelectionActivity.h"
 #include "activities/Activity.h"
 #include "network/CrossPointWebServer.h"
+#include "network/WebServerLoopPolicy.h"
 
 // Web server activity states
 enum class WebServerActivityState {
@@ -67,6 +68,9 @@ class CrossPointWebServerActivity final : public Activity {
   void onExit() override;
   void loop() override;
   void render(RenderLock&&) override;
-  bool skipLoopDelay() override { return webServer && webServer->isRunning(); }
+  bool skipLoopDelay() override {
+    return webServer &&
+           web_server_loop_policy::skipMainLoopDelay(webServer->isRunning(), webServer->hasActiveTransfer());
+  }
   bool preventAutoSleep() override { return webServer && webServer->isRunning(); }
 };
