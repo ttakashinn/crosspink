@@ -672,16 +672,16 @@ void SleepActivity::renderDictionaryReviewSleepScreen() const {
   const int side = std::max(24, pageWidth / 16);
   const int contentWidth = pageWidth - side * 2;
   const int detailFontId = dictionary_typography::bodyFontId(14);
+  const int wordFontId = dictionary_typography::bodyFontId(18);
   renderer.clearScreen();
 
   int y = 24;
   renderer.drawCenteredText(UI_10_FONT_ID, y, tr(STR_DICTIONARY_REVIEW_TITLE), true, EpdFontFamily::BOLD);
   y += renderer.getLineHeight(UI_10_FONT_ID) + 24;
-  const auto wordLines =
-      renderer.wrappedText(NOTOSERIF_18_FONT_ID, selected.word.c_str(), contentWidth, 2, EpdFontFamily::BOLD);
+  const auto wordLines = renderer.wrappedText(wordFontId, selected.word.c_str(), contentWidth, 2, EpdFontFamily::BOLD);
   for (const auto& wordLine : wordLines) {
-    renderer.drawCenteredText(NOTOSERIF_18_FONT_ID, y, wordLine.c_str(), true, EpdFontFamily::BOLD);
-    y += renderer.getLineHeight(NOTOSERIF_18_FONT_ID);
+    renderer.drawCenteredText(wordFontId, y, wordLine.c_str(), true, EpdFontFamily::BOLD);
+    y += renderer.getLineHeight(wordFontId);
   }
   y += 8;
   if (!selected.phonetic.empty()) {

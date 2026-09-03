@@ -636,9 +636,10 @@ void DictionaryDefinitionActivity::render(RenderLock&&) {
   const auto header =
       dictionary_ui::definitionHeaderLayout(safe.x, safe.width, SIDE_PADDING, counterWidth, TITLE_COUNTER_GAP);
   if (header.titleWidth > 0) {
+    const int titleFontId = dictionary_typography::bodyFontId(12);
     const std::string title =
-        renderer.truncatedText(UI_12_FONT_ID, headword.c_str(), header.titleWidth, EpdFontFamily::BOLD);
-    renderer.drawText(UI_12_FONT_ID, header.titleX, headerY, title.c_str(), true, EpdFontFamily::BOLD);
+        renderer.truncatedText(titleFontId, headword.c_str(), header.titleWidth, EpdFontFamily::BOLD);
+    renderer.drawText(titleFontId, header.titleX, headerY, title.c_str(), true, EpdFontFamily::BOLD);
   }
   if (counterWidth > 0) {
     renderer.drawText(UI_10_FONT_ID, header.counterX, headerY, counter);

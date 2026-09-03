@@ -229,7 +229,7 @@ void configureSettings(CrossPointSettings& settings) {
   settings.orientation = CrossPointSettings::PORTRAIT;
   settings.textAntiAliasing = envBool("CROSSPOINT_RENDER_LAB_TEXT_AA", true) ? 1 : 0;
   settings.embeddedStyle = envBool("CROSSPOINT_RENDER_LAB_EMBEDDED_STYLES", true) ? 1 : 0;
-  settings.fontFamily = CrossPointSettings::NOTOSERIF;
+  settings.fontFamily = CrossPointSettings::SOURCESERIF;
   settings.fontPointSize = static_cast<uint8_t>(envInt("CROSSPOINT_RENDER_LAB_FONT_SIZE", 14));
   settings.lineSpacing = CrossPointSettings::NORMAL;
   const char* paragraphAlignment = envOr("CROSSPOINT_RENDER_LAB_PARAGRAPH_ALIGNMENT", "justified");
@@ -414,7 +414,7 @@ void recordGrayscaleOutcome(const bool applied, const char* path, const uint16_t
     publisherPage["label"] = publisherPageLabel;
   }
   const char* sdFontFamily = envOr("CROSSPOINT_RENDER_LAB_SD_FONT_FAMILY");
-  result["font_family"] = sdFontFamily[0] != '\0' ? sdFontFamily : "notoserif";
+  result["font_family"] = sdFontFamily[0] != '\0' ? sdFontFamily : "sourceserif";
   result["font_point_size"] = envInt("CROSSPOINT_RENDER_LAB_FONT_SIZE", 14);
   result["text_antialiasing"] = envBool("CROSSPOINT_RENDER_LAB_TEXT_AA", true);
   result["embedded_styles"] =

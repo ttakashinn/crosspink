@@ -20,6 +20,7 @@
 #include "SettingsList.h"
 #include "WebDAVHandler.h"
 #include "WebFileResponsePolicy.h"
+#include "WebFontCatalogJson.h"
 #include "WifiCredentialStore.h"
 #include "html/FilesPageHtml.generated.h"
 #include "html/FontsPageHtml.generated.h"
@@ -81,6 +82,40 @@ bool isProtectedItemName(const String& name) {
     }
   }
   return false;
+}
+
+bool ensureUploadBuffer(std::vector<uint8_t>& buffer, const size_t required, const char* tag) {
+  if (buffer.size() >= required) return true;
+  // With -fno-exceptions an allocation failure aborts instead of throwing.
+  // Keep headroom for the HTTP stack and reject the upload cleanly before
+  // asking std::vector for a block that cannot fit.
+  constexpr size_t ALLOCATION_HEADROOM = 4096;
+  const size_t maxAlloc = ESP.getMaxAllocHeap();
+  if (maxAlloc < required + ALLOCATION_HEADROOM) {
+    LOG_ERR("WEB", "%s upload buffer unavailable: maxAlloc=%u required=%u", tag, static_cast<unsigned>(maxAlloc),
+            static_cast<unsigned>(required));
+    return false;
+  }
+  buffer.resize(required);
+  return buffer.size() >= required;
+}
+
+void releaseUploadBuffer(std::vector<uint8_t>& buffer) { std::vector<uint8_t>().swap(buffer); }
+
+bool sendFontCatalogChunk(void* context, const char* data, const size_t size) {
+  static_cast<WebServer*>(context)->sendContent(data, size);
+  yield();
+  resetTaskWatchdogIfSubscribed();
+  return true;
+}
+
+unsigned long fontFileSize(void*, const char* path) {
+  HalFile file;
+  if (!Storage.openFileForRead("WEB", path, file)) return 0;
+  const unsigned long size = static_cast<unsigned long>(file.size());
+  file.close();
+  resetTaskWatchdogIfSubscribed();
+  return size;
 }
 }  // namespace
 
@@ -717,6 +752,11 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
     totalWriteTime = 0;
     writeCount = 0;
 
+    if (!ensureUploadBuffer(state.buffer, UploadState::UPLOAD_BUFFER_SIZE, "file")) {
+      state.error = "Not enough memory for upload buffer";
+      return;
+    }
+
     // Get upload path from query parameter (defaults to root if not specified)
     // Note: We use query parameter instead of form data because multipart form
     // fields aren't available until after file upload completes
@@ -832,6 +872,7 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
       Storage.remove(filePath.c_str());
     }
     state.error = "Upload aborted";
+    releaseUploadBuffer(state.buffer);
     LOG_DBG("WEB", "Upload aborted");
   }
 }
@@ -843,6 +884,7 @@ void CrossPointWebServer::handleUploadPost(UploadState& state) const {
     const String error = state.error.isEmpty() ? "Unknown error during upload" : state.error;
     server->send(400, "text/plain", error);
   }
+  releaseUploadBuffer(state.buffer);
 }
 
 void CrossPointWebServer::handleCreateFolder() const {
@@ -1824,43 +1866,22 @@ void CrossPointWebServer::handleFontsPage() const {
 
 void CrossPointWebServer::handleFontList() const {
   // Pick up any uploads/deletes that happened since the last reader load.
-  const_cast<SdCardFontSystem&>(sdFontSystem).refreshIfDirty();
+  auto& fontSystem = const_cast<SdCardFontSystem&>(sdFontSystem);
+  LOG_DBG("WEB", "Font list before catalog: free=%u maxAlloc=%u", static_cast<unsigned>(ESP.getFreeHeap()),
+          static_cast<unsigned>(ESP.getMaxAllocHeap()));
+  fontSystem.refreshIfDirty();
   const auto& families = sdFontSystem.registry().getFamilies();
 
-  JsonDocument doc;
-  JsonArray arr = doc["families"].to<JsonArray>();
-  doc["maxFamilies"] = SdCardFontRegistry::MAX_SD_FAMILIES;
-
-  for (const auto& family : families) {
-    JsonObject fObj = arr.add<JsonObject>();
-    fObj["name"] = family.name;
-
-    JsonArray sizes = fObj["sizes"].to<JsonArray>();
-    for (uint8_t s : family.availableSizes()) {
-      sizes.add(s);
-    }
-
-    JsonArray files = fObj["files"].to<JsonArray>();
-    for (const auto& file : family.files) {
-      JsonObject fileObj = files.add<JsonObject>();
-      // Extract filename from full path
-      const char* name = strrchr(file.path.c_str(), '/');
-      fileObj["name"] = name ? name + 1 : file.path.c_str();
-
-      // Stat the file for size
-      HalFile f;
-      if (Storage.openFileForRead("WEB", file.path.c_str(), f)) {
-        fileObj["size"] = static_cast<unsigned long>(f.size());
-        f.close();
-      } else {
-        fileObj["size"] = 0;
-      }
-    }
-  }
-
-  String json;
-  serializeJson(doc, json);
-  server->send(200, "application/json", json);
+  // Stream directly to the socket. Peak serialization memory is a 96-byte
+  // stack buffer regardless of whether the SD card has 1 or 128 families.
+  server->setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server->send(200, "application/json", "");
+  const bool sent = web_font_catalog_json::stream(families, SdCardFontRegistry::MAX_SD_FAMILIES, sendFontCatalogChunk,
+                                                  server.get(), fontFileSize, nullptr);
+  server->sendContent("");
+  fontSystem.releaseRegistryForNetwork();
+  LOG_DBG("WEB", "Font list streamed: ok=%d free=%u maxAlloc=%u", sent ? 1 : 0,
+          static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
 }
 
 void CrossPointWebServer::handleFontUploadData() {
@@ -1877,6 +1898,11 @@ void CrossPointWebServer::handleFontUploadData() {
       fontUpload.magicChecked = false;
       fontUpload.bytesWritten = 0;
       fontUpload.bufferPos = 0;
+
+      if (!ensureUploadBuffer(fontUpload.buffer, FontUploadState::BUFFER_SIZE, "font")) {
+        LOG_ERR("WEB", "Not enough memory for font upload buffer");
+        break;
+      }
 
       if (!FontInstaller::isValidFamilyName(family.c_str())) {
         LOG_ERR("WEB", "Invalid font family name: %s", family.c_str());
@@ -1979,6 +2005,8 @@ void CrossPointWebServer::handleFontUploadData() {
         Storage.remove(fontUpload.filePath.c_str());
       }
       fontUpload.valid = false;
+      fontUpload.bufferPos = 0;
+      releaseUploadBuffer(fontUpload.buffer);
       LOG_DBG("WEB", "Font upload aborted");
       break;
     }
@@ -1993,6 +2021,7 @@ void CrossPointWebServer::handleFontUpload() {
   } else {
     server->send(400, "application/json", "{\"error\":\"Invalid .cpfont file\"}");
   }
+  releaseUploadBuffer(fontUpload.buffer);
 }
 
 void CrossPointWebServer::handleFontDelete() {

@@ -26,13 +26,13 @@ TEST(DictionaryUiLayout, DegenerateBandNeverProducesNegativeWidth) {
 }
 
 TEST(DictionaryTypography, UsesStableBuiltinFacesInsteadOfTheBookFont) {
-  EXPECT_EQ(dictionary_typography::bodyFontId(8), NOTOSANS_12_FONT_ID);
-  EXPECT_EQ(dictionary_typography::bodyFontId(14), NOTOSANS_14_FONT_ID);
-  EXPECT_EQ(dictionary_typography::bodyFontId(16), NOTOSANS_16_FONT_ID);
-  EXPECT_EQ(dictionary_typography::bodyFontId(40), NOTOSANS_18_FONT_ID);
+  EXPECT_EQ(dictionary_typography::bodyFontId(8), SOURCESANS_12_FONT_ID);
+  EXPECT_EQ(dictionary_typography::bodyFontId(14), SOURCESANS_14_FONT_ID);
+  EXPECT_EQ(dictionary_typography::bodyFontId(16), SOURCESANS_16_FONT_ID);
+  EXPECT_EQ(dictionary_typography::bodyFontId(40), SOURCESANS_18_FONT_ID);
 }
 
-TEST(DictionaryTypography, UsesNotoSansLineCompression) {
+TEST(DictionaryTypography, UsesSourceSansLineCompression) {
   EXPECT_FLOAT_EQ(dictionary_typography::lineCompression(0), 0.90f);
   EXPECT_FLOAT_EQ(dictionary_typography::lineCompression(1), 0.95f);
   EXPECT_FLOAT_EQ(dictionary_typography::lineCompression(2), 1.0f);

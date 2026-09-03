@@ -49,6 +49,10 @@ class SdCardFontSystem {
   /// boot intentionally leaves it unloaded until a web request needs it.
   void ensureRegistry();
 
+  /// Release only catalog enumeration memory after a network response. Loaded
+  /// font data is independent and remains valid until the normal reboot/exit.
+  void releaseRegistryForNetwork();
+
   /// Backward-compatible web UI entry point.
   void refreshIfDirty() { ensureRegistry(); }
 

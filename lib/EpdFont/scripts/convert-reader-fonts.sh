@@ -1,16 +1,23 @@
 #!/bin/bash
 
-set -e
+set -euo pipefail
 
 cd "$(dirname "$0")"
 
 PYTHON_BIN="${PYTHON:-python3}"
-
+INSTANCE_DIR="instanced_fonts/builtin-reader"
 READER_FONT_STYLES=("Regular" "Italic" "Bold" "BoldItalic")
 READER_FONT_SIZES=(12 14 16 18)
+SOURCE_SERIF_REGULAR_WEIGHT="${SOURCE_SERIF_REGULAR_WEIGHT:-450}"
 
-# Noto Serif/Sans deliberately omit several literary symbols, including the
-# black star U+2605. Pull only this reviewed set from Inter at build time; this
+if ! [[ "$SOURCE_SERIF_REGULAR_WEIGHT" =~ ^[0-9]+$ ]] ||
+  ((SOURCE_SERIF_REGULAR_WEIGHT < 200 || SOURCE_SERIF_REGULAR_WEIGHT > 900)); then
+  echo "SOURCE_SERIF_REGULAR_WEIGHT must be an integer from 200 to 900" >&2
+  exit 2
+fi
+
+# Source Serif/Sans and their legacy Noto coverage fallbacks omit several
+# literary symbols. Pull only this reviewed set from Inter at build time; this
 # is not a runtime fallback and does not import whole symbol blocks into flash.
 READER_SYMBOL_INTERVALS=(
   --additional-intervals 0x2190,0x2190  # leftwards arrow
@@ -28,12 +35,10 @@ READER_SYMBOL_INTERVALS=(
 )
 
 # Dictionary definitions commonly use IPA even when the selected book font is
-# otherwise Latin-only. The dictionary renderer deliberately uses built-in
-# Noto Sans, so keep the IPA Extensions block, its spacing modifiers, and the
-# 3 Greek letters used as IPA symbols in those faces only.
-# Do not embed the full Greek/Phonetic Extensions blocks: those unrelated
-# glyphs add hundreds of KiB across 32 faces. Combining marks U+0300..U+036F
-# are already part of fontconvert.py's base set.
+# otherwise Latin-only. Keep the same complete phonetic range the Noto Sans
+# built-in family provided. Source Sans is first priority; matching Noto Sans
+# faces fill its uncommon IPA gaps at conversion time, so runtime coverage does
+# not regress and no second font needs to be loaded on the device.
 READER_PHONETIC_INTERVALS=(
   --additional-intervals 0x0250,0x02E9  # IPA Extensions + IPA spacing modifier letters
   --additional-intervals 0x03B2,0x03B2  # Greek beta
@@ -41,24 +46,61 @@ READER_PHONETIC_INTERVALS=(
   --additional-intervals 0x03C7,0x03C7  # Greek chi
 )
 
-for family in NotoSerif NotoSans; do
+mkdir -p "$INSTANCE_DIR"
+
+for family in SourceSerif SourceSans; do
   family_slug=$(echo "$family" | tr '[:upper:]' '[:lower:]')
   additional_intervals=("${READER_SYMBOL_INTERVALS[@]}")
-  if [[ "$family" == "NotoSans" ]]; then
+  if [[ "$family" == "SourceSans" ]]; then
     additional_intervals+=("${READER_PHONETIC_INTERVALS[@]}")
   fi
+
   for size in "${READER_FONT_SIZES[@]}"; do
     for style in "${READER_FONT_STYLES[@]}"; do
-      font_name="${family_slug}_${size}_$(echo "$style" | tr '[:upper:]' '[:lower:]')"
-      font_path="../builtinFonts/source/${family}/${family}-${style}.ttf"
+      style_slug=$(echo "$style" | tr '[:upper:]' '[:lower:]')
+      if [[ "$style" == *Italic ]]; then
+        source_variant="Italic"
+      else
+        source_variant="Roman"
+      fi
       if [[ "$style" == Bold* ]]; then
+        weight=700
         symbol_path="../builtinFonts/source/Inter/Inter-Bold.ttf"
       else
         symbol_path="../builtinFonts/source/Inter/Inter-Regular.ttf"
+        if [[ "$family" == "SourceSerif" ]]; then
+          weight="$SOURCE_SERIF_REGULAR_WEIGHT"
+        else
+          weight=450
+        fi
       fi
+
+      if [[ "$family" == "SourceSerif" ]]; then
+        if [[ "$source_variant" == "Italic" ]]; then
+          variable_path="../builtinFonts/source/SourceSerif4/SourceSerif4-Italic-Variable.ttf"
+        else
+          variable_path="../builtinFonts/source/SourceSerif4/SourceSerif4-Variable.ttf"
+        fi
+        legacy_path="../builtinFonts/source/NotoSerif/NotoSerif-${style}.ttf"
+        instance_path="$INSTANCE_DIR/${family_slug}_${size}_${style_slug}_opsz${size}_wght${weight}.ttf"
+        "$PYTHON_BIN" instantiate-variable-font.py "$variable_path" "$instance_path" \
+          --axis "opsz=$size" --axis "wght=$weight"
+      else
+        if [[ "$source_variant" == "Italic" ]]; then
+          variable_path="../builtinFonts/source/SourceSans3/SourceSans3-Italic-Variable.ttf"
+        else
+          variable_path="../builtinFonts/source/SourceSans3/SourceSans3-Variable.ttf"
+        fi
+        legacy_path="../builtinFonts/source/NotoSans/NotoSans-${style}.ttf"
+        instance_path="$INSTANCE_DIR/${family_slug}_${size}_${style_slug}_wght${weight}.ttf"
+        "$PYTHON_BIN" instantiate-variable-font.py "$variable_path" "$instance_path" --axis "wght=$weight"
+      fi
+
+      font_name="${family_slug}_${size}_${style_slug}"
       output_path="../builtinFonts/${font_name}.h"
-      "$PYTHON_BIN" fontconvert.py "$font_name" "$size" "$font_path" "$symbol_path" \
-        --fallback-only-additional --2bit --compress --pnum --zopfli --darken-aa \
+      "$PYTHON_BIN" fontconvert.py "$font_name" "$size" "$instance_path" "$legacy_path" "$symbol_path" \
+        --base-font-count 2 --2bit --compress --pnum --zopfli --darken-aa \
+        --kerning-intervals 0x20,0x7E --kerning-base-aliases \
         "${additional_intervals[@]}" > "$output_path"
       echo "Generated $output_path"
     done

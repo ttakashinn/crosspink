@@ -199,7 +199,7 @@ Ngày 29/08/2026, mã được đối chiếu lại với `uxjulia/CrossInk` t�
 
 | Hạng mục | Quyết định cho VNS | Căn cứ |
 | --- | --- | --- |
-| Font mặc định | Giữ Noto Serif/Sans của VNS | Bao phủ tiếng Việt trực tiếp, NFC hóa NFD trước layout, đủ 4 style và có golden cho font built-in/SD. Không thêm Bitter/Lexend vào flash chỉ để tăng số lựa chọn. |
+| Font mặc định | Source Serif 4/Source Sans 3 | Bao phủ tiếng Việt trực tiếp, NFC hóa NFD trước layout, đủ 4 style và có golden cho font built-in/SD. Noto và EB Garamond được cung cấp dưới dạng font SD thay vì tăng thêm số họ font trong flash. |
 | Độ đậm chữ AA | Chưa dùng ngưỡng `--darken-aa` của CrossInk làm mặc định | CrossInk hạ ngưỡng lượng tử để nét đậm hơn, nhưng simulator không xác nhận được bết nét, counter và ghosting trên panel. VNS vẫn cho phép tắt text AA; đổi mặc định cần A/B thiết bị. |
 | CSS selector/cache | Giữ kho phẳng có giới hạn của VNS; giữ descendant selector và page break đã nhập chọn lọc | Mọi lần tăng dung lượng đều có thể thất bại an toàn, selector/style pool bị chặn; phù hợp heap X3 hơn `unordered_map` của CrossInk. CrossInk hỗ trợ tối đa 100 descendant rule và disk fallback, còn VNS chủ động chặn ở 64 để dùng mask 64 bit không cấp phát. |
 | CSS visual extras | Nhập small caps có sửa ánh xạ tiếng Việt; chưa nhập black background | Bản VNS hỗ trợ cascade/inheritance/reset, font built-in/SD và NFC/NFD; ánh xạ bổ sung `ơ`, `ư` cùng Latin Extended Additional thay vì dùng nguyên bản CrossInk. Black background chưa có fixture/lợi ích đủ rõ để nhận thêm nhánh render đảo màu. |

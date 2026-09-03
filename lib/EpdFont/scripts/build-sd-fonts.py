@@ -135,7 +135,19 @@ def extract_static_instance(source_path: Path, axes: dict, family_name: str, sty
     #                          so the work would be wasted.
     source_font = TTFont(str(source_path))
     try:
-        font = instantiateVariableFont(source_font, axes, updateFontNames=True, optimize=False)
+        try:
+            font = instantiateVariableFont(source_font, axes, updateFontNames=True, optimize=False)
+        except ValueError as exc:
+            # updateFontNames only accepts coordinates that match a named
+            # STAT/fvar instance.  E-ink trials intentionally use intermediate
+            # weights such as 450 and 475, which are valid axis coordinates but
+            # usually have no corresponding name-table entry.  The .cpfont
+            # family/style comes from the YAML config, so retaining the source
+            # font names is harmless; the pinned outlines and OS/2 weight are
+            # still written correctly by the instancer.
+            if "Cannot find Axis Values" not in str(exc):
+                raise
+            font = instantiateVariableFont(source_font, axes, updateFontNames=False, optimize=False)
         try:
             font.save(str(tmp_path))
         finally:
@@ -178,6 +190,24 @@ def resolve_font_path(style_spec: dict, family_name: str, style_name: str) -> Pa
     return resolved
 
 
+def resolve_fallback_paths(family: dict, style_names) -> dict[str, list[Path]]:
+    """Resolve optional per-style fallback stacks, preserving legacy default."""
+    configured = family.get("fallbacks")
+    if not configured:
+        return {style_name: [DEFAULT_FALLBACK_FONT] for style_name in style_names}
+
+    resolved: dict[str, list[Path]] = {}
+    for style_name in style_names:
+        specs = configured.get(style_name, [])
+        if isinstance(specs, dict):
+            specs = [specs]
+        resolved[style_name] = [
+            resolve_font_path(spec, family["name"], f"fallback-{style_name}-{index}")
+            for index, spec in enumerate(specs)
+        ]
+    return resolved
+
+
 def _stream_pipe(pipe, prefix: str, dest: list[str]):
     """Read lines from a pipe, print with prefix, and accumulate into dest."""
     for line in pipe:
@@ -202,6 +232,7 @@ def build_family(
         resolved_styles = {}
         for style_name, style_spec in styles.items():
             resolved_styles[style_name] = resolve_font_path(style_spec, name, style_name)
+        resolved_fallbacks = resolve_fallback_paths(family, resolved_styles.keys())
     except (FileNotFoundError, RuntimeError) as e:
         return name, False, str(e)
 
@@ -215,14 +246,16 @@ def build_family(
         # Multi-style mode
         for style_name, font_path in resolved_styles.items():
             cmd.extend([f"--{style_name}", str(font_path)])
-            cmd.extend([f"--fallback-{style_name}", str(DEFAULT_FALLBACK_FONT)])
+            for fallback_path in resolved_fallbacks[style_name]:
+                cmd.extend([f"--fallback-{style_name}", str(fallback_path)])
     else:
         # Single-style mode
         style_name = next(iter(resolved_styles))
         font_path = resolved_styles[style_name]
         cmd.append(str(font_path))
         cmd.extend(["--style", style_name])
-        cmd.extend([f"--fallback-{style_name}", str(DEFAULT_FALLBACK_FONT)])
+        for fallback_path in resolved_fallbacks[style_name]:
+            cmd.extend([f"--fallback-{style_name}", str(fallback_path)])
 
     cmd.extend(["--intervals", intervals])
     cmd.extend(["--sizes", sizes])
@@ -400,6 +433,11 @@ def main():
                 except Exception as e:
                     print(f"ERROR: {e}", file=sys.stderr)
                     sys.exit(1)
+        try:
+            resolve_fallback_paths(family, family.get("styles", {}).keys())
+        except Exception as e:
+            print(f"ERROR: {e}", file=sys.stderr)
+            sys.exit(1)
 
     # Build phase (parallel)
     max_workers = args.jobs or len(families)

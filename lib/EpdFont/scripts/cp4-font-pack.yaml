@@ -1,0 +1,69 @@
+# Reproducible SD-card companion pack for CrossPink 1.6.0-cp.4.0.
+#
+# Noto uses the exact former built-in source faces. EB Garamond uses the Medium
+# archive supplied for this release. All families include four styles, the
+# complete old built-in intervals, IPA and matched fallbacks for holes.
+
+scriptGroups:
+  - {tag: latin, label: Latin}
+
+families:
+  - name: NotoSerif
+    description: "Former CrossPink built-in Noto Serif with full reader and IPA coverage"
+    scripts: [latin]
+    intervals: builtin,ipa-chars,(0x03B2-0x03B2),(0x03B8-0x03B8),(0x03C7-0x03C7)
+    sizes: [12, 14, 16, 18]
+    styles:
+      regular:    {path: "builtinFonts/source/NotoSerif/NotoSerif-Regular.ttf"}
+      bold:       {path: "builtinFonts/source/NotoSerif/NotoSerif-Bold.ttf"}
+      italic:     {path: "builtinFonts/source/NotoSerif/NotoSerif-Italic.ttf"}
+      bolditalic: {path: "builtinFonts/source/NotoSerif/NotoSerif-BoldItalic.ttf"}
+    fallbacks:
+      regular:    [{path: "builtinFonts/source/Inter/Inter-Regular.ttf"}]
+      bold:       [{path: "builtinFonts/source/Inter/Inter-Bold.ttf"}]
+      italic:     [{path: "builtinFonts/source/Inter/Inter-Regular.ttf"}]
+      bolditalic: [{path: "builtinFonts/source/Inter/Inter-Bold.ttf"}]
+
+  - name: NotoSans
+    description: "Former CrossPink built-in Noto Sans with full reader and IPA coverage"
+    scripts: [latin]
+    intervals: builtin,ipa-chars,(0x03B2-0x03B2),(0x03B8-0x03B8),(0x03C7-0x03C7)
+    sizes: [12, 14, 16, 18]
+    styles:
+      regular:    {path: "builtinFonts/source/NotoSans/NotoSans-Regular.ttf"}
+      bold:       {path: "builtinFonts/source/NotoSans/NotoSans-Bold.ttf"}
+      italic:     {path: "builtinFonts/source/NotoSans/NotoSans-Italic.ttf"}
+      bolditalic: {path: "builtinFonts/source/NotoSans/NotoSans-BoldItalic.ttf"}
+    fallbacks:
+      regular:    [{path: "builtinFonts/source/Inter/Inter-Regular.ttf"}]
+      bold:       [{path: "builtinFonts/source/Inter/Inter-Bold.ttf"}]
+      italic:     [{path: "builtinFonts/source/Inter/Inter-Regular.ttf"}]
+      bolditalic: [{path: "builtinFonts/source/Inter/Inter-Bold.ttf"}]
+
+  - name: EBGaramond
+    description: "EB Garamond Medium for literary reading, with Noto/Inter coverage fallbacks"
+    scripts: [latin]
+    intervals: builtin,ipa-chars,(0x03B2-0x03B2),(0x03B8-0x03B8),(0x03C7-0x03C7)
+    sizes: [12, 14, 16, 17, 18, 20]
+    styles:
+      regular:    {path: "builtinFonts/source/EBGaramond/EBGaramond-Medium.ttf"}
+      bold:       {path: "builtinFonts/source/EBGaramond/EBGaramond-Bold.ttf"}
+      italic:     {path: "builtinFonts/source/EBGaramond/EBGaramond-MediumItalic.ttf"}
+      bolditalic: {path: "builtinFonts/source/EBGaramond/EBGaramond-BoldItalic.ttf"}
+    fallbacks:
+      regular:
+        - {path: "builtinFonts/source/NotoSerif/NotoSerif-Regular.ttf"}
+        - {path: "builtinFonts/source/NotoSans/NotoSans-Regular.ttf"}
+        - {path: "builtinFonts/source/Inter/Inter-Regular.ttf"}
+      bold:
+        - {path: "builtinFonts/source/NotoSerif/NotoSerif-Bold.ttf"}
+        - {path: "builtinFonts/source/NotoSans/NotoSans-Bold.ttf"}
+        - {path: "builtinFonts/source/Inter/Inter-Bold.ttf"}
+      italic:
+        - {path: "builtinFonts/source/NotoSerif/NotoSerif-Italic.ttf"}
+        - {path: "builtinFonts/source/NotoSans/NotoSans-Italic.ttf"}
+        - {path: "builtinFonts/source/Inter/Inter-Regular.ttf"}
+      bolditalic:
+        - {path: "builtinFonts/source/NotoSerif/NotoSerif-BoldItalic.ttf"}
+        - {path: "builtinFonts/source/NotoSans/NotoSans-BoldItalic.ttf"}
+        - {path: "builtinFonts/source/Inter/Inter-Bold.ttf"}

@@ -1,0 +1,82 @@
+# X3/X4 serif A/B trial.
+#
+# This is intentionally separate from sd-fonts.yaml: the family names encode
+# the exact rasterization candidate so several variants can coexist on one SD
+# card.  All candidates use the production builder's 150 DPI, 2-bit AA and
+# --darken-aa path.  Sizes 14 and 15 are the same-point-size comparison;
+# EB Garamond also includes 17/18 pt for an approximate x-height match.  The
+# reader discovers point sizes from installed .cpfont files rather than a fixed
+# size enum.
+#
+# EBGaramond500 uses the static Medium/Bold files from the Google Fonts archive
+# supplied for this trial.  It remains a Garamond control, not a substitute for
+# Garamond Premier Pro Caption.
+
+scriptGroups:
+  - {tag: latin, label: Latin}
+
+families:
+  - name: SS4SmText450
+    description: "Source Serif 4 Small Text, optical size 16, weight 450"
+    scripts: [latin]
+    intervals: latin-ext,ipa-chars
+    sizes: [14, 15]
+    styles:
+      regular:
+        url: "https://raw.githubusercontent.com/adobe-fonts/source-serif/release/VAR/SourceSerif4Variable-Roman.ttf"
+        variable: {opsz: 16, wght: 450}
+      bold:
+        url: "https://raw.githubusercontent.com/adobe-fonts/source-serif/release/VAR/SourceSerif4Variable-Roman.ttf"
+        variable: {opsz: 16, wght: 700}
+      italic:
+        url: "https://raw.githubusercontent.com/adobe-fonts/source-serif/release/VAR/SourceSerif4Variable-Italic.ttf"
+        variable: {opsz: 16, wght: 450}
+      bolditalic:
+        url: "https://raw.githubusercontent.com/adobe-fonts/source-serif/release/VAR/SourceSerif4Variable-Italic.ttf"
+        variable: {opsz: 16, wght: 700}
+
+  - name: SS4SmText500
+    description: "Source Serif 4 Small Text, optical size 16, weight 500"
+    scripts: [latin]
+    intervals: latin-ext,ipa-chars
+    sizes: [14, 15]
+    styles:
+      regular:
+        url: "https://raw.githubusercontent.com/adobe-fonts/source-serif/release/VAR/SourceSerif4Variable-Roman.ttf"
+        variable: {opsz: 16, wght: 500}
+      bold:
+        url: "https://raw.githubusercontent.com/adobe-fonts/source-serif/release/VAR/SourceSerif4Variable-Roman.ttf"
+        variable: {opsz: 16, wght: 700}
+      italic:
+        url: "https://raw.githubusercontent.com/adobe-fonts/source-serif/release/VAR/SourceSerif4Variable-Italic.ttf"
+        variable: {opsz: 16, wght: 500}
+      bolditalic:
+        url: "https://raw.githubusercontent.com/adobe-fonts/source-serif/release/VAR/SourceSerif4Variable-Italic.ttf"
+        variable: {opsz: 16, wght: 700}
+
+  # Georgia is used as the low-resolution screen control because both the
+  # upstream XCharter files and macOS Charter.ttc are missing common Vietnamese
+  # horn/hook glyphs.  These paths are available on macOS; substitute licensed
+  # Georgia files on another build host.
+  - name: GeorgiaScreen
+    description: "Georgia screen control from the local macOS installation"
+    scripts: [latin]
+    intervals: latin-ext,ipa-chars
+    sizes: [14, 15]
+    styles:
+      regular:    {path: "/System/Library/Fonts/Supplemental/Georgia.ttf"}
+      bold:       {path: "/System/Library/Fonts/Supplemental/Georgia Bold.ttf"}
+      italic:     {path: "/System/Library/Fonts/Supplemental/Georgia Italic.ttf"}
+      bolditalic: {path: "/System/Library/Fonts/Supplemental/Georgia Bold Italic.ttf"}
+
+  - name: EBGaramond500
+    description: "User-supplied Google Fonts EB Garamond Medium control"
+    scripts: [latin]
+    intervals: latin-ext,ipa-chars
+    # 17/18 pt approximately x-height-match Source Serif 4 at 14/15 pt.
+    sizes: [14, 15, 17, 18]
+    styles:
+      regular:    {path: "scripts/downloaded_fonts/UserEBGaramond/static/EBGaramond-Medium.ttf"}
+      bold:       {path: "scripts/downloaded_fonts/UserEBGaramond/static/EBGaramond-Bold.ttf"}
+      italic:     {path: "scripts/downloaded_fonts/UserEBGaramond/static/EBGaramond-MediumItalic.ttf"}
+      bolditalic: {path: "scripts/downloaded_fonts/UserEBGaramond/static/EBGaramond-BoldItalic.ttf"}

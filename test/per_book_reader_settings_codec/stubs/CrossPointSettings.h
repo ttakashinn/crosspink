@@ -3,7 +3,7 @@
 #include <cstdint>
 
 struct CrossPointSettings {
-  enum { NOTOSERIF = 0, NOTOSANS = 1, FONT_FAMILY_COUNT = 2 };
+  enum { SOURCESERIF = 0, SOURCESANS = 1, FONT_FAMILY_COUNT = 2 };
   enum { TIGHT = 0, NORMAL = 1, WIDE = 2, EXTRA_WIDE = 3, LINE_COMPRESSION_COUNT = 4 };
   enum {
     JUSTIFIED = 0,

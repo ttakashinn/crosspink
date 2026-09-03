@@ -21,8 +21,8 @@ Lịch sử hiện hành tại `/.crosspoint/vns_dictionary_history.txt` chỉ l
 ## Bố cục
 
 - Tiêu đề nhỏ **ÔN TỪ ĐÃ TRA** ở đầu trang.
-- Từ chính dùng Noto Serif 18 đậm, căn giữa và tối đa 2 dòng; token quá dài được cắt tại biên UTF-8 với dấu `…`.
-- Phiên âm, nghĩa, ví dụ và collocation dùng Noto Sans 14 tích hợp để giữ coverage IPA ổn định; phiên âm tối đa 2 dòng và không chiếm vùng khi không có.
+- Từ chính dùng Source Sans 3 18 đậm, căn giữa và tối đa 2 dòng; token quá dài được cắt tại biên UTF-8 với dấu `…`.
+- Phiên âm, nghĩa, ví dụ và collocation dùng Source Sans 3 14 tích hợp để giữ coverage IPA ổn định; phiên âm tối đa 2 dòng và không chiếm vùng khi không có.
 - Các mục có nội dung chia sẻ động toàn bộ chiều cao còn lại. Mỗi mục phía sau được giữ tối thiểu nhãn và 1 dòng nội dung; mục cuối cùng dùng hết số dòng còn lại. Mục không có dữ liệu không được giữ chỗ.
 - Text được wrap theo biên UTF-8 và chiều rộng thật của font. Nội dung vượt giới hạn kết thúc bằng dấu `…`.
 - Nghĩa vẫn có ưu tiên cao nhất nhưng không còn bị cắt ở giới hạn 10 dòng khi cuối màn hình vẫn còn chỗ.

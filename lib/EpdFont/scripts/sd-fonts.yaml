@@ -15,6 +15,8 @@
 #   styles:      Map of style name -> font source
 #                  path: relative to lib/EpdFont (for committed fonts)
 #                  url:  download URL (for fonts not in the repo)
+#   fallbacks:   (optional) Map of style name -> ordered list of font sources.
+#                Omit to retain the historical Noto Sans Regular fallback.
 #
 # Variable fonts:
 #   Some fonts (Bitter, Inter, Alegreya) are distributed as variable fonts.

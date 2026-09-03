@@ -4,6 +4,7 @@ import sys
 import re
 import math
 import argparse
+import unicodedata
 from collections import namedtuple
 
 # Force UTF-8 stdout so that `python fontconvert.py … > foo.h` on Windows
@@ -22,6 +23,9 @@ parser.add_argument("--2bit", dest="is2Bit", action="store_true", help="generate
 parser.add_argument("--mono", dest="mono", action="store_true", help="For 1-bit fonts, rasterise with FreeType's native monochrome renderer (hinted, drop-out controlled) instead of antialiased-greyscale then threshold. Crisper stems on well-hinted faces (e.g. Ubuntu); avoid on thin faces whose sub-pixel stems would drop out. Ignored with --2bit.")
 parser.add_argument("--additional-intervals", dest="additional_intervals", action="append", help="Additional code point intervals to export as min,max. This argument can be repeated.")
 parser.add_argument("--fallback-only-additional", dest="fallback_only_additional", action="store_true", help="Use secondary fontstack faces only for codepoints explicitly named by --additional-intervals. Keeps a small fallback from filling unrelated holes in the built-in interval set.")
+parser.add_argument("--base-font-count", dest="base_font_count", type=int, help="Limit non-additional codepoints to the first N fontstack faces. Additional intervals may still use the full stack. This permits a coverage-preserving family fallback before a symbol fallback.")
+parser.add_argument("--kerning-intervals", dest="kerning_intervals", action="append", help="Restrict kerning tables to codepoints in min,max. Repeatable. Glyph coverage is unchanged; use this to omit kerning metadata for scripts or symbols where flash cost outweighs benefit.")
+parser.add_argument("--kerning-base-aliases", dest="kerning_base_aliases", action="store_true", help="Map accented Latin glyphs to the kerning class of their ASCII base. Intended with an ASCII --kerning-intervals range: it preserves prose kerning while avoiding large duplicate GPOS tables for every precomposed accent.")
 parser.add_argument("--compress", dest="compress", action="store_true", help="Compress glyph bitmaps using DEFLATE with group-based compression.")
 parser.add_argument("--zopfli", dest="zopfli", action="store_true", help="Use Zopfli for the DEFLATE backend instead of zlib. Produces standard raw-DEFLATE streams (decoded unchanged by the on-device uzlib inflater), typically a few percent smaller than zlib -9, at the cost of much slower compression. Requires --compress and the 'zopfli' package.")
 parser.add_argument("--force-autohint", dest="force_autohint", action="store_true", help="Force FreeType auto-hinter instead of native font hinting. Improves stem width consistency for fonts with weak or no native TrueType hints.")
@@ -36,6 +40,8 @@ from fontTools.ttLib import TTFont
 GlyphProps = namedtuple("GlyphProps", ["width", "height", "advance_x", "left", "top", "data_length", "data_offset", "code_point"])
 
 font_stack = [freetype.Face(f) for f in args.fontstack]
+if args.base_font_count is not None and not 1 <= args.base_font_count <= len(font_stack):
+    parser.error("--base-font-count must be between 1 and the number of fontstack faces")
 is2Bit = args.is2Bit
 size = args.size
 font_name = args.name
@@ -165,6 +171,14 @@ add_ints = []
 if args.additional_intervals:
     add_ints = [tuple([int(n, base=0) for n in i.split(",")]) for i in args.additional_intervals]
 
+kern_ints = []
+if args.kerning_intervals:
+    kern_ints = [tuple(int(n, base=0) for n in interval.split(",")) for interval in args.kerning_intervals]
+    if any(len(interval) != 2 or interval[0] > interval[1] for interval in kern_ints):
+        parser.error("--kerning-intervals must use ascending min,max pairs")
+if args.kerning_base_aliases and not kern_ints:
+    parser.error("--kerning-base-aliases requires at least one --kerning-intervals range")
+
 def norm_floor(val):
     return int(math.floor(val / (1 << 6)))
 
@@ -284,8 +298,11 @@ if args.pnum:
 def load_glyph(code_point):
     face_index = 0
     face_count = len(font_stack)
-    if args.fallback_only_additional and not any(first <= code_point <= last for first, last in add_ints):
-        face_count = min(face_count, 1)
+    if not any(first <= code_point <= last for first, last in add_ints):
+        if args.base_font_count is not None:
+            face_count = min(face_count, args.base_font_count)
+        elif args.fallback_only_additional:
+            face_count = min(face_count, 1)
     while face_index < face_count:
         face = font_stack[face_index]
         glyph_index = pnum_glyph_overrides.get((face_index, code_point))
@@ -450,8 +467,12 @@ for index, glyph in enumerate(all_glyphs):
 COMBINING_MARKS_START = 0x0300
 COMBINING_MARKS_END = 0x036F
 all_codepoints = [g.code_point for g in glyph_props]
-kernable_codepoints = set(cp for cp in all_codepoints
-                          if not (COMBINING_MARKS_START <= cp <= COMBINING_MARKS_END))
+kernable_codepoints = set(
+    cp
+    for cp in all_codepoints
+    if not (COMBINING_MARKS_START <= cp <= COMBINING_MARKS_END)
+    and (not kern_ints or any(first <= cp <= last for first, last in kern_ints))
+)
 
 # Map each kernable codepoint to the font-stack index that serves it
 # (same priority logic as load_glyph).
@@ -638,6 +659,39 @@ if kern_map:
         lc = left_class_map[lcp] - 1
         rc = right_class_map[rcp] - 1
         kern_matrix[lc * kern_right_class_count + rc] = adjust
+
+    if args.kerning_base_aliases:
+        # Most Latin precomposed glyphs share their base letter's kerning
+        # geometry. Source families publish thousands of expanded GPOS pairs
+        # for those accents; retaining each distinct pair costs hundreds of KB
+        # across 32 built-in faces. Alias every rendered Latin accent to the
+        # already-generated ASCII class instead. This preserves kerning for
+        # Vietnamese NFC text without expanding the sparse matrix.
+        manual_bases = {
+            0x0110: 0x0044,  # Đ -> D
+            0x0111: 0x0064,  # đ -> d
+            0x0131: 0x0069,  # dotless i -> i
+            0x0141: 0x004C,  # Ł -> L
+            0x0142: 0x006C,  # ł -> l
+        }
+
+        def latin_base(cp):
+            base = manual_bases.get(cp)
+            if base is not None:
+                return base
+            decomposed = unicodedata.normalize("NFD", chr(cp))
+            if decomposed and ord(decomposed[0]) < 0x80 and decomposed[0].isalpha():
+                return ord(decomposed[0])
+            return None
+
+        for cp in all_codepoints:
+            base = latin_base(cp)
+            if base is None:
+                continue
+            if cp not in left_class_map and base in left_class_map:
+                left_class_map[cp] = left_class_map[base]
+            if cp not in right_class_map and base in right_class_map:
+                right_class_map[cp] = right_class_map[base]
 
     # Build sorted class entry lists
     kern_left_classes = sorted(left_class_map.items())

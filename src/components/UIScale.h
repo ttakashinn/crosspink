@@ -22,7 +22,7 @@ inline UIScaleSpec uiScaleSpec() {
   }
   // Titles use the UI font, not a reader font: fui headers draw book and
   // directory titles, and the built-in Inter UI fonts cover Hebrew (plus the
-  // size-matched SD CJK fallback) where the NotoSans reader subsets do not.
+  // size-matched SD CJK fallback) where the Source Sans reader subsets do not.
   // Keep them at 12 pt in both tiers so Compact never shrinks navigation
   // landmarks below the firmware's established title size.
   spec.titleFontId = UI_12_FONT_ID;

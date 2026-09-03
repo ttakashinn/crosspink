@@ -138,11 +138,14 @@ void SdCardFontSystem::releaseForNetwork(GfxRenderer& renderer) {
     LOG_DBG("SDFS", "Released SD font before network operation: %s", familyName.c_str());
   }
 
-  if (registryLoaded_) {
-    LOG_DBG("SDFS", "Released SD font catalog (%d families)", registry_.getFamilyCount());
-    registry_.release();
-    registryLoaded_ = false;
-  }
+  releaseRegistryForNetwork();
+}
+
+void SdCardFontSystem::releaseRegistryForNetwork() {
+  if (!registryLoaded_) return;
+  LOG_DBG("SDFS", "Released SD font catalog (%d families)", registry_.getFamilyCount());
+  registry_.release();
+  registryLoaded_ = false;
 }
 
 void SdCardFontSystem::ensureRegistry() {

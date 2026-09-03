@@ -45,7 +45,6 @@ class CrossPointWebServer {
     std::vector<uint8_t> buffer;
     size_t bufferPos = 0;
 
-    UploadState() { buffer.resize(UPLOAD_BUFFER_SIZE); }
   } upload;
 
   CrossPointWebServer();
@@ -130,7 +129,6 @@ class CrossPointWebServer {
     std::vector<uint8_t> buffer;
     size_t bufferPos = 0;
 
-    FontUploadState() { buffer.resize(BUFFER_SIZE); }
   } fontUpload;
 
   // OPDS server handlers

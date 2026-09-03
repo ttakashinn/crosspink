@@ -29,7 +29,7 @@ struct PerBookReaderSettings {
 
   bool hasOverrides = false;
   uint16_t overrideMask = 0;
-  uint8_t fontFamily = CrossPointSettings::NOTOSERIF;
+  uint8_t fontFamily = CrossPointSettings::SOURCESERIF;
   uint8_t fontPointSize = CrossPointSettings::DEFAULT_FONT_POINT_SIZE;
   uint8_t lineSpacing = CrossPointSettings::NORMAL;
   uint8_t paragraphAlignment = CrossPointSettings::JUSTIFIED;

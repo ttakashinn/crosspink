@@ -16,7 +16,7 @@ Mỗi lần chạy là một process riêng để settings, global state và cac
 
 ## Profiles và suite
 
-- `x4-default`: portrait `480 × 800`, Noto Serif 14 pt, text AA bật.
+- `x4-default`: portrait `480 × 800`, Source Serif 4 14 pt, text AA bật.
 - `x3-default`: portrait `528 × 792`, cùng render settings để khóa khác biệt pagination do viewport.
 - `x4-no-text-aa`: portrait `480 × 800`, text AA tắt; ảnh vẫn đi qua grayscale plane.
 - `x4-sd-font`: portrait `480 × 800`, dùng fixture `.cpfont` v4 `CrossPointTest` có đủ 4 style và Latin mở rộng/combining marks cho tiếng Việt.
