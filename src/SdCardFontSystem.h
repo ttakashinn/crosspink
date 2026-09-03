@@ -22,12 +22,21 @@ class SdCardFontSystem {
   /// Also re-discovers if the registry has been marked dirty (e.g. by web upload).
   void ensureLoaded(GfxRenderer& renderer);
 
+  /// Release all SD-font RAM that network/TLS work does not need while
+  /// preserving the saved font selection. ensureLoaded() restores it later.
+  void releaseForNetwork(GfxRenderer& renderer);
+
   /// Resolve an SD card font ID from family name + reader point size.
   /// Returns 0 if not found. Used by CrossPointSettings::getReaderFontId().
   int resolveFontId(const char* familyName, uint8_t pointSize) const;
 
   /// Access the registry (e.g. for settings UI to enumerate available fonts).
   const SdCardFontRegistry& registry() const { return registry_; }
+
+  /// Return the catalog only when it has already been discovered. Network
+  /// handlers use this to avoid a synchronous SD scan in a latency/heap-
+  /// sensitive HTTP request during minimal network boot.
+  const SdCardFontRegistry* registryIfLoaded() const { return registryLoaded_ ? &registry_ : nullptr; }
 
   /// Non-const access to the registry (for FontInstaller).
   SdCardFontRegistry& registry() { return registry_; }

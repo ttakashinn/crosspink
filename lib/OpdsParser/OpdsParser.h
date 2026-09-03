@@ -61,6 +61,9 @@ class OpdsParser final : public Print {
   void flush() override;
 
   bool error() const;
+  /// Exposed for diagnostics/tests: construction is intentionally allocation-
+  /// free; Expat and entry storage start with the first body byte.
+  bool initialized() const { return parser != nullptr; }
   bool truncated() const { return feedTruncated; }
 
   operator bool() { return !error(); }
@@ -84,6 +87,8 @@ class OpdsParser final : public Print {
   void clear();
 
  private:
+  bool initialize();
+
   // Expat callbacks
   static void XMLCALL startElement(void* userData, const XML_Char* name, const XML_Char** atts);
   static void XMLCALL endElement(void* userData, const XML_Char* name);

@@ -332,18 +332,24 @@ HttpDownloader::DownloadError runGetSecure(const std::string& url, const std::st
 }  // namespace
 
 bool HttpDownloader::fetchUrl(const std::string& url, Stream& outContent, const std::string& username,
-                              const std::string& password, const TransportSecurity security) {
+                              const std::string& password, const TransportSecurity security,
+                              ResponseInfo* responseInfo) {
   LOG_DBG("HTTP", "Fetching: %s", url.c_str());
   Sink sink;
+  sink.responseInfo = responseInfo;
+  if (responseInfo) *responseInfo = {};
   sink.write = [&outContent](const uint8_t* data, size_t len) { return outContent.write(data, len) == len; };
   return runGetSecure(url, username, password, sink, security) == OK;
 }
 
 bool HttpDownloader::fetchUrl(const std::string& url, std::string& outContent, const std::string& username,
-                              const std::string& password, const TransportSecurity security) {
+                              const std::string& password, const TransportSecurity security,
+                              ResponseInfo* responseInfo) {
   LOG_DBG("HTTP", "Fetching: %s", url.c_str());
   outContent.clear();  // start clean; the sink appends, so don't carry prior content
   Sink sink;
+  sink.responseInfo = responseInfo;
+  if (responseInfo) *responseInfo = {};
   sink.write = [&outContent](const uint8_t* data, size_t len) {
     outContent.append(reinterpret_cast<const char*>(data), len);
     return true;
@@ -352,9 +358,12 @@ bool HttpDownloader::fetchUrl(const std::string& url, std::string& outContent, c
 }
 
 bool HttpDownloader::fetchUrl(const std::string& url, const DataCallback& onData, const std::string& username,
-                              const std::string& password, const TransportSecurity security) {
+                              const std::string& password, const TransportSecurity security,
+                              ResponseInfo* responseInfo) {
   LOG_DBG("HTTP", "Fetching: %s", url.c_str());
   Sink sink;
+  sink.responseInfo = responseInfo;
+  if (responseInfo) *responseInfo = {};
   sink.write = onData;
   return runGetSecure(url, username, password, sink, security) == OK;
 }

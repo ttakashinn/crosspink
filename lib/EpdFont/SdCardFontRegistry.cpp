@@ -6,6 +6,12 @@
 #include <algorithm>
 #include <cstring>
 
+namespace {
+// Most cards have zero or one custom family. MAX_SD_FAMILIES is a validation
+// limit, not a reason to retain space for 128 family objects on every boot.
+constexpr size_t INITIAL_FAMILY_CAPACITY = 4;
+}  // namespace
+
 // --- SdCardFontFamilyInfo helpers ---
 
 const SdCardFontFileInfo* SdCardFontFamilyInfo::findFile(uint8_t size, uint8_t style) const {
@@ -194,7 +200,7 @@ void SdCardFontRegistry::scanRoot(const char* rootPath, std::vector<SdCardFontFa
 
 bool SdCardFontRegistry::discover() {
   families_.clear();
-  families_.reserve(MAX_SD_FAMILIES);
+  families_.reserve(INITIAL_FAMILY_CAPACITY);
 
   // Hidden root is scanned first so it wins on name collisions, matching the
   // sleep-folder pattern (/.sleep preferred over /sleep).
@@ -213,6 +219,8 @@ bool SdCardFontRegistry::discover() {
   LOG_DBG("SDREG", "Discovery complete: %d families", static_cast<int>(families_.size()));
   return !families_.empty();
 }
+
+void SdCardFontRegistry::release() { std::vector<SdCardFontFamilyInfo>().swap(families_); }
 
 const char* SdCardFontRegistry::findFamilyRoot(const char* familyName) {
   if (!familyName || !*familyName) return nullptr;

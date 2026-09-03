@@ -16,17 +16,21 @@ constexpr size_t MAX_SEARCH_TEMPLATE_CHARS = 768;
 constexpr size_t MAX_PAGE_URL_CHARS = 768;
 }  // namespace
 
-OpdsParser::OpdsParser() {
+OpdsParser::OpdsParser() = default;
+
+bool OpdsParser::initialize() {
+  if (parser) return true;
   parser = XML_ParserCreate(nullptr);
   if (!parser) {
     errorOccured = true;
     LOG_DBG("OPDS", "Couldn't allocate memory for parser");
-    return;
+    return false;
   }
   entries.reserve(ENTRY_STORAGE_CAPACITY);
   XML_SetUserData(parser, this);
   XML_SetElementHandler(parser, startElement, endElement);
   XML_SetCharacterDataHandler(parser, characterData);
+  return true;
 }
 
 OpdsParser::~OpdsParser() { destroyXmlParser(parser); }
@@ -35,6 +39,7 @@ size_t OpdsParser::write(uint8_t c) { return write(&c, 1); }
 
 size_t OpdsParser::write(const uint8_t* xmlData, const size_t length) {
   if (errorOccured) return length;
+  if (!initialize()) return length;
 
   const char* currentPos = reinterpret_cast<const char*>(xmlData);
   size_t remaining = length;
@@ -66,7 +71,12 @@ size_t OpdsParser::write(const uint8_t* xmlData, const size_t length) {
 }
 
 void OpdsParser::flush() {
-  if (errorOccured || !parser) return;
+  if (errorOccured) return;
+  if (!parser) {
+    errorOccured = true;
+    LOG_DBG("OPDS", "Empty feed body");
+    return;
+  }
   if (XML_Parse(parser, nullptr, 0, XML_TRUE) != XML_STATUS_OK) {
     errorOccured = true;
     destroyXmlParser(parser);

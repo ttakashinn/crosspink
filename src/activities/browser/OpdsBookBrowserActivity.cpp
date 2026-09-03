@@ -11,6 +11,7 @@
 
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
+#include "SdCardFontSystem.h"
 #include "SilentRestart.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "activities/util/KeyboardEntryActivity.h"
@@ -44,6 +45,15 @@ OpdsBookBrowserActivity::OpdsBookBrowserActivity(GfxRenderer& renderer, MappedIn
 
 void OpdsBookBrowserActivity::onEnter() {
   Activity::onEnter();
+
+  // CrossInk has unloaded the active SD font before OPDS since b340133c: WiFi,
+  // TLS, and the parser need more contiguous heap than this screen's UI. The
+  // saved selection remains intact and onExit() restarts after network use.
+  LOG_DBG("OPDS", "Heap before SD font release: free=%u maxAlloc=%u", static_cast<unsigned>(ESP.getFreeHeap()),
+          static_cast<unsigned>(ESP.getMaxAllocHeap()));
+  sdFontSystem.releaseForNetwork(renderer);
+  LOG_DBG("OPDS", "Heap after SD font release: free=%u maxAlloc=%u", static_cast<unsigned>(ESP.getFreeHeap()),
+          static_cast<unsigned>(ESP.getMaxAllocHeap()));
 
   state = BrowserState::CHECK_WIFI;
   entries.clear();
@@ -358,12 +368,22 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
 
   std::string url = UrlUtils::buildUrl(server.url, path);
   LOG_DBG("OPDS", "Fetching: %s", url.c_str());
+
+  // Defer Expat + entry storage until body bytes arrive, after the TLS
+  // handshake has completed its peak transient allocations.
   OpdsParser parser;
+  HttpDownloader::ResponseInfo responseInfo;
   {
     OpdsParserStream stream{parser};
-    if (!HttpDownloader::fetchUrl(url, stream, server.username, server.password)) {
+    if (!HttpDownloader::fetchUrl(url, stream, server.username, server.password,
+                                  HttpDownloader::TransportSecurity::STANDARD, &responseInfo)) {
       state = BrowserState::ERROR;
-      errorMessage = tr(STR_FETCH_FEED_FAILED);
+      if (responseInfo.statusCode >= 400) {
+        errorMessage =
+            std::string(tr(STR_FETCH_FEED_FAILED)) + " (HTTP " + std::to_string(responseInfo.statusCode) + ")";
+      } else {
+        errorMessage = tr(STR_CONNECTION_FAILED);
+      }
       requestUpdate();
       return;
     }

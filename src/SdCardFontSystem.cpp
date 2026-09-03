@@ -131,6 +131,20 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
   }
 }
 
+void SdCardFontSystem::releaseForNetwork(GfxRenderer& renderer) {
+  if (!manager_.currentFamilyName().empty()) {
+    const std::string familyName = manager_.currentFamilyName();
+    manager_.unloadAll(renderer);
+    LOG_DBG("SDFS", "Released SD font before network operation: %s", familyName.c_str());
+  }
+
+  if (registryLoaded_) {
+    LOG_DBG("SDFS", "Released SD font catalog (%d families)", registry_.getFamilyCount());
+    registry_.release();
+    registryLoaded_ = false;
+  }
+}
+
 void SdCardFontSystem::ensureRegistry() {
   const bool registryWasDirty = registryDirty_.exchange(false, std::memory_order_acq_rel);
   if (registryLoaded_ && !registryWasDirty) return;

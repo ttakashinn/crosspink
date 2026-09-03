@@ -1196,11 +1196,10 @@ void CrossPointWebServer::handleSettingsPage() const {
 }
 
 void CrossPointWebServer::handleGetSettings() const {
-  // Pass the SD font registry so the fontFamily setting's enumStringValues
-  // includes SD-resident families — otherwise the web API only exposes the
-  // three built-in fonts.
-  const_cast<SdCardFontSystem&>(sdFontSystem).ensureRegistry();
-  const auto& settings = getSettingsList(&sdFontSystem.registry());
+  // Minimal network boot intentionally skips the SD font catalog. Never scan
+  // the card from this request: that blocks the single HTTP loop and retains
+  // catalog memory exactly when WiFi/web-server heap is most constrained.
+  const auto& settings = getSettingsList(sdFontSystem.registryIfLoaded());
 
   server->setContentLength(CONTENT_LENGTH_UNKNOWN);
   server->send(200, "application/json", "");
@@ -1304,8 +1303,9 @@ void CrossPointWebServer::handlePostSettings() {
     return;
   }
 
-  sdFontSystem.ensureRegistry();
-  const auto& settings = getSettingsList(&sdFontSystem.registry());
+  // Match GET: saving an unrelated setting must not trigger an SD scan or make
+  // the web server unresponsive during minimal network boot.
+  const auto& settings = getSettingsList(sdFontSystem.registryIfLoaded());
   int applied = 0;
 
   for (const auto& s : settings) {

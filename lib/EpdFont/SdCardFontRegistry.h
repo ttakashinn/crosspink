@@ -46,6 +46,10 @@ class SdCardFontRegistry {
   // Scan SD card, populate families_. Returns true if any families found.
   bool discover();
 
+  // Release names, paths, and vector capacity retained by the catalog. The
+  // next caller that needs enumeration must discover() again.
+  void release();
+
   const std::vector<SdCardFontFamilyInfo>& getFamilies() const { return families_; }
   const SdCardFontFamilyInfo* findFamily(const std::string& name) const;
   int getFamilyIndex(const std::string& name) const;
