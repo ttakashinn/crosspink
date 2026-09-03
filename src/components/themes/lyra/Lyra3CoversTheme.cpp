@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "RecentBooksStore.h"
+#include "components/HomeCoverCachePolicy.h"
 #include "components/UITheme.h"
 #include "components/icons/cover.h"
 #include "fontIds.h"
@@ -32,14 +33,14 @@ void Lyra3CoversTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, con
   // Only load from SD on first render, then use stored buffer
   if (hasContinueReading) {
     if (!coverRendered) {
+      bool allCoversResolved = true;
       for (int i = 0;
            i < std::min(static_cast<int>(recentBooks.size()), Lyra3CoversMetrics::values.homeRecentBooksCount); i++) {
         std::string coverPath = recentBooks[i].coverBmpPath;
-        bool hasCover = true;
+        const bool expectsCover = !coverPath.empty();
+        bool renderedCover = false;
         int tileX = Lyra3CoversMetrics::values.contentSidePadding + tileWidth * i;
-        if (coverPath.empty()) {
-          hasCover = false;
-        } else {
+        if (expectsCover) {
           const std::string coverBmpPath =
               UITheme::getCoverThumbPath(coverPath, Lyra3CoversMetrics::values.homeCoverHeight);
 
@@ -58,8 +59,7 @@ void Lyra3CoversTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, con
               renderer.drawBitmap(bitmap, tileX + hPaddingInSelection, tileY + hPaddingInSelection,
                                   tileWidth - 2 * hPaddingInSelection, Lyra3CoversMetrics::values.homeCoverHeight,
                                   cropX);
-            } else {
-              hasCover = false;
+              renderedCover = true;
             }
             file.close();
           }
@@ -68,7 +68,7 @@ void Lyra3CoversTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, con
         renderer.drawRect(tileX + hPaddingInSelection, tileY + hPaddingInSelection, tileWidth - 2 * hPaddingInSelection,
                           Lyra3CoversMetrics::values.homeCoverHeight, true);
 
-        if (!hasCover) {
+        if (!renderedCover) {
           // Render empty cover
           renderer.fillRect(tileX + hPaddingInSelection,
                             tileY + hPaddingInSelection + (Lyra3CoversMetrics::values.homeCoverHeight / 3),
@@ -76,10 +76,16 @@ void Lyra3CoversTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, con
                             true);
           renderer.drawIcon(CoverIcon, tileX + hPaddingInSelection + 24, tileY + hPaddingInSelection + 24, 32);
         }
+        allCoversResolved = allCoversResolved && shouldCacheHomeCover(expectsCover, renderedCover);
       }
 
-      coverBufferStored = storeCoverBuffer();
-      coverRendered = coverBufferStored;  // Only consider it rendered if we successfully stored the buffer
+      if (allCoversResolved) {
+        coverBufferStored = storeCoverBuffer();
+        coverRendered = coverBufferStored;
+      } else {
+        coverBufferStored = false;
+        coverRendered = false;
+      }
     }
 
     for (int i = 0; i < std::min(static_cast<int>(recentBooks.size()), Lyra3CoversMetrics::values.homeRecentBooksCount);

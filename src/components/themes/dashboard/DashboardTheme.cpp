@@ -14,6 +14,7 @@
 #include "RecentBooksStore.h"
 #include "activities/reader/BookStatsActivity.h"
 #include "activities/reader/ReadingStatsClock.h"
+#include "components/HomeCoverCachePolicy.h"
 #include "components/UIScale.h"
 #include "components/UITheme.h"
 #include "components/icons/afternoon.h"
@@ -211,7 +212,7 @@ void drawRightAlignedIconLabel(const GfxRenderer& renderer, const uint8_t* icon,
                     EpdFontFamily::BOLD);
 }
 
-void drawCover(const GfxRenderer& renderer, const Rect& target, const RecentBook& recent) {
+bool drawCover(const GfxRenderer& renderer, const Rect& target, const RecentBook& recent) {
   // A missing-thumb placeholder can be cached just before Home generates the
   // real thumbnail. Clear the whole target so black placeholder text cannot
   // bleed through the white pixels of the newly decoded 1-bit bitmap.
@@ -243,6 +244,7 @@ void drawCover(const GfxRenderer& renderer, const Rect& target, const RecentBook
                                      Rect{target.x + 12, target.y + 12, target.width - 24, target.height - 24},
                                      UI_12_FONT_ID, recent.title.c_str(), 6, true, EpdFontFamily::BOLD);
   }
+  return drewCover;
 }
 
 void drawBookText(const GfxRenderer& renderer, const Rect& cover, const RecentBook& recent,
@@ -489,9 +491,14 @@ void DashboardTheme::drawRecentBookCover(GfxRenderer& renderer, const Rect rect,
 
   const RecentBook& recent = recentBooks[0];
   if (!bufferRestored || !coverRendered) {
-    drawCover(renderer, cover, recent);
-    coverBufferStored = storeCoverBuffer();
-    coverRendered = coverBufferStored;
+    const bool renderedCover = drawCover(renderer, cover, recent);
+    if (shouldCacheHomeCover(!recent.coverBmpPath.empty(), renderedCover)) {
+      coverBufferStored = storeCoverBuffer();
+      coverRendered = coverBufferStored;
+    } else {
+      coverBufferStored = false;
+      coverRendered = false;
+    }
   }
   const DashboardData data = makeData(bookStats, progressPercent, globalStats);
   drawStatsColumn(renderer, cover, data);

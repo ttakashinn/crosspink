@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "RecentBooksStore.h"
+#include "components/HomeCoverCachePolicy.h"
 #include "components/UITheme.h"
 #include "components/icons/book.h"
 #include "components/icons/bookmark.h"
@@ -220,11 +221,10 @@ void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
     RecentBook book = recentBooks[0];
     if (!coverRendered) {
       std::string coverPath = book.coverBmpPath;
-      bool hasCover = true;
+      const bool expectsCover = !coverPath.empty();
+      bool renderedCover = false;
       int tileX = LyraMetrics::values.contentSidePadding;
-      if (coverPath.empty()) {
-        hasCover = false;
-      } else {
+      if (expectsCover) {
         const std::string coverBmpPath = UITheme::getCoverThumbPath(coverPath, LyraMetrics::values.homeCoverHeight);
 
         // First time: load cover from SD and render
@@ -235,8 +235,7 @@ void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
             coverWidth = bitmap.getWidth();
             renderer.drawBitmap(bitmap, tileX + hPaddingInSelection, tileY + hPaddingInSelection, coverWidth,
                                 LyraMetrics::values.homeCoverHeight);
-          } else {
-            hasCover = false;
+            renderedCover = true;
           }
           file.close();
         }
@@ -246,7 +245,7 @@ void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
       renderer.drawRect(tileX + hPaddingInSelection, tileY + hPaddingInSelection, coverWidth,
                         LyraMetrics::values.homeCoverHeight, true);
 
-      if (!hasCover) {
+      if (!renderedCover) {
         // Render empty cover
         renderer.fillRect(tileX + hPaddingInSelection,
                           tileY + hPaddingInSelection + (LyraMetrics::values.homeCoverHeight / 3), coverWidth,
@@ -254,8 +253,14 @@ void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
         renderer.drawIcon(CoverIcon, tileX + hPaddingInSelection + 24, tileY + hPaddingInSelection + 24, 32);
       }
 
-      coverBufferStored = storeCoverBuffer();
-      coverRendered = coverBufferStored;  // Only consider it rendered if we successfully stored the buffer
+      if (shouldCacheHomeCover(expectsCover, renderedCover)) {
+        coverBufferStored = storeCoverBuffer();
+        coverRendered = coverBufferStored;
+      } else {
+        // Do not pin a transient SD/decode failure in the Home cover cache.
+        coverBufferStored = false;
+        coverRendered = false;
+      }
     }
 
     bool bookSelected = (selectorIndex == 0);

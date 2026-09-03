@@ -131,6 +131,14 @@ BmpReaderError Bitmap::parseHeaders() {
   // Pre-calculate Row Bytes to avoid doing this every row
   rowBytes = (width * bpp + 31) / 32 * 4;
 
+  // A thumbnail can be left with a valid header but no/partial pixel payload
+  // after an interrupted SD write. Treat it as invalid before callers draw and
+  // cache a blank image. Compression is restricted to uncompressed layouts
+  // above, so rowBytes * height is the exact minimum pixel payload size.
+  const uint64_t minimumFileSize =
+      static_cast<uint64_t>(bfOffBits) + static_cast<uint64_t>(rowBytes) * static_cast<uint64_t>(height);
+  if (file.fileSize64() < minimumFileSize) return BmpReaderError::ShortReadRow;
+
   for (int i = 0; i < 256; i++) paletteLum[i] = static_cast<uint8_t>(i);
   if (colorsUsed > 0) {
     for (uint32_t i = 0; i < colorsUsed; i++) {

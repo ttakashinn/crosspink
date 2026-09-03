@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "RecentBooksStore.h"
+#include "components/HomeCoverCachePolicy.h"
 #include "components/UITheme.h"
 #include "components/icons/cover.h"
 #include "fontIds.h"
@@ -77,10 +78,9 @@ void RoundedRaffTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, con
     RecentBook book = recentBooks[0];
     if (!coverRendered) {
       std::string coverPath = book.coverBmpPath;
-      bool hasCover = true;
-      if (coverPath.empty()) {
-        hasCover = false;
-      } else {
+      const bool expectsCover = !coverPath.empty();
+      bool renderedCover = false;
+      if (expectsCover) {
         const std::string coverBmpPath =
             UITheme::getCoverThumbPath(coverPath, RoundedRaffMetrics::values.homeCoverHeight);
 
@@ -95,8 +95,7 @@ void RoundedRaffTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, con
             renderer.maskRoundedRectOutsideCorners(tileX + (tileWidth - coverWidth) / 2, imgY, coverWidth,
                                                    RoundedRaffMetrics::values.homeCoverHeight, kCoverRadius,
                                                    Color::LightGray);
-          } else {
-            hasCover = false;
+            renderedCover = true;
           }
           file.close();
         }
@@ -106,7 +105,7 @@ void RoundedRaffTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, con
       renderer.drawRoundedRect(tileX + (tileWidth - coverWidth) / 2, imgY, coverWidth,
                                RoundedRaffMetrics::values.homeCoverHeight, 1, kCoverRadius, true);
 
-      if (!hasCover) {
+      if (!renderedCover) {
         // Render empty cover
         renderer.fillRect(tileX + (tileWidth - coverWidth) / 2, imgY + (RoundedRaffMetrics::values.homeCoverHeight / 3),
                           coverWidth, 2 * RoundedRaffMetrics::values.homeCoverHeight / 3, true);
@@ -116,8 +115,13 @@ void RoundedRaffTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, con
                                                Color::LightGray);
       }
 
-      coverBufferStored = storeCoverBuffer();
-      coverRendered = coverBufferStored;  // Only consider it rendered if we successfully stored the buffer
+      if (shouldCacheHomeCover(expectsCover, renderedCover)) {
+        coverBufferStored = storeCoverBuffer();
+        coverRendered = coverBufferStored;
+      } else {
+        coverBufferStored = false;
+        coverRendered = false;
+      }
     }
 
     renderer.fillRoundedRect(tileX, tileY, tileWidth, imgY - tileY, kRowRadius, true, true, false, false,

@@ -57,6 +57,30 @@ bool hasAnyGlobalStats(const GlobalReadingStats& stats) {
          stats.completedBooks > 0 || stats.longestReadingStreak > 0;
 }
 
+enum class CoverThumbnailState : uint8_t { MISSING, READY, NO_COVER_SENTINEL, INVALID, IO_ERROR };
+
+CoverThumbnailState inspectCoverThumbnail(const std::string& path) {
+  HalFile file;
+  if (!Storage.openFileForRead("HOME", path, file)) {
+    return Storage.exists(path.c_str()) ? CoverThumbnailState::IO_ERROR : CoverThumbnailState::MISSING;
+  }
+
+  if (file.fileSize64() == 0) {
+    file.close();
+    return CoverThumbnailState::NO_COVER_SENTINEL;
+  }
+
+  Bitmap bitmap(file);
+  const BmpReaderError result = bitmap.parseHeaders();
+  const uint8_t fileError = file.getError();
+  file.close();
+  if (result == BmpReaderError::Ok) return CoverThumbnailState::READY;
+  if (fileError != 0) return CoverThumbnailState::IO_ERROR;
+
+  LOG_ERR("HOME", "Invalid cached cover thumbnail %s: %s", path.c_str(), Bitmap::errorToString(result));
+  return CoverThumbnailState::INVALID;
+}
+
 }  // namespace
 
 int HomeActivity::getMenuItemCount() const {
@@ -198,64 +222,114 @@ void HomeActivity::loadRecentBooks(int maxBooks) {
 void HomeActivity::loadRecentCovers(int coverHeight) {
   recentsLoading = true;
   bool showingLoading = false;
+  bool redrawCovers = false;
   Rect popupRect;
 
   int progress = 0;
   for (RecentBook& book : recentBooks) {
-    if (!book.coverBmpPath.empty()) {
-      std::string coverPath = UITheme::getCoverThumbPath(book.coverBmpPath, coverHeight);
-      if (!Storage.exists(coverPath.c_str())) {
-        // If epub, try to load the metadata for title/author and cover
-        if (FsHelpers::hasEpubExtension(book.path)) {
-          Epub epub(book.path, "/.crosspoint");
-          // Skip loading css since we only need metadata here
-          if (!epub.load(false, true)) {
-            // A cache-version upgrade is not proof that the book has no cover.
-            // Keep the recorded cover pattern; opening the book will rebuild
-            // metadata and a later Home visit can generate this thumbnail.
-            LOG_DBG("HOME", "Deferring thumbnail until EPUB metadata cache is rebuilt: %s", book.path.c_str());
-            continue;
-          }
+    const bool isEpub = FsHelpers::hasEpubExtension(book.path);
+    const bool isXtc = FsHelpers::hasXtcExtension(book.path);
+    if (!isEpub && !isXtc) {
+      progress++;
+      continue;
+    }
 
-          // Try to generate thumbnail image for Continue Reading card
-          if (!showingLoading) {
-            showingLoading = true;
-            popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
-          }
-          GUI.fillPopupProgress(renderer, popupRect, 10 + progress * (90 / recentBooks.size()));
-          bool success = epub.generateThumbBmp(coverHeight);
-          if (!success) {
-            RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
-            book.coverBmpPath = "";
-          }
-          coverRendered = false;
-          requestUpdate();
-        } else if (FsHelpers::hasXtcExtension(book.path)) {
-          // Handle XTC file
-          Xtc xtc(book.path, "/.crosspoint");
-          if (xtc.load()) {
-            // Try to generate thumbnail image for Continue Reading card
-            if (!showingLoading) {
-              showingLoading = true;
-              popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
-            }
-            GUI.fillPopupProgress(renderer, popupRect, 10 + progress * (90 / recentBooks.size()));
-            bool success = xtc.generateThumbBmp(coverHeight);
-            if (!success) {
-              RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
-              book.coverBmpPath = "";
-            }
-            coverRendered = false;
-            requestUpdate();
-          }
+    const auto persistCoverPattern = [&book](const std::string& pattern) {
+      if (book.coverBmpPath == pattern) return;
+      book.coverBmpPath = pattern;
+      RECENT_BOOKS.updateBook(book.path, book.title, book.author, pattern);
+    };
+
+    const auto processBook = [&](auto& publication, auto&& loadPublication) {
+      const std::string expectedPattern = book.coverBmpPath.empty() ? publication.getThumbBmpPath() : book.coverBmpPath;
+      const std::string thumbnailPath = UITheme::getCoverThumbPath(expectedPattern, coverHeight);
+      CoverThumbnailState state = inspectCoverThumbnail(thumbnailPath);
+
+      if (state == CoverThumbnailState::READY) {
+        // Repairs recent.json entries cleared by older firmware after a
+        // transient generation failure, without regenerating the image.
+        if (book.coverBmpPath.empty()) {
+          persistCoverPattern(expectedPattern);
+          redrawCovers = true;
+        } else if (!coverRendered) {
+          // The theme could have hit a transient open failure before this
+          // validation pass. Give it one bounded redraw attempt.
+          redrawCovers = true;
         }
+        return;
       }
+
+      if (state == CoverThumbnailState::NO_COVER_SENTINEL) {
+        // EPUB writes a zero-byte sentinel for a book with no supported cover.
+        // Keep that terminal result, but do not expose it to the theme as BMP.
+        persistCoverPattern("");
+        return;
+      }
+
+      if (state == CoverThumbnailState::IO_ERROR) {
+        LOG_DBG("HOME", "Deferring thumbnail after transient SD read failure: %s", thumbnailPath.c_str());
+        redrawCovers = true;
+        return;
+      }
+
+      if (state == CoverThumbnailState::INVALID && !Storage.remove(thumbnailPath.c_str())) {
+        LOG_ERR("HOME", "Cannot remove invalid cover thumbnail: %s", thumbnailPath.c_str());
+        redrawCovers = true;
+        return;
+      }
+
+      // Load only when a thumbnail really has to be rebuilt. EPUB skips CSS;
+      // Home must remain a cheap metadata/cache operation on the C3 boards.
+      if (!loadPublication()) {
+        LOG_DBG("HOME", "Deferring thumbnail until book metadata is available: %s", book.path.c_str());
+        return;
+      }
+
+      if (!showingLoading) {
+        showingLoading = true;
+        popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+      }
+      GUI.fillPopupProgress(renderer, popupRect, 10 + progress * (90 / recentBooks.size()));
+      const bool generated = publication.generateThumbBmp(coverHeight);
+      state = inspectCoverThumbnail(thumbnailPath);
+
+      if (generated && state == CoverThumbnailState::READY) {
+        persistCoverPattern(expectedPattern);
+        redrawCovers = true;
+        return;
+      }
+
+      if (state == CoverThumbnailState::NO_COVER_SENTINEL) {
+        // This is a terminal "no supported cover" result, not an I/O failure.
+        persistCoverPattern("");
+        return;
+      }
+
+      // Do not erase the durable cover pattern after one OOM/SD/decode
+      // failure. A later Home visit can retry, and a valid existing pattern is
+      // required for the theme to know that a placeholder is non-terminal.
+      LOG_ERR("HOME", "Cover thumbnail generation deferred for %s", book.path.c_str());
+      if (state == CoverThumbnailState::INVALID) Storage.remove(thumbnailPath.c_str());
+      if (state == CoverThumbnailState::IO_ERROR) redrawCovers = true;
+    };
+
+    if (isEpub) {
+      Epub epub(book.path, "/.crosspoint");
+      processBook(epub, [&epub] { return epub.load(false, true); });
+    } else {
+      Xtc xtc(book.path, "/.crosspoint");
+      processBook(xtc, [&xtc] { return xtc.load(); });
     }
     progress++;
   }
 
   recentsLoaded = true;
   recentsLoading = false;
+  if (redrawCovers) {
+    freeCoverBuffer();
+    coverRendered = false;
+    requestUpdate();
+  }
 }
 
 void HomeActivity::onEnter() {
