@@ -85,6 +85,11 @@ void CrossPointWebServerActivity::onEnter() {
   lastHandleClientTime = 0;
   requestUpdate();
 
+  if (hasInitialNetworkMode) {
+    onNetworkModeSelected(initialNetworkMode);
+    return;
+  }
+
   // Launch network mode selection subactivity
   LOG_DBG("WEBACT", "Launching NetworkModeSelectionActivity...");
   startActivityForResult(std::make_unique<NetworkModeSelectionActivity>(renderer, mappedInput),
@@ -136,6 +141,18 @@ void CrossPointWebServerActivity::onNetworkModeSelected(const NetworkMode mode) 
 #if FREEINK_CAP_USB_MSC
   if (mode == NetworkMode::USB_DRIVE) {
     activityManager.goToUsbDrive();
+    return;
+  }
+#endif
+
+#if FREEINK_MCU_C3
+  // X3/X4 share a small internal heap with the framebuffer. Reboot only after
+  // the user has chosen a WiFi-backed mode, then resume directly into it with
+  // reader-only resources omitted. S3/touch boards retain their current path:
+  // a software reset can leave externally powered touch/frontlight rails in an
+  // unsafe state, and their larger heap does not need this transition.
+  if (!networkBootReady) {
+    silentRestartToFileTransfer(mode);
     return;
   }
 #endif

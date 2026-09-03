@@ -2497,7 +2497,14 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   // first attempt. The decoder paints as it caches, so discard that scratch
   // output before scanning fonts and rendering the visible page.
   const bool pageHasImages = page->hasImages();
+  auto* fcm = renderer.getFontCacheManager();
   if (pageHasImages && page->hasImagesNeedingDecode()) {
+    // CrossInk releases rebuildable font caches before inline-image work. Do
+    // the same at the narrower and safer point here: only for a cold image
+    // page, after layout is complete and immediately before decoder
+    // allocation. The scan below rebuilds exactly the glyphs this page needs.
+    if (fcm) fcm->releaseSdFontCaches();
+
     const auto imageWarmStarted = millis();
     const uint32_t imageWarmFreeBefore = ESP.getFreeHeap();
     const uint32_t imageWarmLargestBefore = ESP.getMaxAllocHeap();
@@ -2506,10 +2513,16 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
       LOG_DBG("ERS", "Image cache warmup: elapsed=%lums free=%u->%u largest=%u->%u", millis() - imageWarmStarted,
               static_cast<unsigned>(imageWarmFreeBefore), static_cast<unsigned>(ESP.getFreeHeap()),
               static_cast<unsigned>(imageWarmLargestBefore), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+
+      // A warmup failure may be transient (SD extraction visibility or a
+      // fragmented decoder allocation). Start the visible render as a fresh
+      // cycle so it gets one controlled retry after temporary decoder/file
+      // objects have been released. A second failure remains suppressed for
+      // all B/W and grayscale passes of this page.
+      ImageBlock::beginRenderCycle();
     }
   }
 
-  auto* fcm = renderer.getFontCacheManager();
   auto scope = fcm->createPrewarmScope();
   page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop);
   // Scan the status bar too: a CJK book/chapter title redirected to the SD

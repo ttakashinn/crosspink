@@ -92,6 +92,7 @@ class ActivityManager {
 
   // goTo... functions are convenient wrapper for replaceActivity()
   void goToFileTransfer();
+  bool resumeFileTransferFromNetworkBoot(uint32_t payload);
   void goToUsbDrive();
   void goToSettings();
   void goToVanNhanSoSettings(bool returnToSettingsOnBack = false);

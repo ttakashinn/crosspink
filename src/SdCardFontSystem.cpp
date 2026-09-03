@@ -37,7 +37,7 @@ constexpr UiFontSize kUiFontSizes[] = {
 }  // namespace
 
 void SdCardFontSystem::begin(GfxRenderer& renderer) {
-  registry_.discover();
+  ensureRegistry();
 
   // Register this system as the SD font ID resolver in settings.
   // Uses a static trampoline since CrossPointSettings stores a plain function pointer.
@@ -72,11 +72,8 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
   // Track whether we just re-discovered so we can force a reload below even
   // when the wanted family/size still maps to the same point size — the file
   // contents on disk may have changed (e.g. user re-uploaded a new build).
-  const bool registryWasDirty = registryDirty_.exchange(false, std::memory_order_acquire);
-  if (registryWasDirty) {
-    LOG_DBG("SDFS", "Registry dirty — re-discovering fonts");
-    registry_.discover();
-  }
+  const bool registryWasDirty = !registryLoaded_ || registryDirty_.load(std::memory_order_acquire);
+  ensureRegistry();
 
   const char* wantedFamily = SETTINGS.sdFontFamilyName;
   const std::string& currentFamily = manager_.currentFamilyName();
@@ -132,6 +129,15 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
     LOG_DBG("SDFS", "SD font family not found: %s (clearing)", wantedFamily);
     SETTINGS.clearSdFontFamily();
   }
+}
+
+void SdCardFontSystem::ensureRegistry() {
+  const bool registryWasDirty = registryDirty_.exchange(false, std::memory_order_acq_rel);
+  if (registryLoaded_ && !registryWasDirty) return;
+
+  LOG_DBG("SDFS", "%s SD font catalog", registryLoaded_ ? "Refreshing" : "Loading");
+  registry_.discover();
+  registryLoaded_ = true;
 }
 
 void SdCardFontSystem::setupUiFallbacks(GfxRenderer& renderer) {

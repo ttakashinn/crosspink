@@ -1199,6 +1199,7 @@ void CrossPointWebServer::handleGetSettings() const {
   // Pass the SD font registry so the fontFamily setting's enumStringValues
   // includes SD-resident families — otherwise the web API only exposes the
   // three built-in fonts.
+  const_cast<SdCardFontSystem&>(sdFontSystem).ensureRegistry();
   const auto& settings = getSettingsList(&sdFontSystem.registry());
 
   server->setContentLength(CONTENT_LENGTH_UNKNOWN);
@@ -1303,6 +1304,7 @@ void CrossPointWebServer::handlePostSettings() {
     return;
   }
 
+  sdFontSystem.ensureRegistry();
   const auto& settings = getSettingsList(&sdFontSystem.registry());
   int applied = 0;
 

@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <new>
+#include <utility>
 
 #include "Epub/converters/DirectPixelWriter.h"
 #include "Epub/converters/ImageClip.h"
@@ -22,8 +23,8 @@
 // - uint16_t height
 // - uint8_t pixels[...] - 2 bits per pixel, packed (4 pixels per byte), row-major order
 
-ImageBlock::ImageBlock(const std::string& imagePath, const std::string& srcPath, int16_t width, int16_t height)
-    : imagePath(imagePath), srcPath(srcPath), width(width), height(height) {}
+ImageBlock::ImageBlock(std::string imagePath, std::string srcPath, int16_t width, int16_t height)
+    : imagePath(std::move(imagePath)), srcPath(std::move(srcPath)), width(width), height(height) {}
 
 void* ImageBlock::extractCtx = nullptr;
 ImageBlock::ExtractFn ImageBlock::extractFn = nullptr;
@@ -483,5 +484,5 @@ std::unique_ptr<ImageBlock> ImageBlock::deserialize(HalFile& file) {
   int16_t w, h;
   serialization::readPod(file, w);
   serialization::readPod(file, h);
-  return std::unique_ptr<ImageBlock>(new (std::nothrow) ImageBlock(path, src, w, h));
+  return std::unique_ptr<ImageBlock>(new (std::nothrow) ImageBlock(std::move(path), std::move(src), w, h));
 }

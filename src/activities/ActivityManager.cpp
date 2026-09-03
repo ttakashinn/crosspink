@@ -237,6 +237,24 @@ void ActivityManager::goToFileTransfer() {
   replaceActivity(std::make_unique<CrossPointWebServerActivity>(renderer, mappedInput));
 }
 
+bool ActivityManager::resumeFileTransferFromNetworkBoot(const uint32_t payload) {
+  NetworkMode mode = NetworkMode::JOIN_NETWORK;
+  if (!decodeFileTransferNetworkMode(payload, mode)) {
+    LOG_ERR("ACT", "Invalid File Transfer network boot payload: %lu", static_cast<unsigned long>(payload));
+    return false;
+  }
+
+  auto activity = makeUniqueNoThrow<CrossPointWebServerActivity>(renderer, mappedInput, mode, true);
+  if (!activity) {
+    LOG_ERR("ACT", "OOM: File Transfer activity after minimal boot (free=%u maxAlloc=%u)", ESP.getFreeHeap(),
+            ESP.getMaxAllocHeap());
+    return false;
+  }
+
+  replaceActivity(std::move(activity));
+  return true;
+}
+
 void ActivityManager::goToUsbDrive() {
 #if FREEINK_CAP_USB_MSC
   auto activity = makeUniqueNoThrow<UsbDriveActivity>(renderer, mappedInput);

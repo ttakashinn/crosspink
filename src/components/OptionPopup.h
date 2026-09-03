@@ -9,6 +9,7 @@
 
 #include "GfxRenderer.h"
 #include "MappedInputManager.h"
+#include "components/InputReleaseGate.h"
 #include "components/UITheme.h"
 #include "components/UiAppHelpers.h"
 
@@ -35,6 +36,7 @@ class OptionPopup {
     }
     selectedIndex = currentIndex;
     onSelectCallback = std::move(onSelect);
+    inputReleaseGate.reset();
     uiReady = false;
     active = true;
   }
@@ -48,6 +50,7 @@ class OptionPopup {
     }
     selectedIndex = currentIndex;
     onSelectCallback = std::move(onSelect);
+    inputReleaseGate.reset();
     uiReady = false;
     active = true;
   }
@@ -58,12 +61,26 @@ class OptionPopup {
     ownedStrings = options;
     selectedIndex = currentIndex;
     onSelectCallback = std::move(onSelect);
+    inputReleaseGate.reset();
     uiReady = false;
     active = true;
   }
 
   bool handleInput(MappedInputManager& input, const std::function<void()>& requestUpdate) {
     if (!active) return false;
+
+    // Physical input does not go through InteractionBuffer's uiReady gate.
+    // Require the new popup to be rendered and then observe one clean frame,
+    // otherwise the release that selected the parent action can immediately
+    // activate this popup's default row (notably OTA's default "Update").
+    int heldTouchX = 0;
+    int heldTouchY = 0;
+    const bool relevantInputHeld =
+        input.isPressed(MappedInputManager::Button::Back) || input.isPressed(MappedInputManager::Button::Confirm) ||
+        input.isPressed(MappedInputManager::Button::NavPrevious) ||
+        input.isPressed(MappedInputManager::Button::NavNext) || input.isPressed(MappedInputManager::Button::Power) ||
+        input.isScreenTouchHeld(heldTouchX, heldTouchY);
+    if (!inputReleaseGate.acceptsInput(uiReady.load(std::memory_order_acquire), relevantInputHeld)) return true;
 
     // Match the render cap: only the first MAX_OPTIONS rows exist on screen,
     // so button wrap-around must not select an invisible option.
@@ -250,6 +267,7 @@ class OptionPopup {
   std::vector<std::string> ownedStrings;
   int selectedIndex = 0;
   std::function<void(int)> onSelectCallback;
+  InputReleaseGate inputReleaseGate;
   // Written by the render task (frame registration), routed by the loop task;
   // uiReady closes the rebuild window exactly like UiListActivity::uiReady.
   mutable freeink::ui::InteractionBuffer<INTERACTION_CAPACITY> interactions;

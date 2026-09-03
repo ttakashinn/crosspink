@@ -1423,18 +1423,18 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
                 self->currentPageNextY += imageMarginTop;
 
                 // Create ImageBlock and add to page
-                // nothrow: make_shared uses bare new, which aborts on OOM under
-                // -fno-exceptions; images arrive mid-parse when the heap is at its
-                // most loaded, so this must fail soft into the null-check below.
-                auto imageBlock = std::shared_ptr<ImageBlock>(
-                    new (std::nothrow) ImageBlock(cachedImagePath, resolvedPath, displayWidth, displayHeight));
+                // Images arrive mid-parse when the heap is at its most loaded;
+                // allocate without exceptions so OOM fails soft into the
+                // null-check below.
+                auto imageBlock = makeUniqueNoThrow<ImageBlock>(std::move(cachedImagePath), std::move(resolvedPath),
+                                                                displayWidth, displayHeight);
                 if (!imageBlock) {
                   self->markLowMemoryFailure("image block allocation");
                   return;
                 }
                 const int xPos = imageHorizontalLayout.xOffset + (containerWidth - displayWidth) / 2;
-                auto pageImage =
-                    std::shared_ptr<PageImage>(new (std::nothrow) PageImage(imageBlock, xPos, self->currentPageNextY));
+                auto pageImage = std::shared_ptr<PageImage>(
+                    new (std::nothrow) PageImage(std::move(imageBlock), xPos, self->currentPageNextY));
                 if (!pageImage) {
                   self->markLowMemoryFailure("page image allocation");
                   return;

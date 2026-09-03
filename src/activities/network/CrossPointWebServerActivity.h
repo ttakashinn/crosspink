@@ -30,6 +30,9 @@ enum class WebServerActivityState {
  */
 class CrossPointWebServerActivity final : public Activity {
   WebServerActivityState state = WebServerActivityState::MODE_SELECTION;
+  bool hasInitialNetworkMode = false;
+  NetworkMode initialNetworkMode = NetworkMode::JOIN_NETWORK;
+  bool networkBootReady = false;
 
   // Network mode
   NetworkMode networkMode = NetworkMode::JOIN_NETWORK;
@@ -64,6 +67,12 @@ class CrossPointWebServerActivity final : public Activity {
  public:
   explicit CrossPointWebServerActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
       : Activity("CrossPointWebServer", renderer, mappedInput) {}
+  CrossPointWebServerActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, NetworkMode initialNetworkMode,
+                              bool networkBootReady)
+      : Activity("CrossPointWebServer", renderer, mappedInput),
+        hasInitialNetworkMode(true),
+        initialNetworkMode(initialNetworkMode),
+        networkBootReady(networkBootReady) {}
   void onEnter() override;
   void onExit() override;
   void loop() override;

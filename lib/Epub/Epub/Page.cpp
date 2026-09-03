@@ -92,7 +92,16 @@ std::unique_ptr<PageImage> PageImage::deserialize(HalFile& file) {
   serialization::readPod(file, yPos);
 
   auto ib = ImageBlock::deserialize(file);
-  return std::unique_ptr<PageImage>(new PageImage(std::move(ib), xPos, yPos));
+  if (!ib) {
+    LOG_ERR("PGE", "Deserialization failed: null ImageBlock");
+    return nullptr;
+  }
+  auto* image = new (std::nothrow) PageImage(std::move(ib), xPos, yPos);
+  if (!image) {
+    LOG_ERR("PGE", "Deserialization failed: could not allocate PageImage");
+    return nullptr;
+  }
+  return std::unique_ptr<PageImage>(image);
 }
 
 void PageHorizontalRule::render(GfxRenderer& renderer, const int fontId, const int xOffset, const int yOffset) {
@@ -159,6 +168,17 @@ bool Page::warmImageCaches(GfxRenderer& renderer, const int fontId, const int xO
 
     const auto& image = static_cast<const PageImage&>(*element);
     if (!image.getImageBlock().needsDecode()) continue;
+
+    // ImageBlock intentionally does not publish a .pxc cache for clipped
+    // images because the missing rows/columns would corrupt a later full
+    // render. Decoding those here cannot warm anything and only spends heap;
+    // leave them for the visible render path.
+    const int x = image.xPos + xOffset;
+    const int y = image.yPos + yOffset;
+    if (x < 0 || y < 0 || x + image.getImageBlock().getWidth() > renderer.getScreenWidth() ||
+        y + image.getImageBlock().getHeight() > renderer.getScreenHeight()) {
+      continue;
+    }
 
     attemptedDecode = true;
     element->render(renderer, fontId, xOffset, yOffset);

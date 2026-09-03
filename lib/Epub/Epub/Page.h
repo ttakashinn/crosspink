@@ -47,10 +47,10 @@ class PageLine final : public PageElement {
 
 // New PageImage class
 class PageImage final : public PageElement {
-  std::shared_ptr<ImageBlock> imageBlock;
+  std::unique_ptr<ImageBlock> imageBlock;
 
  public:
-  PageImage(std::shared_ptr<ImageBlock> block, const int16_t xPos, const int16_t yPos)
+  PageImage(std::unique_ptr<ImageBlock> block, const int16_t xPos, const int16_t yPos)
       : PageElement(xPos, yPos), imageBlock(std::move(block)) {}
   void render(GfxRenderer& renderer, int fontId, int xOffset, int yOffset) override;
   void renderPlaceholder(GfxRenderer& renderer, int xOffset, int yOffset) const;

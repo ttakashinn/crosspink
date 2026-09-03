@@ -31,6 +31,7 @@
 #include "OpdsServerStore.h"
 #include "RecentBooksStore.h"
 #include "SdCardFontSystem.h"
+#include "SilentRestart.h"
 #include "activities/Activity.h"
 #include "activities/ActivityManager.h"
 #include "activities/settings/SdFirmwareUpdateActivity.h"
@@ -133,18 +134,21 @@ EpdFontFamily ui12FontFamily(&ui12RegularFont, &ui12BoldFont);
 // Definitions for SilentRestart.h. RTC_NOINIT survives ESP.restart() but not power loss.
 RTC_NOINIT_ATTR uint32_t silentRebootMagic;
 RTC_NOINIT_ATTR uint32_t silentRebootTarget;
+RTC_NOINIT_ATTR uint32_t silentRebootPayload;
 constexpr uint32_t SILENT_REBOOT_MAGIC = 0xC1EAB007;
 constexpr uint32_t SILENT_REBOOT_TARGET_HOME = 0;
 constexpr uint32_t SILENT_REBOOT_TARGET_READER = 1;
 constexpr uint32_t SILENT_REBOOT_TARGET_VANNHANSO_SETTINGS = 2;
 constexpr uint32_t SILENT_REBOOT_TARGET_READER_LOW_MEMORY = 3;
+constexpr uint32_t SILENT_REBOOT_TARGET_FILE_TRANSFER = 4;
 
-// How the device is coming back to life, resolved once at boot. Both resume
-// flows suppress the splash and leave the panel holding its pre-boot frame; a
+// How the device is coming back to life, resolved once at boot. Resume flows
+// suppress the splash and leave the panel holding its pre-boot frame; a
 // plain boot shows the splash. See setup() for the resolution.
 enum class BootResume : uint8_t {
   Splash,          // cold boot, flash, panic, or plain reboot
   Silent,          // heap-defrag ESP.restart() (RTC flag; lost on power loss)
+  Network,         // clean C3 boot with reader-only resources omitted
   SplashlessWake,  // wake from deep sleep with the splash suppressed by the SD flag
 };
 
@@ -181,6 +185,7 @@ void silentRestart() {
   if (finishWifiSessionWithoutRestart()) return;
 #endif
   silentRebootTarget = SILENT_REBOOT_TARGET_HOME;
+  silentRebootPayload = 0;
   silentRebootMagic = SILENT_REBOOT_MAGIC;
   LOG_DBG("MAIN", "Silent restart (target=home)");
   // E-ink retains the previous frame until Home's first paint lands (~2-3s).
@@ -198,6 +203,7 @@ void silentRestartToReader() {
   if (finishWifiSessionWithoutRestart()) return;
 #endif
   silentRebootTarget = SILENT_REBOOT_TARGET_READER;
+  silentRebootPayload = 0;
   silentRebootMagic = SILENT_REBOOT_MAGIC;
   LOG_DBG("MAIN", "Silent restart (target=reader)");
   GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
@@ -211,6 +217,7 @@ void silentRestartToReaderForLowMemory() {
   // heap. Returning in place on a touch board would immediately re-enter the
   // same failed Safe-mode build.
   silentRebootTarget = SILENT_REBOOT_TARGET_READER_LOW_MEMORY;
+  silentRebootPayload = 0;
   silentRebootMagic = SILENT_REBOOT_MAGIC;
   LOG_DBG("MAIN", "Low-memory restart (target=reader)");
   GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
@@ -224,8 +231,20 @@ void silentRestartToVanNhanSoSettings() {
   if (finishWifiSessionWithoutRestart()) return;
 #endif
   silentRebootTarget = SILENT_REBOOT_TARGET_VANNHANSO_SETTINGS;
+  silentRebootPayload = 0;
   silentRebootMagic = SILENT_REBOOT_MAGIC;
   LOG_DBG("MAIN", "Silent restart (target=Văn Nhân Số settings)");
+  GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+  delay(50);
+  ESP.restart();
+}
+
+void silentRestartToFileTransfer(const NetworkMode mode) {
+  if (deepSleepInProgress || !isFileTransferNetworkMode(mode)) return;
+  silentRebootTarget = SILENT_REBOOT_TARGET_FILE_TRANSFER;
+  silentRebootPayload = encodeFileTransferNetworkMode(mode);
+  silentRebootMagic = SILENT_REBOOT_MAGIC;
+  LOG_DBG("MAIN", "Silent restart (target=file-transfer mode=%lu)", static_cast<unsigned long>(silentRebootPayload));
   GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
   delay(50);
   ESP.restart();
@@ -234,6 +253,7 @@ void silentRestartToVanNhanSoSettings() {
 void restartToHomeAfterStorageHandoff() {
   if (deepSleepInProgress) return;  // sleeping supersedes the storage handoff reboot
   silentRebootTarget = SILENT_REBOOT_TARGET_HOME;
+  silentRebootPayload = 0;
   silentRebootMagic = SILENT_REBOOT_MAGIC;
   LOG_DBG("MAIN", "Restart after storage handoff (target=home)");
   GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
@@ -331,7 +351,7 @@ void enterDeepSleep(bool fromTimeout = false) {
   powerManager.startDeepSleep(gpio);
 }
 
-void setupDisplayAndFonts(bool seamless = false) {
+void setupDisplayAndFonts(bool seamless = false, bool loadReaderResources = true) {
 #if !FREEINK_MCU_C3
   // C3 resolves its controller in HalGPIO::begin() before SPI claims the
   // display pins. X4 Pro skips that C3-only path, so probe here before
@@ -371,8 +391,12 @@ void setupDisplayAndFonts(bool seamless = false) {
   renderer.insertFont(UI_12_FONT_ID, ui12FontFamily);
   renderer.insertFont(SMALL_FONT_ID, smallFontFamily);
 
-  // Discover and load SD card fonts
-  sdFontSystem.begin(renderer);
+  if (loadReaderResources) {
+    // Discover and load SD card fonts for normal reader/UI boots.
+    sdFontSystem.begin(renderer);
+  } else {
+    LOG_DBG("MAIN", "Skipping SD font catalog and active SD fonts for minimal network boot");
+  }
 
   LOG_DBG("MAIN", "Fonts setup");
 }
@@ -400,13 +424,21 @@ void setup() {
   // Read-and-clear so a panic later in setup() doesn't loop into silent reboot.
   // Bound the target range too — RTC_NOINIT memory is uninitialized on cold boot.
   const bool isSilentReboot = (silentRebootMagic == SILENT_REBOOT_MAGIC);
-  bootedFromLowMemoryRestart = isSilentReboot && silentRebootTarget == SILENT_REBOOT_TARGET_READER_LOW_MEMORY;
+  const uint32_t requestedTarget = silentRebootTarget;
+  const uint32_t requestedPayload = silentRebootPayload;
+  NetworkMode networkResumeMode = NetworkMode::JOIN_NETWORK;
+  const bool isNetworkResume = isSilentReboot && requestedTarget == SILENT_REBOOT_TARGET_FILE_TRANSFER &&
+                               decodeFileTransferNetworkMode(requestedPayload, networkResumeMode);
+  bootedFromLowMemoryRestart = isSilentReboot && requestedTarget == SILENT_REBOOT_TARGET_READER_LOW_MEMORY;
   const uint32_t snapshotTarget = bootedFromLowMemoryRestart ? SILENT_REBOOT_TARGET_READER
-                                  : (isSilentReboot && silentRebootTarget <= SILENT_REBOOT_TARGET_VANNHANSO_SETTINGS)
-                                      ? silentRebootTarget
-                                      : 0;
+                                  : (isSilentReboot && requestedTarget <= SILENT_REBOOT_TARGET_VANNHANSO_SETTINGS)
+                                      ? requestedTarget
+                                  : isNetworkResume ? SILENT_REBOOT_TARGET_FILE_TRANSFER
+                                                    : 0;
+  const uint32_t snapshotPayload = isNetworkResume ? requestedPayload : 0;
   silentRebootMagic = 0;
   silentRebootTarget = 0;
+  silentRebootPayload = 0;
 
   gpio.begin();
   powerManager.begin();
@@ -449,7 +481,7 @@ void setup() {
   // We need 6 open files concurrently when parsing a new chapter
   if (!Storage.begin()) {
     LOG_ERR("MAIN", "SD card initialization failed");
-    setupDisplayAndFonts(isSilentReboot);
+    setupDisplayAndFonts(isSilentReboot, !isNetworkResume);
     activityManager.goToFullScreenMessage("SD card error", EpdFontFamily::BOLD);
     return;
   }
@@ -476,7 +508,9 @@ void setup() {
 #if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
   render_lab::configureSettings(SETTINGS);
 #endif
-  RECENT_BOOKS.loadFromFile();
+  if (!isNetworkResume) {
+    RECENT_BOOKS.loadFromFile();
+  }
   I18N.setLanguage(static_cast<Language>(SETTINGS.language));
   KOREADER_STORE.loadFromFile();
   OPDS_STORE.loadFromFile();
@@ -523,13 +557,14 @@ void setup() {
   // retained frame and input dispatches against a visible UI.
   // Only a verified deep-sleep wake may use the one-shot persisted flag.
   // Otherwise a stale flag could suppress the splash on a cold boot.
-  const BootResume resume = isSilentReboot         ? BootResume::Silent
+  const BootResume resume = isNetworkResume        ? BootResume::Network
+                            : isSilentReboot       ? BootResume::Silent
                             : isPersistedSleepWake ? BootResume::SplashlessWake
                                                    : BootResume::Splash;
   bool allowFastInitialReaderRefresh = false;
   bool needsWakeRefresh = false;
 
-  setupDisplayAndFonts(resume != BootResume::Splash);
+  setupDisplayAndFonts(resume != BootResume::Splash, resume != BootResume::Network);
 
 #if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
   if (render_lab::enabled()) {
@@ -543,6 +578,10 @@ void setup() {
     case BootResume::Silent:
       // Splash skipped: the routing block below picks the target activity; the
       // panel keeps showing the pre-reboot popup until that first paint lands.
+      break;
+    case BootResume::Network:
+      LOG_INF("MAIN", "Minimal File Transfer boot ready: mode=%lu free=%u maxAlloc=%u",
+              static_cast<unsigned long>(snapshotPayload), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
       break;
     case BootResume::SplashlessWake:
       // One-shot flag: re-arm the splash for the next ordinary boot. Save
@@ -587,6 +626,10 @@ void setup() {
   } else if (rebootedFromPanic) {
     // If we rebooted from a panic, go to crash report screen to show the panic info
     activityManager.goToCrashReport();
+  } else if (resume == BootResume::Network) {
+    if (!activityManager.resumeFileTransferFromNetworkBoot(snapshotPayload)) {
+      activityManager.goHome();
+    }
   } else if (resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_READER &&
              !APP_STATE.openEpubPath.empty()) {
     activityManager.goToReader(APP_STATE.openEpubPath);
@@ -632,7 +675,7 @@ void setup() {
   vanNhanSoUpdateCoordinator.startDailyUpdateIfEligible(eligibleForDailyVanNhanSoUpdate);
 #endif
 
-  if (resume == BootResume::Silent) {
+  if (resume == BootResume::Silent || resume == BootResume::Network) {
     // Block until the first paint physically completes. refreshDisplay()
     // waits on the panel BUSY pin so when this returns the user can see the
     // new activity. Without the wait, an edge captured by gpio.update()
