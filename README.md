@@ -82,7 +82,7 @@ CrossPink vẫn dùng manifest font công khai của CrossPoint; không có kho 
 - [Font từ thẻ SD](./docs/sd-card-fonts.md)
 - [Định dạng file và cache](./docs/file-formats.md)
 - [Khắc phục thiết bị Xteink bị brick](./docs/fix-bricked-xteink.md)
-- [Ghi chú phát hành 1.6.0-cp.4.1](./docs/releases/1.6.0-cp.4.1.md)
+- [Ghi chú phát hành 1.6.0-cp.4.2](./docs/releases/1.6.0-cp.4.2.md)
 
 ## Phát triển nhanh
 

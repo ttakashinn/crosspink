@@ -4,6 +4,8 @@
 
 namespace vannhanso_update_policy {
 
+inline constexpr uint32_t SUCCESS_AUTO_CLOSE_DELAY_MS = 1200;
+
 enum class UpdateTrigger : uint8_t {
   MANUAL = 0,
   FIRST_START_OF_DAY = 1,
@@ -36,5 +38,10 @@ bool isBackoffActive(uint32_t currentProfileHash, uint32_t failureProfileHash, b
 uint8_t automaticRetrySkipsAfterFailure(uint8_t consecutiveFailures);
 bool shouldSkipAutomaticRetry(uint32_t currentProfileHash, uint32_t failureProfileHash, bool lastAttemptFailed,
                               uint8_t skipsRemaining);
+
+// Start the delay only after the success screen has physically finished
+// rendering. Unsigned subtraction keeps the comparison safe across millis()
+// rollover.
+bool shouldAutoCloseSuccess(bool successScreenRendered, uint32_t successRenderedAtMs, uint32_t nowMs);
 
 }  // namespace vannhanso_update_policy

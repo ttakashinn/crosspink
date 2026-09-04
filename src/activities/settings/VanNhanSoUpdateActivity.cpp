@@ -271,6 +271,7 @@ void VanNhanSoUpdateActivity::onExit() {
 void VanNhanSoUpdateActivity::beginInteractiveUpdate() {
   shouldTearDownWifiOnExit = WiFi.status() != WL_CONNECTED;
   cancelDownload = false;
+  successScreenRendered = false;
 
   if (WiFi.status() == WL_CONNECTED) {
     resolveCurrentDate(false);
@@ -347,6 +348,12 @@ void VanNhanSoUpdateActivity::onWifiSelectionComplete(const bool connected) {
 }
 
 void VanNhanSoUpdateActivity::loop() {
+  if (state == SUCCESS &&
+      vannhanso_update_policy::shouldAutoCloseSuccess(successScreenRendered, successRenderedAtMs, millis())) {
+    finish();
+    return;
+  }
+
   if (state == DOWNLOADING) {
     requestUpdateAndWait();
     // The manifest calendar_date and X-Calendar-Date response header are
@@ -650,9 +657,7 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
       return;
     }
     LOG_INF("VNS", "Manifest checked; current profile image is unchanged");
-    recordSuccess();
-    state = SUCCESS;
-    requestUpdate();
+    completeSuccessfulUpdate();
     return;
   }
 
@@ -737,9 +742,7 @@ void VanNhanSoUpdateActivity::downloadSleepScreen() {
     return;
   }
 
-  recordSuccess();
-  state = SUCCESS;
-  requestUpdate();
+  completeSuccessfulUpdate();
 }
 
 void VanNhanSoUpdateActivity::recordAttempt() {
@@ -769,6 +772,16 @@ void VanNhanSoUpdateActivity::recordSuccess() {
   }
   pendingProfileRequired = false;
   APP_STATE.saveToFile();
+}
+
+void VanNhanSoUpdateActivity::completeSuccessfulUpdate() {
+  recordSuccess();
+  state = SUCCESS;
+  // Wait for the e-ink refresh to complete before starting the visible delay;
+  // otherwise most or all of the timeout can elapse while the panel is busy.
+  requestUpdateAndWait();
+  successRenderedAtMs = millis();
+  successScreenRendered = true;
 }
 
 void VanNhanSoUpdateActivity::recordCancelled(const bool returnToStatus) {

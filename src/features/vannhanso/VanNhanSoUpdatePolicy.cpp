@@ -57,4 +57,9 @@ bool shouldSkipAutomaticRetry(const uint32_t currentProfileHash, const uint32_t 
   return currentProfileHash != 0 && currentProfileHash == failureProfileHash && lastAttemptFailed && skipsRemaining > 0;
 }
 
+bool shouldAutoCloseSuccess(const bool successScreenRendered, const uint32_t successRenderedAtMs,
+                            const uint32_t nowMs) {
+  return successScreenRendered && nowMs - successRenderedAtMs >= SUCCESS_AUTO_CLOSE_DELAY_MS;
+}
+
 }  // namespace vannhanso_update_policy

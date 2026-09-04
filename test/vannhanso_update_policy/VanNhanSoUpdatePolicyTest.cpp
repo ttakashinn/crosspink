@@ -73,3 +73,18 @@ TEST(VanNhanSoUpdatePolicy, MissingClockUsesBoundedTriggerBackoff) {
   EXPECT_FALSE(policy::shouldSkipAutomaticRetry(0x2222U, 0x1111U, true, 7));
   EXPECT_FALSE(policy::shouldSkipAutomaticRetry(0x1111U, 0x1111U, false, 7));
 }
+
+TEST(VanNhanSoUpdatePolicy, SuccessfulUpdateClosesOnlyAfterItsRenderedHoldTime) {
+  constexpr uint32_t renderedAt = 5000U;
+  EXPECT_FALSE(policy::shouldAutoCloseSuccess(false, renderedAt, renderedAt + 5000U));
+  EXPECT_FALSE(policy::shouldAutoCloseSuccess(true, renderedAt, renderedAt + policy::SUCCESS_AUTO_CLOSE_DELAY_MS - 1U));
+  EXPECT_TRUE(policy::shouldAutoCloseSuccess(true, renderedAt, renderedAt + policy::SUCCESS_AUTO_CLOSE_DELAY_MS));
+}
+
+TEST(VanNhanSoUpdatePolicy, SuccessfulUpdateAutoCloseSurvivesMillisRollover) {
+  constexpr uint32_t renderedAt = UINT32_MAX - 500U;
+  const uint32_t beforeDeadline = renderedAt + policy::SUCCESS_AUTO_CLOSE_DELAY_MS - 1U;
+  const uint32_t atDeadline = renderedAt + policy::SUCCESS_AUTO_CLOSE_DELAY_MS;
+  EXPECT_FALSE(policy::shouldAutoCloseSuccess(true, renderedAt, beforeDeadline));
+  EXPECT_TRUE(policy::shouldAutoCloseSuccess(true, renderedAt, atDeadline));
+}

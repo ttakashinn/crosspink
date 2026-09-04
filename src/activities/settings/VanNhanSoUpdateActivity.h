@@ -50,8 +50,10 @@ class VanNhanSoUpdateActivity final : public Activity {
   bool shouldTearDownWifiOnExit = false;
   bool cancelDownload = false;
   bool pendingProfileRequired = false;
+  bool successScreenRendered = false;
   uint32_t currentProfileHash = 0;
   uint32_t currentDateKey = 0;
+  uint32_t successRenderedAtMs = 0;
   uint16_t currentMinute = UINT16_MAX;
   std::atomic<size_t> downloadedBytes{0};
   std::atomic<size_t> totalBytes{0};
@@ -71,6 +73,7 @@ class VanNhanSoUpdateActivity final : public Activity {
   void downloadSleepScreen();
   void recordAttempt();
   void recordSuccess();
+  void completeSuccessfulUpdate();
   void recordCancelled(bool returnToStatus = false);
   void fail(CrossPointState::VanNhanSoUpdateError error);
   void failDownload(HttpDownloader::DownloadError result, const HttpDownloader::ResponseInfo& responseInfo);
