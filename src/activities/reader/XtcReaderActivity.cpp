@@ -17,6 +17,7 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/XtcPixelPlanes.h"
+#include "util/XtcStatusBarOverlayLayout.h"
 
 bool XtcReaderActivity::loadBook() {
   auto loadedXtc = makeUniqueNoThrow<Xtc>(bookPath, "/.crosspoint");
@@ -117,29 +118,19 @@ void XtcReaderActivity::renderStatusBarOverlay(GfxRenderer& renderer, const Stat
   renderer.getOrientedViewableTRBL(&orientedMarginTop, &orientedMarginRight, &orientedMarginBottom,
                                    &orientedMarginLeft);
 
-  int clearY;
-  int paddingBottom = 0;
-  if (position == StatusBarOverlayPosition::Bottom) {
-    clearY = renderer.getScreenHeight() - orientedMarginBottom - statusBarHeight - 4;
-    if (clearY < 0) {
-      clearY = 0;
-    }
-  } else {
-    clearY = orientedMarginTop;
-    paddingBottom = renderer.getScreenHeight() - statusBarHeight - orientedMarginBottom - orientedMarginTop - 4;
+  const auto layout =
+      xtc_status_bar::calculateLayout(renderer.getScreenHeight(), orientedMarginTop, orientedMarginBottom,
+                                      statusBarHeight, position == StatusBarOverlayPosition::Top);
+  if (!layout.visible()) {
+    return;
   }
-  const int clearHeight = position == StatusBarOverlayPosition::Bottom
-                              ? renderer.getScreenHeight() - orientedMarginBottom - clearY
-                              : statusBarHeight + 4;
-  if (clearHeight > 0) {
-    renderer.fillRect(0, clearY, renderer.getScreenWidth(), clearHeight, false);
-  }
+  renderer.fillRect(0, layout.clearY, renderer.getScreenWidth(), layout.clearHeight, false);
 
   const int pageCount = static_cast<int>(xtc->getPageCount());
   const int displayPage = static_cast<int>(currentPage) + 1;
   const float progress = pageCount > 0 ? (static_cast<float>(displayPage) * 100.0f) / pageCount : 0.0f;
   const auto pageInfo = getStatusBarInfo();
-  GUI.drawStatusBar(renderer, progress, pageInfo.currentPage, pageInfo.pageCount, pageInfo.title, paddingBottom);
+  GUI.drawStatusBar(renderer, progress, pageInfo.currentPage, pageInfo.pageCount, pageInfo.title, layout.paddingBottom);
 }
 
 void XtcReaderActivity::renderPage() {
@@ -176,6 +167,20 @@ void XtcReaderActivity::renderPage() {
 
   renderer.clearScreen();
 
+  const auto statusBarMode = SETTINGS.statusBarSpec().xtcMode;
+  const bool statusBarAtTop = statusBarMode == CrossPointSettings::XTC_STATUS_BAR_MODE::XTC_STATUS_BAR_TOP;
+  const bool statusBarVisible =
+      statusBarAtTop || statusBarMode == CrossPointSettings::XTC_STATUS_BAR_MODE::XTC_STATUS_BAR_BOTTOM;
+  const auto statusBarPosition = statusBarAtTop ? StatusBarOverlayPosition::Top : StatusBarOverlayPosition::Bottom;
+
+  int orientedMarginTop, orientedMarginRight, orientedMarginBottom, orientedMarginLeft;
+  renderer.getOrientedViewableTRBL(&orientedMarginTop, &orientedMarginRight, &orientedMarginBottom,
+                                   &orientedMarginLeft);
+  const auto statusBarLayout =
+      xtc_status_bar::calculateLayout(renderer.getScreenHeight(), orientedMarginTop, orientedMarginBottom,
+                                      UITheme::getInstance().getStatusBarHeight(), statusBarAtTop);
+  const bool renderStatusBar = statusBarVisible && statusBarLayout.visible();
+
   if (bitDepth == 2) {
     const size_t planeSize = (static_cast<size_t>(pageWidth) * pageHeight + 7) / 8;
     const uint8_t* plane1 = pageBuffer;
@@ -187,6 +192,7 @@ void XtcReaderActivity::renderPage() {
     visitPixels([&](const uint16_t x, const uint16_t y, const uint8_t value) {
       if (value >= 1) renderer.drawPixel(x, y, true);
     });
+    if (renderStatusBar) renderStatusBarOverlay(renderer, statusBarPosition);
 
     if (pagesUntilFullRefresh <= 1) {
       // Periodic ghost cleanup: scrub via the normal path, then run the
@@ -210,12 +216,20 @@ void XtcReaderActivity::renderPage() {
     visitPixels([&](const uint16_t x, const uint16_t y, const uint8_t value) {
       if (value == 1) renderer.drawPixel(x, y, false);
     });
+    // Zero selector bits preserve the already-rendered black/white overlay
+    // instead of letting the source XTC grayscale pixels overwrite it.
+    if (renderStatusBar) {
+      renderer.fillRect(0, statusBarLayout.clearY, renderer.getScreenWidth(), statusBarLayout.clearHeight, true);
+    }
     renderer.copyGrayscaleLsbBuffers();
 
     renderer.clearScreen(0x00);
     visitPixels([&](const uint16_t x, const uint16_t y, const uint8_t value) {
       if (value == 1 || value == 2) renderer.drawPixel(x, y, false);
     });
+    if (renderStatusBar) {
+      renderer.fillRect(0, statusBarLayout.clearY, renderer.getScreenWidth(), statusBarLayout.clearHeight, true);
+    }
     renderer.copyGrayscaleMsbBuffers();
 
     renderer.displayGrayBuffer();
@@ -224,6 +238,7 @@ void XtcReaderActivity::renderPage() {
     visitPixels([&](const uint16_t x, const uint16_t y, const uint8_t value) {
       if (value >= 1) renderer.drawPixel(x, y, true);
     });
+    if (renderStatusBar) renderStatusBarOverlay(renderer, statusBarPosition);
 
     renderer.cleanupGrayscaleWithFrameBuffer();
 
@@ -238,11 +253,7 @@ void XtcReaderActivity::renderPage() {
 
   free(pageBuffer);
 
-  if (SETTINGS.statusBarSpec().xtcMode == CrossPointSettings::XTC_STATUS_BAR_MODE::XTC_STATUS_BAR_TOP) {
-    renderStatusBarOverlay(renderer, StatusBarOverlayPosition::Top);
-  } else {
-    renderStatusBarOverlay(renderer, StatusBarOverlayPosition::Bottom);
-  }
+  if (renderStatusBar) renderStatusBarOverlay(renderer, statusBarPosition);
 
   ReaderUtils::displayWithRefreshCycle(renderer, pagesUntilFullRefresh);
 

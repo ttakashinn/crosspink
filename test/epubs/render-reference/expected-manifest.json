@@ -272,7 +272,7 @@
             "max_source_width": 1600,
             "max_source_height": 1600,
             "max_display_width": 464,
-            "max_display_height": 764
+            "max_display_height": 759
           }
         },
         "x3-default": {
@@ -286,7 +286,7 @@
             "max_source_width": 1600,
             "max_source_height": 1600,
             "max_display_width": 512,
-            "max_display_height": 756
+            "max_display_height": 751
           }
         },
         "x4-no-text-aa": {
@@ -300,7 +300,7 @@
             "max_source_width": 1600,
             "max_source_height": 1600,
             "max_display_width": 464,
-            "max_display_height": 764
+            "max_display_height": 759
           }
         }
       },

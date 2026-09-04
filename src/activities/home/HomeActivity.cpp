@@ -72,7 +72,14 @@ CoverThumbnailState inspectCoverThumbnail(const std::string& path) {
 
   Bitmap bitmap(file);
   const BmpReaderError result = bitmap.parseHeaders();
+#if defined(SIMULATOR)
+  // The pinned simulator HalFile does not expose the device-only SdFat error
+  // code. Header failures still remain INVALID in render-lab builds; device
+  // firmware keeps distinguishing transient SD I/O from corrupt thumbnails.
+  const uint8_t fileError = 0;
+#else
   const uint8_t fileError = file.getError();
+#endif
   file.close();
   if (result == BmpReaderError::Ok) return CoverThumbnailState::READY;
   if (fileError != 0) return CoverThumbnailState::IO_ERROR;

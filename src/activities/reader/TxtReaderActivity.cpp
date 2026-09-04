@@ -13,6 +13,7 @@
 #include "ProgressFile.h"
 #include "ReaderActivity.h"
 #include "ReaderUtils.h"
+#include "ReaderViewportLayout.h"
 #include "TxtLineBreak.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -56,7 +57,7 @@ void TxtReaderActivity::initializeReader(GfxRenderer& renderer) {
   cachedOrientedMarginLeft += cachedScreenMargin;
   cachedOrientedMarginRight += cachedScreenMargin;
   cachedOrientedMarginBottom +=
-      std::max(cachedScreenMargin, static_cast<uint8_t>(UITheme::getInstance().getStatusBarHeight()));
+      reader_viewport::bottomInset(cachedScreenMargin, UITheme::getInstance().getStatusBarHeight());
 
   viewportWidth = renderer.getScreenWidth() - cachedOrientedMarginLeft - cachedOrientedMarginRight;
   const int viewportHeight = renderer.getScreenHeight() - cachedOrientedMarginTop - cachedOrientedMarginBottom;

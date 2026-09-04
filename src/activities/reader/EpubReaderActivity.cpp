@@ -43,6 +43,7 @@
 #include "ReaderFontSizes.h"
 #include "ReaderToolbarUi.h"
 #include "ReaderUtils.h"
+#include "ReaderViewportLayout.h"
 #include "ReadingStatsClock.h"
 #include "ReadingStatsStore.h"
 #include "RecentBooksStore.h"
@@ -2022,14 +2023,11 @@ void EpubReaderActivity::renderBook() {
 
   const uint8_t statusBarHeight = UITheme::getInstance().getStatusBarHeight();
 
-  if (automaticPageTurnActive &&
-      (statusBarHeight == 0 || statusBarHeight == UITheme::getInstance().getProgressBarHeight())) {
-    orientedMarginBottom +=
-        std::max(SETTINGS.screenMargin,
-                 static_cast<uint8_t>(statusBarHeight + UITheme::getInstance().getMetrics().statusBarVerticalMargin));
-  } else {
-    orientedMarginBottom += std::max(SETTINGS.screenMargin, statusBarHeight);
-  }
+  const bool autoTurnNeedsTextLane =
+      automaticPageTurnActive &&
+      (statusBarHeight == 0 || statusBarHeight == UITheme::getInstance().getProgressBarHeight());
+  const int extraStatusHeight = autoTurnNeedsTextLane ? UITheme::getInstance().getMetrics().statusBarVerticalMargin : 0;
+  orientedMarginBottom += reader_viewport::bottomInset(SETTINGS.screenMargin, statusBarHeight, extraStatusHeight);
 
   const uint16_t viewportWidth = renderer.getScreenWidth() - orientedMarginLeft - orientedMarginRight;
   const uint16_t viewportHeight = renderer.getScreenHeight() - orientedMarginTop - orientedMarginBottom;
@@ -2855,42 +2853,6 @@ void EpubReaderActivity::renderStatusBar() const {
     }
   } else if (sb.titleMode == CrossPointSettings::STATUS_BAR_TITLE::BOOK_TITLE) {
     title = epub ? epub->getTitle() : "";
-  }
-
-  // Treat publisher/VNS/time/compatibility as title details. Respect the user's
-  // "hide title" choice and keep the short auto-turn confirmation unobstructed.
-  // The actions and progress indicators remain available independently.
-  if (!automaticPageTurnActive && sb.showsTitle()) {
-    std::string statusDetails;
-    const auto appendStatusDetail = [&statusDetails](const char* detail) {
-      if (!detail || detail[0] == '\0') return;
-      if (!statusDetails.empty()) statusDetails += " · ";
-      statusDetails += detail;
-    };
-    char detail[64];
-    if (!currentPublisherPageLabel.empty()) {
-      snprintf(detail, sizeof(detail), I18N.get(StrId::STR_PUBLISHER_PAGE_VALUE), currentPublisherPageLabel.c_str());
-      appendStatusDetail(detail);
-    }
-    const auto reference = currentVnsReferencePosition();
-    snprintf(detail, sizeof(detail), I18N.get(StrId::STR_VNS_POSITION_VALUE), static_cast<unsigned>(reference.ordinal));
-    appendStatusDetail(detail);
-
-    const BookReadingStats stats = readingStatsSnapshot();
-    const int progressPercent = static_cast<int>(bookProgress + 0.5f);
-    if (ReadingStatsMath::hasConfidentTimeLeft(stats, progressPercent)) {
-      const uint32_t seconds = ReadingStatsMath::estimatedSecondsLeft(stats, progressPercent);
-      const uint32_t minutes = std::max<uint32_t>(1, (seconds + 59) / 60);
-      snprintf(detail, sizeof(detail), I18N.get(StrId::STR_TIME_LEFT_SHORT), static_cast<unsigned>(minutes));
-      appendStatusDetail(detail);
-    }
-    if (activeRenderMode > static_cast<EpubRenderMode>(bookReaderSettings.preferredRenderMode)) {
-      appendStatusDetail(I18N.get(StrId::STR_RENDER_COMPATIBILITY_MODE));
-    }
-    if (!statusDetails.empty()) {
-      if (!title.empty()) statusDetails += " · ";
-      title = statusDetails + title;
-    }
   }
 
   GUI.drawStatusBar(renderer, bookProgress, currentPage, pageCount, title, 0, textYOffset, true, currentPageBookmarked,

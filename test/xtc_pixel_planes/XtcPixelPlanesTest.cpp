@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "XtcPixelPlanes.h"
+#include "XtcStatusBarOverlayLayout.h"
 
 TEST(XtcPixelPlanes, DecodesRightToLeftColumnMajorPlanesInLogicalRowOrder) {
   // Storage offsets 0,1,2 correspond to logical x=2,1,0.
@@ -34,4 +35,26 @@ TEST(XtcPixelPlanes, VisitsOnlyBlackPixelsInAOneBitPartialByteRow) {
 
   const std::vector<std::pair<uint16_t, uint16_t>> expected = {{0, 0}, {9, 0}, {9, 1}};
   EXPECT_EQ(black, expected);
+}
+
+TEST(XtcStatusBarOverlayLayout, PlacesBottomOverlayInsideTheViewableBottomEdge) {
+  const auto layout = xtc_status_bar::calculateLayout(800, 3, 7, 19, false);
+
+  EXPECT_TRUE(layout.visible());
+  EXPECT_EQ(770, layout.clearY);
+  EXPECT_EQ(23, layout.clearHeight);
+  EXPECT_EQ(0, layout.paddingBottom);
+}
+
+TEST(XtcStatusBarOverlayLayout, PlacesTopOverlayAndOffsetsStatusBarText) {
+  const auto layout = xtc_status_bar::calculateLayout(800, 3, 7, 19, true);
+
+  EXPECT_TRUE(layout.visible());
+  EXPECT_EQ(3, layout.clearY);
+  EXPECT_EQ(23, layout.clearHeight);
+  EXPECT_EQ(767, layout.paddingBottom);
+}
+
+TEST(XtcStatusBarOverlayLayout, HidesOverlayWhenTextAndProgressLanesAreDisabled) {
+  EXPECT_FALSE(xtc_status_bar::calculateLayout(800, 0, 0, 0, false).visible());
 }
