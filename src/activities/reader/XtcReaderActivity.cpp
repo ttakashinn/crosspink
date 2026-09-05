@@ -307,7 +307,8 @@ void XtcReaderActivity::flushReaderState() {
 }
 
 void XtcReaderActivity::requestProgressSaveIfDue() {
-  RenderLock lock(*this);
+  RenderLock lock(RenderLock::AcquireMode::Try);
+  if (!lock.locked()) return;
   if (progressSaveDebouncer.due(millis())) flushReaderState();
 }
 

@@ -25,10 +25,11 @@ class EpubReaderMenuActivity final : public UiTabListActivity {
   static bool opensChildScreen(MenuAction action);
 
   explicit EpubReaderMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const std::string& title,
-                                  const int currentPage, const int totalPages, const int bookProgressPercent,
-                                  const uint8_t currentOrientation, const bool hasFootnotes, bool hasBookmarks,
-                                  uint16_t autoPageTurnSeconds, uint8_t wordSpacing, bool repairParagraphIndent,
-                                  uint8_t renderMode, uint8_t activeRenderMode);
+                                  const int currentPage, const int totalPages, bool pageCountEstimated,
+                                  const int bookProgressPercent, const uint8_t currentOrientation,
+                                  const bool hasFootnotes, bool hasBookmarks, uint16_t autoPageTurnSeconds,
+                                  uint8_t wordSpacing, bool repairParagraphIndent, uint8_t renderMode,
+                                  uint8_t activeRenderMode);
 
   void render(RenderLock&&) override;
   bool handleHomeGesture() override;
@@ -85,5 +86,6 @@ class EpubReaderMenuActivity final : public UiTabListActivity {
                                                 StrId::STR_LANDSCAPE_CCW};
   int currentPage = 0;
   int totalPages = 0;
+  bool pageCountEstimated = false;
   int bookProgressPercent = 0;
 };

@@ -33,6 +33,7 @@ class EpubReaderActivity final : public ReaderActivity {
   std::string pendingAnchor;
   int cachedSpineIndex = 0;
   int cachedChapterTotalPageCount = 0;
+  bool cachedChapterPageCountEstimated = false;
   std::optional<uint32_t> cachedVisibleTextOffset;
   std::optional<uint32_t> currentPageVisibleOffset;
   std::optional<uint32_t> pendingOffsetJump;

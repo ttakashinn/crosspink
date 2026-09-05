@@ -27,11 +27,11 @@ constexpr StrId RENDER_MODE_LABELS[] = {StrId::STR_RENDER_STANDARD, StrId::STR_R
 
 EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                                const std::string& title, const int currentPage, const int totalPages,
-                                               const int bookProgressPercent, const uint8_t currentOrientation,
-                                               const bool hasFootnotes, const bool hasBookmarks,
-                                               const uint16_t autoPageTurnSeconds, const uint8_t wordSpacing,
-                                               const bool repairParagraphIndent, const uint8_t renderMode,
-                                               const uint8_t activeRenderMode)
+                                               const bool pageCountEstimated, const int bookProgressPercent,
+                                               const uint8_t currentOrientation, const bool hasFootnotes,
+                                               const bool hasBookmarks, const uint16_t autoPageTurnSeconds,
+                                               const uint8_t wordSpacing, const bool repairParagraphIndent,
+                                               const uint8_t renderMode, const uint8_t activeRenderMode)
     : UiTabListActivity("EpubReaderMenu", renderer, mappedInput),
       title(title),
       pendingOrientation(currentOrientation),
@@ -41,6 +41,7 @@ EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInpu
       selectedRenderMode(std::min<uint8_t>(renderMode, 2)),
       currentPage(currentPage),
       totalPages(totalPages),
+      pageCountEstimated(pageCountEstimated),
       bookProgressPercent(bookProgressPercent) {
   std::vector<MenuItem> items;
   buildMenuItems(items, hasFootnotes, hasBookmarks, activeRenderMode > renderMode);
@@ -314,7 +315,7 @@ void EpubReaderMenuActivity::buildScreen(UiScreen& screen) {
   std::string progressLine;
   if (totalPages > 0) {
     progressLine = std::string(tr(STR_CHAPTER_PREFIX)) + std::to_string(currentPage) + "/" +
-                   std::to_string(totalPages) + std::string(tr(STR_PAGES_SEPARATOR));
+                   (pageCountEstimated ? "~" : "") + std::to_string(totalPages) + std::string(tr(STR_PAGES_SEPARATOR));
   }
   progressLine += std::string(tr(STR_BOOK_PREFIX)) + std::to_string(bookProgressPercent) + "%";
   const int16_t progressHeight = static_cast<int16_t>(screen.target().lineHeight(screen.theme().smallText.font) + 4);

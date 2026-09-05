@@ -569,8 +569,10 @@ bool EpubReaderActivity::loadBook() {
     }
     if (dataSize == 6) {
       cachedChapterTotalPageCount = data[4] + (data[5] << 8);
+      cachedChapterPageCountEstimated = cachedChapterTotalPageCount > 0;
     } else if (dataSize == 10) {
       cachedChapterTotalPageCount = data[4] + (data[5] << 8);
+      cachedChapterPageCountEstimated = cachedChapterTotalPageCount > 0;
       cachedVisibleTextOffset = static_cast<uint32_t>(data[6]) | (static_cast<uint32_t>(data[7]) << 8) |
                                 (static_cast<uint32_t>(data[8]) << 16) | (static_cast<uint32_t>(data[9]) << 24);
     }
@@ -650,21 +652,22 @@ void EpubReaderActivity::openReaderMenu() {
     requestUpdate();
     return;
   }
-  const int currentPage = section ? section->currentPage + 1 : 0;
-  const int totalPages = section ? section->estimatedTotalPages() : 0;
+  const reader_menu::ProgressPosition menuPosition = reader_menu::resolveProgressPosition(
+      section != nullptr, section ? section->currentPage : 0, section ? section->estimatedTotalPages() : 0,
+      section && (section->isBuilding() || section->isPartial()), currentSpineIndex, cachedSpineIndex, nextPageNumber,
+      cachedChapterTotalPageCount, cachedChapterPageCountEstimated);
   float bookProgress = 0.0f;
-  if (epub->getBookSize() > 0 && section && section->estimatedTotalPages() > 0) {
-    const float chapterProgress =
-        static_cast<float>(section->currentPage) / static_cast<float>(section->estimatedTotalPages());
-    bookProgress = epub->calculateProgress(currentSpineIndex, chapterProgress) * 100.0f;
+  if (epub->getBookSize() > 0 && menuPosition.pageCount > 0) {
+    bookProgress = epub->calculateProgress(currentSpineIndex, menuPosition.visiblePageProgress()) * 100.0f;
   }
   const int bookProgressPercent = clampPercent(static_cast<int>(bookProgress + 0.5f));
   startActivityForResult(
       std::make_unique<EpubReaderMenuActivity>(
-          renderer, mappedInput, epub->getTitle(), currentPage, totalPages, bookProgressPercent, SETTINGS.orientation,
-          !currentPageFootnotes.empty(), !cachedBookmarks.empty(), bookReaderSettings.autoPageTurnSeconds,
-          bookReaderSettings.wordSpacing, bookReaderSettings.repairParagraphIndent != 0,
-          bookReaderSettings.preferredRenderMode, static_cast<uint8_t>(activeRenderMode)),
+          renderer, mappedInput, epub->getTitle(), menuPosition.displayPage(), menuPosition.pageCount,
+          menuPosition.pageCountEstimated, bookProgressPercent, SETTINGS.orientation, !currentPageFootnotes.empty(),
+          !cachedBookmarks.empty(), bookReaderSettings.autoPageTurnSeconds, bookReaderSettings.wordSpacing,
+          bookReaderSettings.repairParagraphIndent != 0, bookReaderSettings.preferredRenderMode,
+          static_cast<uint8_t>(activeRenderMode)),
       [this](const ActivityResult& result) {
         const auto& menu = std::get<MenuResult>(result.data);
         const auto action = static_cast<EpubReaderMenuActivity::MenuAction>(menu.action);
@@ -706,6 +709,7 @@ bool EpubReaderActivity::recoverSectionBuildFailure() {
     rememberCurrentContentOffset();
     cachedSpineIndex = currentSpineIndex;
     cachedChapterTotalPageCount = section->estimatedTotalPages();
+    cachedChapterPageCountEstimated = section->isBuilding() || section->isPartial();
     nextPageNumber = section->currentPage;
   } else if (currentPageVisibleOffset.has_value()) {
     // A parser OOM abandons the in-progress section before this retry helper
@@ -714,6 +718,7 @@ bool EpubReaderActivity::recoverSectionBuildFailure() {
     cachedVisibleTextOffset = currentPageVisibleOffset;
     cachedSpineIndex = currentSpineIndex;
     cachedChapterTotalPageCount = std::max(lastSavedPageCount, 0);
+    cachedChapterPageCountEstimated = cachedChapterTotalPageCount > 0;
     nextPageNumber = std::max(section->currentPage, 0);
   }
 
@@ -1245,83 +1250,71 @@ void EpubReaderActivity::loop() {
     return;
   }
 
-  constexpr unsigned long kMinManualTurnGapMs = 200;
-  const bool turnGuardActive = RenderLock::peek() || (millis() - lastPageTurnTime) < kMinManualTurnGapMs;
-  if (!pendingManualTurns.empty() && !turnGuardActive) {
-    if (!section) {
-      // A turn across a spine boundary deliberately releases Section while the
-      // next spine is opened.  Do not drop input in that window: it is exactly
-      // when a reader is most likely to press Next again after a short chapter.
-      // The pending intent is drained as soon as the new Section is available.
-      return;
-    }
-    const bool forward = pendingManualTurns.pop() > 0;
-    const int pendingDepth = pendingManualTurns.pending();
-    updateReaderTurnQueueDepth(pendingDepth < 0 ? -pendingDepth : pendingDepth);
-    if (!pageTurn(forward)) {
-      clearPendingManualTurns();
-      return;
-    }
-    requestUpdate();
-    return;
-  }
-
   auto [prevTriggered, nextTriggered, fromTilt] = ReaderUtils::detectPageTurn(mappedInput);
   prevTriggered = prevTriggered || touch.prev;
   nextTriggered = nextTriggered || touch.next;
-  if (!prevTriggered && !nextTriggered) {
-    return;
-  }
+  const bool pageTurnTriggered = prevTriggered || nextTriggered;
 
-  if (handleEndOfBookPageTurn(prevTriggered, nextTriggered)) {
-    return;
-  }
-
-  if (mappedInput.wasReleased(MappedInputManager::Button::Power) &&
-      mappedInput.wasReleased(MappedInputManager::Button::Down)) {
-    return;
-  }
-
-  const unsigned long heldMs = (touch.prev || touch.next) ? touch.heldMs : mappedInput.getHeldTime();
-  const bool longPress = !fromTilt && heldMs >= ReaderUtils::SKIP_HOLD_MS;
-  if (longPress && SETTINGS.longPressButtonBehavior == SETTINGS.CHAPTER_SKIP) {
-    clearPendingManualTurns();
-    beginReaderTurn(nextTriggered ? 1 : -1);
-    if (!skipPages(nextTriggered ? 1 : -1)) {
-      cancelReaderTurn();
+  if (pageTurnTriggered) {
+    if (handleEndOfBookPageTurn(prevTriggered, nextTriggered)) {
       return;
     }
-    requestUpdate();
-    return;
-  }
 
-  if (longPress && SETTINGS.longPressButtonBehavior == SETTINGS.ORIENTATION_CHANGE) {
-    clearPendingManualTurns();
-    const uint8_t newOrientation =
-        nextTriggered ? (SETTINGS.orientation - 1 + SETTINGS.ORIENTATION_COUNT) % SETTINGS.ORIENTATION_COUNT
-                      : (SETTINGS.orientation + 1) % SETTINGS.ORIENTATION_COUNT;
-    applyOrientation(newOrientation);
-    requestUpdate();
-    return;
-  }
+    if (mappedInput.wasReleased(MappedInputManager::Button::Power) &&
+        mappedInput.wasReleased(MappedInputManager::Button::Down)) {
+      return;
+    }
 
-  if (!section) {
-    // Page turns used to be silently discarded while a new spine was opening.
-    // Keep the same bounded, cancelling queue used while rendering so every
-    // manual press has one deterministic outcome once pagination is ready.
+    const unsigned long heldMs = (touch.prev || touch.next) ? touch.heldMs : mappedInput.getHeldTime();
+    const bool longPress = !fromTilt && heldMs >= ReaderUtils::SKIP_HOLD_MS;
+    if (longPress && SETTINGS.longPressButtonBehavior == SETTINGS.CHAPTER_SKIP) {
+      clearPendingManualTurns();
+      beginReaderTurn(nextTriggered ? 1 : -1);
+      if (!skipPages(nextTriggered ? 1 : -1)) {
+        cancelReaderTurn();
+        return;
+      }
+      requestUpdate();
+      return;
+    }
+
+    if (longPress && SETTINGS.longPressButtonBehavior == SETTINGS.ORIENTATION_CHANGE) {
+      clearPendingManualTurns();
+      const uint8_t newOrientation =
+          nextTriggered ? (SETTINGS.orientation - 1 + SETTINGS.ORIENTATION_COUNT) % SETTINGS.ORIENTATION_COUNT
+                        : (SETTINGS.orientation + 1) % SETTINGS.ORIENTATION_COUNT;
+      applyOrientation(newOrientation);
+      requestUpdate();
+      return;
+    }
+
+    // Latch this frame's one-shot input before draining an older request. InputManager
+    // clears press/release edges on its next update, so returning after a queue pop
+    // without doing this would silently lose the fresh press.
     queueManualTurn(!prevTriggered);
-    requestUpdate();
+  }
+
+  constexpr unsigned long kMinManualTurnGapMs = 200;
+  const bool turnGuardActive = RenderLock::peek() || (millis() - lastPageTurnTime) < kMinManualTurnGapMs;
+  if (!section) {
+    // A turn across a spine boundary deliberately releases Section while the
+    // next spine is opened. Keep every manual intent queued until pagination is
+    // ready, and make sure a render remains scheduled to open the new section.
+    if (pageTurnTriggered) requestUpdate();
     return;
   }
 
   if (turnGuardActive) {
-    queueManualTurn(!prevTriggered);
     return;
   }
 
-  beginReaderTurn(prevTriggered ? -1 : 1);
-  if (!pageTurn(!prevTriggered)) {
-    cancelReaderTurn();
+  if (pendingManualTurns.empty()) return;
+
+  const bool forward = pendingManualTurns.pop() > 0;
+  const int pendingDepth = pendingManualTurns.pending();
+  updateReaderTurnQueueDepth(pendingDepth < 0 ? -pendingDepth : pendingDepth);
+  if (!pageTurn(forward)) {
+    clearPendingManualTurns();
     return;
   }
   requestUpdate();
@@ -1441,7 +1434,8 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
         if (section) {
           rememberCurrentContentOffset();
           cachedSpineIndex = currentSpineIndex;
-          cachedChapterTotalPageCount = section->pageCount;
+          cachedChapterTotalPageCount = section->estimatedTotalPages();
+          cachedChapterPageCountEstimated = section->isBuilding() || section->isPartial();
           nextPageNumber = section->currentPage;
         }
         section.reset();
@@ -1488,7 +1482,8 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
                                  if (section) {
                                    rememberCurrentContentOffset();
                                    cachedSpineIndex = currentSpineIndex;
-                                   cachedChapterTotalPageCount = section->pageCount;
+                                   cachedChapterTotalPageCount = section->estimatedTotalPages();
+                                   cachedChapterPageCountEstimated = section->isBuilding() || section->isPartial();
                                    nextPageNumber = section->currentPage;
                                  }
                                  section.reset();
@@ -1762,7 +1757,8 @@ void EpubReaderActivity::applyOrientation(const uint8_t orientation) {
   if (section) {
     rememberCurrentContentOffset();
     cachedSpineIndex = currentSpineIndex;
-    cachedChapterTotalPageCount = section->pageCount;
+    cachedChapterTotalPageCount = section->estimatedTotalPages();
+    cachedChapterPageCountEstimated = section->isBuilding() || section->isPartial();
     nextPageNumber = section->currentPage;
   }
 
@@ -1800,7 +1796,8 @@ void EpubReaderActivity::toggleAutoPageTurn(const uint16_t seconds) {
     if (section) {
       rememberCurrentContentOffset();
       cachedSpineIndex = currentSpineIndex;
-      cachedChapterTotalPageCount = section->pageCount;
+      cachedChapterTotalPageCount = section->estimatedTotalPages();
+      cachedChapterPageCountEstimated = section->isBuilding() || section->isPartial();
       nextPageNumber = section->currentPage;
     }
     section.reset();
@@ -1828,7 +1825,8 @@ void EpubReaderActivity::applyExtendedReaderSettings(const uint8_t wordSpacing, 
     if (section) {
       rememberCurrentContentOffset();
       cachedSpineIndex = currentSpineIndex;
-      cachedChapterTotalPageCount = section->pageCount;
+      cachedChapterTotalPageCount = section->estimatedTotalPages();
+      cachedChapterPageCountEstimated = section->isBuilding() || section->isPartial();
       nextPageNumber = section->currentPage;
     }
     preferredRenderTrialRollbackMode = activeRenderMode;
@@ -1844,7 +1842,8 @@ void EpubReaderActivity::applyExtendedReaderSettings(const uint8_t wordSpacing, 
   if (section) {
     rememberCurrentContentOffset();
     cachedSpineIndex = currentSpineIndex;
-    cachedChapterTotalPageCount = section->pageCount;
+    cachedChapterTotalPageCount = section->estimatedTotalPages();
+    cachedChapterPageCountEstimated = section->isBuilding() || section->isPartial();
     nextPageNumber = section->currentPage;
   }
   const uint8_t oldPreferredMode = bookReaderSettings.preferredRenderMode;
@@ -2058,6 +2057,7 @@ void EpubReaderActivity::renderBook() {
     const bool cacheLoaded = section->loadSectionFile(renderSpec);
     if (cacheLoaded) {
       cachedChapterTotalPageCount = 0;
+      cachedChapterPageCountEstimated = false;
       cachedVisibleTextOffset.reset();
     }
     const bool cacheComplete = cacheLoaded && !section->isPartial();
@@ -2417,6 +2417,7 @@ bool EpubReaderActivity::applyDeferredReposition() {
 
 void EpubReaderActivity::clearDeferredReposition() {
   cachedChapterTotalPageCount = 0;
+  cachedChapterPageCountEstimated = false;
   cachedVisibleTextOffset.reset();
 }
 
@@ -2469,7 +2470,12 @@ void EpubReaderActivity::flushReaderState() {
 }
 
 void EpubReaderActivity::requestProgressSaveIfDue() {
-  RenderLock lock(*this);
+  // Input is sampled on the main loop. Never wait behind a multi-stage e-ink
+  // render here: a complete button tap during that wait would never become an
+  // edge event. The render task owns the same mutex and will leave the pending
+  // save intact for a later idle iteration.
+  RenderLock lock(RenderLock::AcquireMode::Try);
+  if (!lock.locked()) return;
   if (progressSaveDebouncer.due(millis())) flushReaderState();
 }
 
@@ -2573,7 +2579,17 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   const bool cleanImageBasePending = manualRefreshPending || pagesUntilFullRefresh <= 1;
   const bool needsTextGrayscale = SETTINGS.textAntiAliasing;
   const bool needsAnyGrayscale = needsTextGrayscale || pageHasImages;
-  const bool tiledGrayscale = needsAnyGrayscale && renderer.supportsStripGrayscale();
+  bool forceAdaptiveStrip = false;
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+  forceAdaptiveStrip = render_lab::maxGrayscaleStripRows() > 0;
+#endif
+  // On PSRAM devices, decode every text glyph once and emit the B/W base plus
+  // both gray selector planes together. Image pages retain their established
+  // renderer because their grayscale comes from the image decoder, not glyph
+  // coverage. C3 and allocation failures fall back to the strip/copy paths.
+  const bool capturedTextGrayscale =
+      needsTextGrayscale && !pageHasImages && !forceAdaptiveStrip && renderer.beginTextGrayscaleCapture();
+  const bool tiledGrayscale = needsAnyGrayscale && !capturedTextGrayscale && renderer.supportsStripGrayscale();
   // Paper Mono only (no other panel combines): defer the B/W base activation so
   // the gray planes join it in a single waveform. Displaying the base
   // separately makes the gray pass re-drive the whole text body — a visible
@@ -2596,9 +2612,25 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
     renderer.clearScreen();
   }
 
+  renderer.setCrispMonochromeText(!needsTextGrayscale);
   page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop);
+  if (capturedTextGrayscale) renderer.endTextGrayscaleCapture();
+  renderer.setCrispMonochromeText(false);
   renderStatusBar();
   highlightPlan.drawUnderline(renderer);
+
+  if (capturedTextGrayscale && highlightPlan.count > 0) {
+    const int gh = renderer.getDisplayHeight();
+    const auto clearHighlightFromPlane = [&](uint8_t* plane, const GfxRenderer::RenderMode mode) {
+      renderer.setRenderMode(mode);
+      renderer.beginStripTarget(plane, 0, gh);
+      highlightPlan.clearGrayscale(renderer);
+      renderer.endStripTarget();
+    };
+    clearHighlightFromPlane(renderer.capturedTextGrayscaleLsb(), GfxRenderer::GRAYSCALE_LSB);
+    clearHighlightFromPlane(renderer.capturedTextGrayscaleMsb(), GfxRenderer::GRAYSCALE_MSB);
+    renderer.setRenderMode(GfxRenderer::BW);
+  }
   const auto tBwRender = millis();
 
 #if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
@@ -2622,7 +2654,34 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   const uint32_t grayscaleFreeBefore = ESP.getFreeHeap();
   const uint32_t grayscaleLargestBefore = ESP.getMaxAllocHeap();
 
-  if (tiledGrayscale) {
+  if (capturedTextGrayscale) {
+    ReaderUtils::prepareGrayscalePlanes(renderer, true, false);
+    const auto tWait = millis();
+
+    renderer.copyCapturedTextGrayscaleBuffers();
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+    render_lab::captureGrayscalePlaneStrip(true, renderer.capturedTextGrayscaleLsb(), 0, renderer.getDisplayHeight(),
+                                           renderer.getDisplayWidthBytes());
+    render_lab::captureGrayscalePlaneStrip(false, renderer.capturedTextGrayscaleMsb(), 0, renderer.getDisplayHeight(),
+                                           renderer.getDisplayWidthBytes());
+#endif
+    const auto tGrayWrite = millis();
+
+    renderer.displayGrayBuffer();
+    const auto tGrayDisplay = millis();
+    renderer.cleanupGrayscaleWithFrameBuffer();
+    const auto tEnd = millis();
+
+#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
+    render_lab::recordGrayscaleOutcome(true, "single-pass-text", renderer.getDisplayHeight(), "none");
+#endif
+    LOG_DBG("ERS",
+            "Page render (single-pass text AA): prewarm=%lums bw_and_gray_render=%lums display=%lums wait=%lums "
+            "gray_write=%lums gray_display=%lums cleanup=%lums total=%lums plane_bytes=%u free=%u largest=%u",
+            tPrewarm - t0, tBwRender - tPrewarm, tDisplay - tBwRender, tWait - tDisplay, tGrayWrite - tWait,
+            tGrayDisplay - tGrayWrite, tEnd - tGrayDisplay, tEnd - t0, static_cast<unsigned>(renderer.getBufferSize()),
+            static_cast<unsigned>(grayscaleFreeBefore), static_cast<unsigned>(grayscaleLargestBefore));
+  } else if (tiledGrayscale) {
     constexpr int DEFAULT_STRIP_ROWS = adaptive_grayscale_strip::DEFAULT_ROWS;
     const int gh = renderer.getDisplayHeight();
     const int gwBytes = renderer.getDisplayWidthBytes();
@@ -2645,10 +2704,6 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
       return ESP.getFreeHeap() >= planeBytes + PLANE_BUF_HEADROOM &&
              ESP.getMaxAllocHeap() >= planeBytes + PLANE_BUF_MAX_ALLOC_RESERVE;
     };
-    bool forceAdaptiveStrip = false;
-#if defined(SIMULATOR) && defined(CROSSPOINT_RENDER_LAB)
-    forceAdaptiveStrip = render_lab::maxGrayscaleStripRows() > 0;
-#endif
     auto lsbPlaneBuf =
         (overlapRefresh && !forceAdaptiveStrip && planeBufFits()) ? makeUniqueNoThrow<uint8_t[]>(planeBytes) : nullptr;
     auto msbPlaneBuf = (lsbPlaneBuf && planeBufFits()) ? makeUniqueNoThrow<uint8_t[]>(planeBytes) : nullptr;
@@ -3468,7 +3523,8 @@ void EpubReaderActivity::applyReaderTextSettings() {
   if (section) {
     rememberCurrentContentOffset();
     cachedSpineIndex = currentSpineIndex;
-    cachedChapterTotalPageCount = section->pageCount;
+    cachedChapterTotalPageCount = section->estimatedTotalPages();
+    cachedChapterPageCountEstimated = section->isBuilding() || section->isPartial();
     nextPageNumber = section->currentPage;
   }
   section.reset();  // force re-pagination with the new settings

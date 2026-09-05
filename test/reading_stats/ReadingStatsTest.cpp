@@ -62,6 +62,28 @@ TEST(ReadingStatsCodec, RoundTripsEveryBookAndGlobalField) {
   EXPECT_EQ(decodedGlobal, global);
 }
 
+TEST(ReadingStatsLayout, LeavesGapBetweenEnglishTimeLabelAndBar) {
+  const ReadingStatsRect card{24, 100, 480, 160};
+  const int afternoonWidth = 72;
+
+  const ReadingStatsBarLayout layout = makeReadingStatsBarLayout(card, afternoonWidth);
+
+  EXPECT_EQ(layout.labelX, 34);
+  EXPECT_EQ(layout.labelWidth, afternoonWidth);
+  EXPECT_EQ(layout.barX - (layout.labelX + layout.labelWidth), 8);
+  EXPECT_EQ(layout.barWidth, card.right() - 14 - layout.barX);
+}
+
+TEST(ReadingStatsLayout, TruncatesLongLabelsBeforeConsumingMinimumBarWidth) {
+  const ReadingStatsRect card{18, 100, 280, 160};
+
+  const ReadingStatsBarLayout layout = makeReadingStatsBarLayout(card, 500);
+
+  EXPECT_EQ(layout.barX - (layout.labelX + layout.labelWidth), 8);
+  EXPECT_GE(layout.barWidth, 64);
+  EXPECT_LT(layout.labelWidth, 500);
+}
+
 TEST(ReadingStatsCodec, MigratesV3BookStatsAndV2GlobalStats) {
   ReadingStatsCodec::BookCodec::V3Encoded bookBytes{};
   std::copy(ReadingStatsCodec::BookCodec::MAGIC.begin(), ReadingStatsCodec::BookCodec::MAGIC.end(), bookBytes.begin());

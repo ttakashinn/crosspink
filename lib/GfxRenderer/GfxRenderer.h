@@ -45,6 +45,17 @@ class GfxRenderer {
   RenderMode renderMode;
   Orientation orientation;
   bool fadingFix;
+  // Pure 1-bit reader text uses a midpoint coverage threshold. Grayscale base
+  // rendering keeps every non-white sample so its selector planes can lighten
+  // the edge afterward.
+  bool crispMonochromeText_ = false;
+  // Lazily allocated as one contiguous 2-plane block on PSRAM devices. During
+  // a B/W text render, partial-coverage glyph samples are written here at the
+  // same time as the base framebuffer, eliminating two full page traversals.
+  uint8_t* capturedTextGrayPlanes_ = nullptr;
+  uint8_t* capturedTextGrayLsb_ = nullptr;
+  uint8_t* capturedTextGrayMsb_ = nullptr;
+  bool captureTextGrayscale_ = false;
   uint8_t* frameBuffer = nullptr;
   uint16_t panelWidth = HalDisplay::DISPLAY_WIDTH;
   uint16_t panelHeight = HalDisplay::DISPLAY_HEIGHT;
@@ -125,7 +136,7 @@ class GfxRenderer {
  public:
   explicit GfxRenderer(HalDisplay& halDisplay)
       : display(halDisplay), renderMode(BW), orientation(Portrait), fadingFix(false) {}
-  ~GfxRenderer() { freeBwBufferChunks(); }
+  ~GfxRenderer();
 
   // Setup
   void begin();  // must be called right after display.begin()
@@ -247,6 +258,10 @@ class GfxRenderer {
 
   // Drawing
   void drawPixel(int x, int y, bool state = true) const;
+  // Draw one 2-bit font sample according to the active render mode. Kept in
+  // GfxRenderer so coordinate rotation and the hot framebuffer write happen
+  // once per sample and the mono/grayscale policies cannot drift apart.
+  void draw2BitGlyphPixel(int x, int y, bool state, uint8_t coverage) const;
   void drawLine(int x1, int y1, int x2, int y2, bool state = true) const;
   void drawLine(int x1, int y1, int x2, int y2, int lineWidth, bool state) const;
   void drawArc(int maxRadius, int cx, int cy, int xDir, int yDir, int lineWidth, bool state) const;
@@ -319,6 +334,17 @@ class GfxRenderer {
   // Grayscale functions
   void setRenderMode(const RenderMode mode) { this->renderMode = mode; }
   RenderMode getRenderMode() const { return renderMode; }
+  void setCrispMonochromeText(const bool enabled) { crispMonochromeText_ = enabled; }
+  bool crispMonochromeText() const { return crispMonochromeText_; }
+  // Start/end single-pass text AA capture. Available on PSRAM builds (and the
+  // X4 simulator); returns false without changing state when memory is absent,
+  // so callers transparently retain the established multi-pass fallback.
+  bool beginTextGrayscaleCapture();
+  void endTextGrayscaleCapture() { captureTextGrayscale_ = false; }
+  bool isTextGrayscaleCaptureActive() const { return captureTextGrayscale_; }
+  uint8_t* capturedTextGrayscaleLsb() const { return capturedTextGrayLsb_; }
+  uint8_t* capturedTextGrayscaleMsb() const { return capturedTextGrayMsb_; }
+  void copyCapturedTextGrayscaleBuffers() const;
   // Grayscale preconditioning settle pass (no-op on X4). The rect overload
   // takes the gray region in LOGICAL screen coordinates and rotates it to the
   // panel; the no-arg overload settles the full frame. Call after the BW base

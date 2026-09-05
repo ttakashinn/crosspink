@@ -1,0 +1,4 @@
+add_executable(text_raster_policy_test TextRasterPolicyTest.cpp)
+target_link_libraries(text_raster_policy_test PRIVATE crosspoint_test_common GTest::gtest_main)
+target_include_directories(text_raster_policy_test PRIVATE ${REPO_ROOT}/lib/GfxRenderer)
+gtest_discover_tests(text_raster_policy_test)

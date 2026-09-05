@@ -455,15 +455,14 @@ void ActivityManager::requestUpdateAndWait() {
 
 // RenderLock
 
-RenderLock::RenderLock() {
-  xSemaphoreTake(activityManager.renderingMutex, portMAX_DELAY);
-  isLocked = true;
+RenderLock::RenderLock() : RenderLock(AcquireMode::Wait) {}
+
+RenderLock::RenderLock(const AcquireMode mode) {
+  const auto wait = mode == AcquireMode::Wait ? portMAX_DELAY : 0;
+  isLocked = xSemaphoreTake(activityManager.renderingMutex, wait) == pdTRUE;
 }
 
-RenderLock::RenderLock([[maybe_unused]] Activity&) {
-  xSemaphoreTake(activityManager.renderingMutex, portMAX_DELAY);
-  isLocked = true;
-}
+RenderLock::RenderLock([[maybe_unused]] Activity&) : RenderLock() {}
 
 RenderLock::~RenderLock() {
   if (isLocked) {

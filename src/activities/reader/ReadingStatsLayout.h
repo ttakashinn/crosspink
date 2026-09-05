@@ -18,6 +18,28 @@ struct ReadingStatsScreenLayout {
   int columns = 3;
 };
 
+struct ReadingStatsBarLayout {
+  int labelX = 0;
+  int labelWidth = 0;
+  int barX = 0;
+  int barWidth = 0;
+};
+
+inline ReadingStatsBarLayout makeReadingStatsBarLayout(const ReadingStatsRect& rect, const int measuredLabelWidth) {
+  constexpr int leftInset = 10;
+  constexpr int rightInset = 14;
+  constexpr int labelBarGap = 8;
+  constexpr int minimumBarWidth = 64;
+
+  const int labelX = rect.x + leftInset;
+  const int contentRight = std::max(labelX, rect.right() - rightInset);
+  const int available = std::max(0, contentRight - labelX);
+  const int maximumLabelWidth = std::max(0, available - labelBarGap - minimumBarWidth);
+  const int labelWidth = std::clamp(measuredLabelWidth, 0, maximumLabelWidth);
+  const int barX = std::min(contentRight, labelX + labelWidth + labelBarGap);
+  return {labelX, labelWidth, barX, std::max(1, contentRight - barX)};
+}
+
 inline ReadingStatsScreenLayout makeReadingStatsScreenLayout(const int screenWidth, const int screenHeight,
                                                              const int contentTop, const int bottomReserve) {
   const int side = screenWidth >= 528 ? 24 : 18;

@@ -114,10 +114,11 @@ void drawBarCard(const GfxRenderer& renderer, const ReadingStatsRect& rect, cons
                rect.y + (CARD_TITLE_HEIGHT - renderer.getLineHeight(UI_10_FONT_ID)) / 2, heading, EpdFontFamily::BOLD);
 
   const uint32_t maximum = *std::max_element(values.begin(), values.end());
-  const int labelWidth = N > 4 ? 54 : 76;
-  const int left = rect.x + 10;
-  const int barX = left + labelWidth;
-  const int barWidth = std::max(1, rect.right() - barX - 14);
+  int measuredLabelWidth = 0;
+  for (const char* label : labels) {
+    measuredLabelWidth = std::max(measuredLabelWidth, renderer.getTextWidth(SMALL_FONT_ID, label));
+  }
+  const ReadingStatsBarLayout barLayout = makeReadingStatsBarLayout(rect, measuredLabelWidth);
   const int bodyTop = rect.y + CARD_TITLE_HEIGHT + 5;
   const int bodyHeight = std::max(1, rect.bottom() - bodyTop - 5);
   const int lineHeight = renderer.getLineHeight(SMALL_FONT_ID);
@@ -125,11 +126,14 @@ void drawBarCard(const GfxRenderer& renderer, const ReadingStatsRect& rect, cons
     const int rowTop = bodyTop + bodyHeight * static_cast<int>(i) / static_cast<int>(N);
     const int rowBottom = bodyTop + bodyHeight * static_cast<int>(i + 1) / static_cast<int>(N);
     const int rowHeight = std::max(1, rowBottom - rowTop);
-    renderer.drawText(SMALL_FONT_ID, left, rowTop + std::max(0, (rowHeight - lineHeight) / 2), labels[i]);
+    const std::string visibleLabel =
+        renderer.truncatedText(SMALL_FONT_ID, labels[i], std::max(1, barLayout.labelWidth));
+    renderer.drawText(SMALL_FONT_ID, barLayout.labelX, rowTop + std::max(0, (rowHeight - lineHeight) / 2),
+                      visibleLabel.c_str());
     if (maximum > 0 && values[i] > 0) {
-      const int fill = std::max(2, static_cast<int>(static_cast<uint64_t>(barWidth) * values[i] / maximum));
+      const int fill = std::max(2, static_cast<int>(static_cast<uint64_t>(barLayout.barWidth) * values[i] / maximum));
       const int barHeight = std::clamp(rowHeight - 8, 5, 16);
-      renderer.fillRect(barX, rowTop + (rowHeight - barHeight) / 2, fill, barHeight, true);
+      renderer.fillRect(barLayout.barX, rowTop + (rowHeight - barHeight) / 2, fill, barHeight, true);
     }
   }
 }

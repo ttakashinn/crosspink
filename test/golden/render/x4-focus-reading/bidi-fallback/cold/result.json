@@ -23,8 +23,8 @@
   "extra_paragraph_spacing": true,
   "focus_reading": true,
   "focus_layout": {
-    "ltr_splits": 686,
-    "rtl_splits": 28,
+    "ltr_splits": 98,
+    "rtl_splits": 4,
     "zero_offsets": 0
   },
   "grayscale_lsb_captured": true,

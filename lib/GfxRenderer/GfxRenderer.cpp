@@ -10,9 +10,15 @@
 #include <Utf8.h>
 
 #include <algorithm>
+#include <cstdlib>
+
+#if defined(BOARD_HAS_PSRAM) && !defined(SIMULATOR)
+#include <esp_heap_caps.h>
+#endif
 
 #include "FontCacheManager.h"
 #include "SmallCaps.h"
+#include "TextRasterPolicy.h"
 
 namespace {
 
@@ -137,6 +143,48 @@ void GfxRenderer::begin() {
   panelWidthBytes = display.getDisplayWidthBytes();
   frameBufferSize = display.getBufferSize();
   bwBufferChunks.assign((frameBufferSize + BW_BUFFER_CHUNK_SIZE - 1) / BW_BUFFER_CHUNK_SIZE, nullptr);
+}
+
+GfxRenderer::~GfxRenderer() {
+  freeBwBufferChunks();
+#if defined(BOARD_HAS_PSRAM) && !defined(SIMULATOR)
+  if (capturedTextGrayPlanes_) heap_caps_free(capturedTextGrayPlanes_);
+#else
+  free(capturedTextGrayPlanes_);
+#endif
+}
+
+bool GfxRenderer::beginTextGrayscaleCapture() {
+  captureTextGrayscale_ = false;
+  if (!frameBuffer || frameBufferSize == 0 || renderMode != BW || _stripActive) return false;
+
+#if defined(SIMULATOR)
+  // The render lab's X4 profile is 800x480. Keep X3 on its real C3 strip path
+  // so low-memory/fallback coverage remains representative.
+  if (frameBufferSize != 800U * 480U / 8U) return false;
+#elif !defined(BOARD_HAS_PSRAM)
+  return false;
+#endif
+
+  if (!capturedTextGrayPlanes_) {
+    const size_t bytes = static_cast<size_t>(frameBufferSize) * 2U;
+#if defined(BOARD_HAS_PSRAM) && !defined(SIMULATOR)
+    capturedTextGrayPlanes_ = static_cast<uint8_t*>(heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+#else
+    capturedTextGrayPlanes_ = static_cast<uint8_t*>(malloc(bytes));
+#endif
+    if (!capturedTextGrayPlanes_) {
+      LOG_ERR("GFX", "Single-pass text AA disabled: plane allocation failed (%u bytes)", static_cast<unsigned>(bytes));
+      return false;
+    }
+    capturedTextGrayLsb_ = capturedTextGrayPlanes_;
+    capturedTextGrayMsb_ = capturedTextGrayPlanes_ + frameBufferSize;
+    LOG_DBG("GFX", "Single-pass text AA planes allocated: %u bytes", static_cast<unsigned>(bytes));
+  }
+
+  memset(capturedTextGrayPlanes_, 0, static_cast<size_t>(frameBufferSize) * 2U);
+  captureTextGrayscale_ = true;
+  return true;
 }
 
 void GfxRenderer::releaseFrameBufferForBuild() {
@@ -493,14 +541,7 @@ static void renderCharSmallCaps(const GfxRenderer& renderer, const GfxRenderer::
             maxRaw = std::max(maxRaw, raw);
           }
         }
-        const uint8_t bmpVal = 3 - maxRaw;
-        if (renderMode == GfxRenderer::BW && bmpVal < 3) {
-          renderer.drawPixel(baseX + dstX, baseY + dstY, pixelState);
-        } else if (renderMode == GfxRenderer::GRAYSCALE_MSB && (bmpVal == 1 || bmpVal == 2)) {
-          renderer.drawPixel(baseX + dstX, baseY + dstY, false);
-        } else if (renderMode == GfxRenderer::GRAYSCALE_LSB && bmpVal == 1) {
-          renderer.drawPixel(baseX + dstX, baseY + dstY, false);
-        }
+        renderer.draw2BitGlyphPixel(baseX + dstX, baseY + dstY, pixelState, maxRaw);
       } else {
         bool hasInk = false;
         for (int sampleY = srcY; sampleY < srcYEnd && !hasInk; ++sampleY) {
@@ -582,23 +623,8 @@ static void renderCharImpl(const GfxRenderer& renderer, GfxRenderer::RenderMode 
 
           const uint8_t byte = bitmap[pixelPosition >> 2];
           const uint8_t bit_index = (3 - (pixelPosition & 3)) * 2;
-          // the direct bit from the font is 0 -> white, 1 -> light gray, 2 -> dark gray, 3 -> black
-          // we swap this to better match the way images and screen think about colors:
-          // 0 -> black, 1 -> dark grey, 2 -> light grey, 3 -> white
-          const uint8_t bmpVal = 3 - ((byte >> bit_index) & 0x3);
-
-          if (renderMode == GfxRenderer::BW && bmpVal < 3) {
-            // Black (also paints over the grays in BW mode)
-            renderer.drawPixel(screenX, screenY, pixelState);
-          } else if (renderMode == GfxRenderer::GRAYSCALE_MSB && (bmpVal == 1 || bmpVal == 2)) {
-            // Light gray (also mark the MSB if it's going to be a dark gray too)
-            // Dedicated X3 gray LUTs now provide proper 4-level gray on both devices
-            // We have to flag pixels in reverse for the gray buffers, as 0 leave alone, 1 update
-            renderer.drawPixel(screenX, screenY, false);
-          } else if (renderMode == GfxRenderer::GRAYSCALE_LSB && bmpVal == 1) {
-            // Dark gray
-            renderer.drawPixel(screenX, screenY, false);
-          }
+          const uint8_t coverage = (byte >> bit_index) & 0x3;
+          renderer.draw2BitGlyphPixel(screenX, screenY, pixelState, coverage);
         }
       }
     } else {
@@ -657,11 +683,65 @@ void GfxRenderer::drawPixel(const int x, const int y, const bool state) const {
   // Calculate byte position and bit position
   const uint32_t byteIndex = rowY * panelWidthBytes + (phyX / 8);
   const uint8_t bitPosition = 7 - (phyX % 8);  // MSB first
+  const uint8_t mask = static_cast<uint8_t>(1U << bitPosition);
+
+  if (captureTextGrayscale_ && target == frameBuffer) {
+    // A non-glyph primitive (underline, border, rule, erase, ...) is an
+    // opaque overwrite. Remove any partial-coverage selector left by an
+    // earlier glyph at the same pixel so the single-pass result matches the
+    // established render-order semantics of the separate gray passes.
+    capturedTextGrayLsb_[byteIndex] &= static_cast<uint8_t>(~mask);
+    capturedTextGrayMsb_[byteIndex] &= static_cast<uint8_t>(~mask);
+  }
 
   if (state) {
-    target[byteIndex] &= ~(1 << bitPosition);  // Clear bit
+    target[byteIndex] &= static_cast<uint8_t>(~mask);  // Clear bit
   } else {
-    target[byteIndex] |= 1 << bitPosition;  // Set bit
+    target[byteIndex] |= mask;  // Set bit
+  }
+}
+
+void GfxRenderer::draw2BitGlyphPixel(const int x, const int y, const bool state, const uint8_t coverage) const {
+  if (coverage == 0) return;
+
+  if (renderMode == BW) {
+    const auto purpose = crispMonochromeText_ && !captureTextGrayscale_ ? text_raster::BwPurpose::CrispMonochrome
+                                                                        : text_raster::BwPurpose::GrayscaleBase;
+    if (!captureTextGrayscale_) {
+      if (text_raster::paintsBw(coverage, purpose)) drawPixel(x, y, state);
+      return;
+    }
+
+    // Single-pass AA: rotate once, then update the B/W base and both selector
+    // masks from the same decoded coverage sample.
+    int phyX = 0;
+    int phyY = 0;
+    rotateCoordinates(orientation, x, y, &phyX, &phyY, panelWidth, panelHeight);
+    if (phyX < 0 || phyX >= panelWidth || phyY < 0 || phyY >= panelHeight) {
+      LOG_ERR("GFX", "!! Outside range (%d, %d) -> (%d, %d)", x, y, phyX, phyY);
+      return;
+    }
+    const uint32_t byteIndex = static_cast<uint32_t>(phyY) * panelWidthBytes + (phyX / 8);
+    const uint8_t mask = static_cast<uint8_t>(1U << (7 - (phyX % 8)));
+    if (text_raster::paintsBw(coverage, purpose)) {
+      if (state) {
+        frameBuffer[byteIndex] &= static_cast<uint8_t>(~mask);
+      } else {
+        frameBuffer[byteIndex] |= mask;
+      }
+    }
+    const uint8_t planes = text_raster::grayPlanes(coverage);
+    if (planes & text_raster::Lsb) capturedTextGrayLsb_[byteIndex] |= mask;
+    if (planes & text_raster::Msb) capturedTextGrayMsb_[byteIndex] |= mask;
+    return;
+  }
+
+  const uint8_t planes = text_raster::grayPlanes(coverage);
+  if ((renderMode == GRAYSCALE_LSB && (planes & text_raster::Lsb)) ||
+      (renderMode == GRAYSCALE_MSB && (planes & text_raster::Msb))) {
+    // Gray buffers are delta masks: 0 leaves the B/W base unchanged and 1
+    // asks the waveform to lighten it, hence the reversed pixel state.
+    drawPixel(x, y, false);
   }
 }
 
@@ -2364,6 +2444,11 @@ void GfxRenderer::preconditionGrayscale(int x, int y, int w, int h) const {
 void GfxRenderer::copyGrayscaleLsbBuffers() const { display.copyGrayscaleLsbBuffers(frameBuffer); }
 
 void GfxRenderer::copyGrayscaleMsbBuffers() const { display.copyGrayscaleMsbBuffers(frameBuffer); }
+
+void GfxRenderer::copyCapturedTextGrayscaleBuffers() const {
+  if (!capturedTextGrayLsb_ || !capturedTextGrayMsb_) return;
+  display.copyGrayscaleBuffers(capturedTextGrayLsb_, capturedTextGrayMsb_);
+}
 
 void GfxRenderer::displayGrayBuffer() const { display.displayGrayBuffer(fadingFix); }
 

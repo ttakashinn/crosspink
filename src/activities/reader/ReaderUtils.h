@@ -211,6 +211,17 @@ inline void prepareGrayscalePlanes(const GfxRenderer& renderer, const bool plane
   }
 }
 
+// Complete grayscale output when drawText() produced both selector planes in
+// the same pass as the B/W base. The base framebuffer stays intact, so no B/W
+// snapshot/restore is needed and the established driver waveform is unchanged.
+inline bool displayCapturedTextAntiAliased(GfxRenderer& renderer) {
+  prepareGrayscalePlanes(renderer, true, renderer.combinesGrayscaleBase());
+  renderer.copyCapturedTextGrayscaleBuffers();
+  renderer.displayGrayBuffer();
+  renderer.cleanupGrayscaleWithFrameBuffer();
+  return true;
+}
+
 // Grayscale anti-aliasing pass. Renders content twice (LSB + MSB) to build
 // the grayscale buffer. Only the content callback is re-rendered — status bars
 // and other overlays should be drawn before calling this.

@@ -4,6 +4,8 @@
 
 namespace {
 using reader_menu::Action;
+using reader_menu::ProgressPosition;
+using reader_menu::resolveProgressPosition;
 using reader_menu::Tab;
 using reader_menu::tabForAction;
 }  // namespace
@@ -32,4 +34,41 @@ TEST(ReaderMenuModel, KeepsConfigurationServicesAndMaintenanceInMore) {
   EXPECT_EQ(tabForAction(Action::SYNC), Tab::More);
   EXPECT_EQ(tabForAction(Action::RENDER_MODE), Tab::More);
   EXPECT_EQ(tabForAction(Action::DELETE_CACHE), Tab::More);
+}
+
+TEST(ReaderMenuModel, UsesActiveChapterProgressWhenSectionIsLoaded) {
+  const ProgressPosition position = resolveProgressPosition(true, 11, 80, false, 3, 3, 7, 70, true);
+
+  EXPECT_EQ(position.pageIndex, 11);
+  EXPECT_EQ(position.displayPage(), 12);
+  EXPECT_EQ(position.pageCount, 80);
+  EXPECT_FALSE(position.pageCountEstimated);
+  EXPECT_FLOAT_EQ(position.visiblePageProgress(), 12.0f / 80.0f);
+}
+
+TEST(ReaderMenuModel, RestoresCachedProgressAfterChildScreenReleasesSection) {
+  const ProgressPosition position = resolveProgressPosition(false, 0, 0, false, 3, 3, 11, 80, true);
+
+  EXPECT_EQ(position.pageIndex, 11);
+  EXPECT_EQ(position.displayPage(), 12);
+  EXPECT_EQ(position.pageCount, 80);
+  EXPECT_TRUE(position.pageCountEstimated);
+  EXPECT_FLOAT_EQ(position.visiblePageProgress(), 12.0f / 80.0f);
+}
+
+TEST(ReaderMenuModel, DoesNotUseCachedProgressFromAnotherSpine) {
+  const ProgressPosition position = resolveProgressPosition(false, 0, 0, false, 4, 3, 11, 80, true);
+
+  EXPECT_EQ(position.displayPage(), 0);
+  EXPECT_EQ(position.pageCount, 0);
+}
+
+TEST(ReaderMenuModel, CountsTheVisiblePageAndClampsEndSentinel) {
+  const ProgressPosition firstPage{0, 10, false};
+  const ProgressPosition lastPage{9, 10, false};
+  const ProgressPosition endSentinel{10, 10, false};
+
+  EXPECT_FLOAT_EQ(firstPage.visiblePageProgress(), 0.1f);
+  EXPECT_FLOAT_EQ(lastPage.visiblePageProgress(), 1.0f);
+  EXPECT_FLOAT_EQ(endSentinel.visiblePageProgress(), 1.0f);
 }

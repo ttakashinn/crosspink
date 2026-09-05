@@ -295,13 +295,23 @@ void TxtReaderActivity::renderPage(GfxRenderer& renderer) {
   renderStatusBar();  // scan: a CJK title joins the batch prewarm
   scope.endScanAndPrewarm();
 
-  // BW rendering
+  const bool capturedTextGrayscale = SETTINGS.textAntiAliasing && renderer.beginTextGrayscaleCapture();
+
+  // B/W rendering. On PSRAM devices the same glyph traversal also emits both
+  // grayscale selector planes.
+  renderer.setCrispMonochromeText(!SETTINGS.textAntiAliasing);
   renderLines();
+  if (capturedTextGrayscale) renderer.endTextGrayscaleCapture();
+  renderer.setCrispMonochromeText(false);
   renderStatusBar();
 
   if (SETTINGS.textAntiAliasing) {
     ReaderUtils::displayBaseWithRefreshCycle(renderer, pagesUntilFullRefresh);
-    ReaderUtils::renderAntiAliased(renderer, [&renderLines]() { renderLines(); });
+    if (capturedTextGrayscale) {
+      ReaderUtils::displayCapturedTextAntiAliased(renderer);
+    } else {
+      ReaderUtils::renderAntiAliased(renderer, [&renderLines]() { renderLines(); });
+    }
   } else {
     ReaderUtils::displayWithRefreshCycle(renderer, pagesUntilFullRefresh);
   }
@@ -384,7 +394,8 @@ void TxtReaderActivity::flushReaderState() {
 }
 
 void TxtReaderActivity::requestProgressSaveIfDue() {
-  RenderLock lock(*this);
+  RenderLock lock(RenderLock::AcquireMode::Try);
+  if (!lock.locked()) return;
   if (progressSaveDebouncer.due(millis())) flushReaderState();
 }
 

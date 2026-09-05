@@ -35,6 +35,29 @@ TEST(BoundedPageTurnQueue, OppositeTurnsCancelPendingIntent) {
   EXPECT_TRUE(queue.empty());
 }
 
+TEST(BoundedPageTurnQueue, FreshInputIsLatchedBeforeAnOlderTurnIsDispatched) {
+  BoundedPageTurnQueue queue;
+  queue.push(true);  // Older request waiting for the render lock.
+
+  // A fresh one-shot event from the current input frame must be queued before
+  // the older request is popped. Otherwise this second turn disappears when
+  // InputManager clears its edge events on the next frame.
+  queue.push(true);
+  EXPECT_EQ(queue.pop(), 1);
+  EXPECT_EQ(queue.pending(), 1);
+  EXPECT_EQ(queue.pop(), 1);
+  EXPECT_TRUE(queue.empty());
+}
+
+TEST(BoundedPageTurnQueue, FreshOppositeInputCancelsQueuedTurnBeforeDispatch) {
+  BoundedPageTurnQueue queue;
+  queue.push(true);
+
+  queue.push(false);
+  EXPECT_TRUE(queue.empty());
+  EXPECT_EQ(queue.pop(), 0);
+}
+
 TEST(BoundedPageTurnQueue, ClearDropsAllPendingTurns) {
   BoundedPageTurnQueue queue;
   queue.push(true);
