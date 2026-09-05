@@ -42,38 +42,16 @@ bool RecentBooksStore::fromJson(JsonVariantConst doc) {
 
 void RecentBooksStore::addBook(const std::string& path, const std::string& title, const std::string& author,
                                const std::string& coverBmpPath) {
-  // Drop stale entries first so a new add can't evict a valid book in their stead.
-  pruneMissing();
-
-  // Remove existing entry if present
-  auto it =
-      std::find_if(recentBooks.begin(), recentBooks.end(), [&](const RecentBook& book) { return book.path == path; });
-  if (it != recentBooks.end()) {
-    recentBooks.erase(it);
-  }
-
-  // Add to front
-  recentBooks.insert(recentBooks.begin(), {path, title, author, coverBmpPath});
-
-  // Trim to max size
-  if (recentBooks.size() > MAX_RECENT_BOOKS) {
-    recentBooks.resize(MAX_RECENT_BOOKS);
-  }
-
-  saveToFile();
+  // Drop stale entries first so a new add can't evict a valid book in their
+  // stead, but do not rewrite the file when content and ordering are unchanged.
+  const bool pruned = pruneMissing();
+  const bool upserted = recent_books::upsertFront(recentBooks, path, title, author, coverBmpPath, MAX_RECENT_BOOKS);
+  if (pruned || upserted) saveToFile();
 }
 
 void RecentBooksStore::updateBook(const std::string& path, const std::string& title, const std::string& author,
                                   const std::string& coverBmpPath) {
-  auto it =
-      std::find_if(recentBooks.begin(), recentBooks.end(), [&](const RecentBook& book) { return book.path == path; });
-  if (it != recentBooks.end()) {
-    RecentBook& book = *it;
-    book.title = title;
-    book.author = author;
-    book.coverBmpPath = coverBmpPath;
-    saveToFile();
-  }
+  if (recent_books::updateMetadata(recentBooks, path, title, author, coverBmpPath)) saveToFile();
 }
 
 bool RecentBooksStore::removeByPath(const std::string& path) {

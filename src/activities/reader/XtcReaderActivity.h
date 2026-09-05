@@ -7,11 +7,13 @@
 
 #include "ReaderActivity.h"
 #include "ReaderProgressSaveDebouncer.h"
+#include "XtcPageState.h"
 
 class XtcReaderActivity final : public ReaderActivity {
   std::shared_ptr<Xtc> xtc;
-  uint32_t currentPage = 0;
+  XtcPageState pageState;
   ReaderProgressSaveDebouncer progressSaveDebouncer;
+  bool pageRenderedThisFrame = false;
 
   enum class StatusBarOverlayPosition { Bottom, Top };
   struct StatusBarInfo {
@@ -20,12 +22,12 @@ class XtcReaderActivity final : public ReaderActivity {
     std::string title;
   };
 
-  void renderPage();
+  bool renderPage(uint32_t pageToRender);
   void openChapterSelection();
-  void renderStatusBarOverlay(GfxRenderer& renderer, StatusBarOverlayPosition position) const;
-  StatusBarInfo getStatusBarInfo() const;
+  void renderStatusBarOverlay(GfxRenderer& renderer, StatusBarOverlayPosition position, uint32_t pageToRender) const;
+  StatusBarInfo getStatusBarInfo(uint32_t pageToRender) const;
   bool saveProgress(uint32_t page);
-  void queueProgressSave();
+  void queueProgressSave(uint32_t pageToRender);
   void flushReaderState() override;
   void requestProgressSaveIfDue() override;
   void loadProgress();
@@ -36,8 +38,9 @@ class XtcReaderActivity final : public ReaderActivity {
   std::string getBookThumbBmpPath() const override { return xtc ? xtc->getThumbBmpPath() : ""; }
   bool handleFormatInput() override;
   void renderBook() override;
+  bool renderedReadingPageThisFrame() const override { return pageRenderedThisFrame; }
   std::pair<int32_t, int32_t> readerTelemetryPosition() const override {
-    return {static_cast<int32_t>(currentPage), -1};
+    return {static_cast<int32_t>(pageState.visiblePage()), -1};
   }
   void applyInitialOrientation() override;
 

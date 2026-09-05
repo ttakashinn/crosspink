@@ -1,0 +1,4 @@
+add_executable(XtcPageStateTest XtcPageStateTest.cpp)
+target_include_directories(XtcPageStateTest PRIVATE ${REPO_ROOT}/src/activities/reader)
+target_link_libraries(XtcPageStateTest PRIVATE crosspoint_test_common GTest::gtest_main)
+gtest_discover_tests(XtcPageStateTest)

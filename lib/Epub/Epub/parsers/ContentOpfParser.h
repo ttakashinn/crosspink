@@ -2,10 +2,10 @@
 #include <Print.h>
 
 #include <algorithm>
-#include <deque>
 #include <vector>
 
 #include "Epub.h"
+#include "ManifestItemIndex.h"
 #include "expat.h"
 
 class BookMetadataCache;
@@ -39,15 +39,11 @@ class ContentOpfParser final : public Print {
   uint32_t resolvedSpineItems = 0;
   uint32_t unresolvedSpineItems = 0;
 
-  // Index for fast idref→href lookup (binary search over .items.bin)
-  struct ItemIndexEntry {
-    uint32_t idHash;      // FNV-1a hash of itemId
-    uint16_t idLen;       // length for collision reduction
-    uint32_t fileOffset;  // offset in .items.bin
-  };
-  std::deque<ItemIndexEntry> itemIndex;
+  ManifestItemIndex itemIndex;
   bool useItemIndex = false;
   bool itemIndexComplete = true;
+
+  bool findIndexedItemHref(const std::string& idref, std::string& href, bool& found);
 
   // FNV-1a hash function
   static uint32_t fnvHash(const std::string& s) {

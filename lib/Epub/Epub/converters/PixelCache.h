@@ -72,6 +72,12 @@ struct PixelCache {
     flushedRows = 0;
     ok = false;
 
+    // The decoder can report an MCU-sized upper bound that is taller than the
+    // entire scaled output (for example, a 12px ornament rendered at 4px). The
+    // draw callback clamps that final block to the output height, so requiring
+    // the unbounded estimate here rejects a cache that only needs `h` rows.
+    if (maxBlockDstRows > h) maxBlockDstRows = h;
+
     int wantRows = maxBlockDstRows + 2;
     if (wantRows < MIN_BAND_ROWS) wantRows = MIN_BAND_ROWS;
     if (wantRows > h) wantRows = h;

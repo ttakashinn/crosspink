@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <limits>
 
 #include "Epub/BookMetadataCache.h"
 
@@ -68,7 +69,62 @@ bool hasSpaceSeparatedToken(const std::string& value, const char* token) {
   }
   return false;
 }
+
+bool readItemIdMatches(HalFile& file, const std::string& targetId, bool& matches) {
+  uint32_t storedLength = 0;
+  if (!serialization::tryReadPod(file, storedLength) || storedLength > MAX_MANIFEST_ID) return false;
+
+  const uint64_t idEnd = static_cast<uint64_t>(file.position()) + storedLength;
+  if (idEnd > file.fileSize64()) return false;
+
+  matches = storedLength == targetId.size();
+  if (!matches) return file.seekCur(static_cast<int64_t>(storedLength));
+
+  constexpr size_t COMPARE_BUFFER_SIZE = 64;
+  uint8_t compareBuffer[COMPARE_BUFFER_SIZE];
+  size_t compared = 0;
+  while (compared < storedLength) {
+    const size_t chunkSize = std::min(COMPARE_BUFFER_SIZE, static_cast<size_t>(storedLength) - compared);
+    if (file.read(compareBuffer, chunkSize) != static_cast<int>(chunkSize)) return false;
+    if (std::memcmp(compareBuffer, targetId.data() + compared, chunkSize) != 0) matches = false;
+    compared += chunkSize;
+  }
+  return true;
+}
+
+bool skipStoredString(HalFile& file, const size_t maxLength) {
+  uint32_t storedLength = 0;
+  if (!serialization::tryReadPod(file, storedLength) || storedLength > maxLength) return false;
+  const uint64_t valueEnd = static_cast<uint64_t>(file.position()) + storedLength;
+  return valueEnd <= file.fileSize64() && file.seekCur(static_cast<int64_t>(storedLength));
+}
 }  // namespace
+
+bool ContentOpfParser::findIndexedItemHref(const std::string& idref, std::string& href, bool& found) {
+  found = false;
+  const uint32_t targetHash = fnvHash(idref);
+  const uint16_t targetLen = static_cast<uint16_t>(idref.size());
+  const auto result = itemIndex.visitCandidates(targetHash, targetLen, [&](const uint32_t fileOffset) {
+    if (!tempItemStore.seek(fileOffset)) {
+      LOG_ERR("COF", "Failed seeking manifest index row at %u", static_cast<unsigned>(fileOffset));
+      return ManifestItemIndex::CandidateResult::Error;
+    }
+    bool idMatches = false;
+    if (!readItemIdMatches(tempItemStore, idref, idMatches)) {
+      LOG_ERR("COF", "Failed reading manifest item ID at %u", static_cast<unsigned>(fileOffset));
+      return ManifestItemIndex::CandidateResult::Error;
+    }
+    if (!idMatches) return ManifestItemIndex::CandidateResult::Continue;
+    if (!serialization::tryReadString(tempItemStore, href, MAX_MANIFEST_HREF)) {
+      LOG_ERR("COF", "Failed reading manifest item href at %u", static_cast<unsigned>(fileOffset));
+      return ManifestItemIndex::CandidateResult::Error;
+    }
+    return ManifestItemIndex::CandidateResult::Found;
+  });
+
+  found = result == ManifestItemIndex::CandidateResult::Found;
+  return result != ManifestItemIndex::CandidateResult::Error;
+}
 
 bool ContentOpfParser::setup() {
   parser = XML_ParserCreate(nullptr);
@@ -200,15 +256,14 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
       return;
     }
 
-    // Sort the (unconditionally-built) item index so every idref lookup uses binary
-    // search. Without this, small/medium manifests fell back to an O(spine × manifest)
-    // linear rescan of .items.bin per itemref (up to ~200ms/item at large scale).
+    // Each fixed-capacity chunk is sorted independently. This keeps lookups
+    // indexed without requiring one large contiguous heap allocation.
     if (!self->itemIndex.empty()) {
-      std::sort(self->itemIndex.begin(), self->itemIndex.end(), [](const ItemIndexEntry& a, const ItemIndexEntry& b) {
-        return a.idHash < b.idHash || (a.idHash == b.idHash && a.idLen < b.idLen);
-      });
+      self->itemIndex.sort();
       self->useItemIndex = true;
-      LOG_DBG("COF", "Using fast index for %zu manifest items", self->itemIndex.size());
+      LOG_DBG("COF", "Using chunked index for %zu manifest items in %zu chunks (arena=%u bytes complete=%u)",
+              self->itemIndex.size(), self->itemIndex.chunkCount(), static_cast<unsigned>(self->itemIndex.memoryUsed()),
+              self->itemIndexComplete ? 1U : 0U);
     }
     return;
   }
@@ -273,16 +328,21 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
       if (itemId.empty() || href.empty() || itemId.size() > MAX_MANIFEST_ID || href.size() > MAX_MANIFEST_HREF) {
         LOG_ERR("COF", "Skipping malformed or oversized manifest item");
       } else {
-        if (self->itemIndex.size() < MAX_INDEXED_MANIFEST_ITEMS) {
-          ItemIndexEntry entry;
-          entry.idHash = fnvHash(itemId);
-          entry.idLen = static_cast<uint16_t>(itemId.size());
-          entry.fileOffset = static_cast<uint32_t>(self->tempItemStore.position());
-          self->itemIndex.push_back(entry);
-        } else {
-          // Keep writing the complete lookup file; references outside the
-          // bounded RAM index use the linear fallback below.
+        const size_t fileOffset = self->tempItemStore.position();
+        if (self->itemIndexComplete && self->itemIndex.size() < MAX_INDEXED_MANIFEST_ITEMS &&
+            fileOffset <= std::numeric_limits<uint32_t>::max()) {
+          const ManifestItemIndex::Entry entry{fnvHash(itemId), static_cast<uint16_t>(itemId.size()),
+                                               static_cast<uint32_t>(fileOffset)};
+          if (!self->itemIndex.append(entry)) {
+            // Keep the already-built prefix and every complete on-disk row.
+            // References outside the prefix use the bounded-buffer scan.
+            self->itemIndexComplete = false;
+            LOG_ERR("COF", "Manifest index allocation stopped at %zu items; using file fallback",
+                    self->itemIndex.size());
+          }
+        } else if (self->itemIndexComplete) {
           self->itemIndexComplete = false;
+          LOG_DBG("COF", "Manifest index cap reached at %zu items; using file fallback", self->itemIndex.size());
         }
 
         const uint32_t itemIdSize = static_cast<uint32_t>(itemId.size());
@@ -354,36 +414,9 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
           bool found = false;
 
           if (self->useItemIndex) {
-            // Fast path: binary search
-            uint32_t targetHash = fnvHash(idref);
-            uint16_t targetLen = static_cast<uint16_t>(idref.size());
-
-            auto it = std::lower_bound(self->itemIndex.begin(), self->itemIndex.end(),
-                                       ItemIndexEntry{targetHash, targetLen, 0},
-                                       [](const ItemIndexEntry& a, const ItemIndexEntry& b) {
-                                         return a.idHash < b.idHash || (a.idHash == b.idHash && a.idLen < b.idLen);
-                                       });
-
-            // Check for match (may need to check a few due to hash collisions)
-            while (it != self->itemIndex.end() && it->idHash == targetHash) {
-              if (!self->tempItemStore.seek(it->fileOffset)) {
-                self->failed = true;
-                return;
-              }
-              std::string itemId;
-              if (!serialization::tryReadString(self->tempItemStore, itemId, MAX_MANIFEST_ID)) {
-                self->failed = true;
-                return;
-              }
-              if (itemId == idref) {
-                if (!serialization::tryReadString(self->tempItemStore, href, MAX_MANIFEST_HREF)) {
-                  self->failed = true;
-                  return;
-                }
-                found = true;
-                break;
-              }
-              ++it;
+            if (!self->findIndexedItemHref(idref, href, found)) {
+              self->failed = true;
+              return;
             }
           }
 
@@ -394,16 +427,23 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
               self->failed = true;
               return;
             }
-            std::string itemId;
             while (self->tempItemStore.available()) {
-              if (!serialization::tryReadString(self->tempItemStore, itemId, MAX_MANIFEST_ID) ||
-                  !serialization::tryReadString(self->tempItemStore, href, MAX_MANIFEST_HREF)) {
+              bool idMatches = false;
+              if (!readItemIdMatches(self->tempItemStore, idref, idMatches)) {
                 self->failed = true;
                 return;
               }
-              if (itemId == idref) {
+              if (idMatches) {
+                if (!serialization::tryReadString(self->tempItemStore, href, MAX_MANIFEST_HREF)) {
+                  self->failed = true;
+                  return;
+                }
                 found = true;
                 break;
+              }
+              if (!skipStoredString(self->tempItemStore, MAX_MANIFEST_HREF)) {
+                self->failed = true;
+                return;
               }
             }
           }
