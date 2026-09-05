@@ -141,6 +141,7 @@ constexpr uint32_t SILENT_REBOOT_TARGET_READER = 1;
 constexpr uint32_t SILENT_REBOOT_TARGET_VANNHANSO_SETTINGS = 2;
 constexpr uint32_t SILENT_REBOOT_TARGET_READER_LOW_MEMORY = 3;
 constexpr uint32_t SILENT_REBOOT_TARGET_FILE_TRANSFER = 4;
+constexpr uint32_t SILENT_REBOOT_TARGET_READER_SETTINGS = 5;
 
 // How the device is coming back to life, resolved once at boot. Resume flows
 // suppress the splash and leave the panel holding its pre-boot frame; a
@@ -222,6 +223,23 @@ void silentRestartToReaderForLowMemory() {
   LOG_DBG("MAIN", "Low-memory restart (target=reader)");
   GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
   delay(50);
+  ESP.restart();
+}
+
+void silentRestartToReaderSettings() {
+  if (deepSleepInProgress) return;
+#if FREEINK_CAP_TOUCH
+  if (finishWifiSessionWithoutRestart()) return;
+#endif
+  silentRebootTarget = SILENT_REBOOT_TARGET_READER_SETTINGS;
+  silentRebootPayload = 0;
+  silentRebootMagic = SILENT_REBOOT_MAGIC;
+  LOG_DBG("MAIN", "Silent restart (target=reader settings, retained frame)");
+  // Manage Fonts already leaves a complete, stable frame on the panel. A
+  // loading popup would force an extra FAST refresh immediately before the
+  // reboot, visibly darkening the screen for a frame that is discarded. Boot
+  // blocks on the Settings paint and absorbs held input below, so retaining
+  // the current frame during the short restart is both safe and flicker-free.
   ESP.restart();
 }
 
@@ -430,11 +448,12 @@ void setup() {
   const bool isNetworkResume = isSilentReboot && requestedTarget == SILENT_REBOOT_TARGET_FILE_TRANSFER &&
                                decodeFileTransferNetworkMode(requestedPayload, networkResumeMode);
   bootedFromLowMemoryRestart = isSilentReboot && requestedTarget == SILENT_REBOOT_TARGET_READER_LOW_MEMORY;
-  const uint32_t snapshotTarget = bootedFromLowMemoryRestart ? SILENT_REBOOT_TARGET_READER
-                                  : (isSilentReboot && requestedTarget <= SILENT_REBOOT_TARGET_VANNHANSO_SETTINGS)
-                                      ? requestedTarget
-                                  : isNetworkResume ? SILENT_REBOOT_TARGET_FILE_TRANSFER
-                                                    : 0;
+  const bool isUiResumeTarget = requestedTarget <= SILENT_REBOOT_TARGET_VANNHANSO_SETTINGS ||
+                                requestedTarget == SILENT_REBOOT_TARGET_READER_SETTINGS;
+  const uint32_t snapshotTarget = bootedFromLowMemoryRestart             ? SILENT_REBOOT_TARGET_READER
+                                  : (isSilentReboot && isUiResumeTarget) ? requestedTarget
+                                  : isNetworkResume                      ? SILENT_REBOOT_TARGET_FILE_TRANSFER
+                                                                         : 0;
   const uint32_t snapshotPayload = isNetworkResume ? requestedPayload : 0;
   silentRebootMagic = 0;
   silentRebootTarget = 0;
@@ -637,6 +656,8 @@ void setup() {
     // Wi-Fi teardown from a manual update must preserve the user's place in
     // the settings hierarchy instead of dropping them on Home.
     activityManager.goToVanNhanSoSettings(/*returnToSettingsOnBack=*/true);
+  } else if (resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_READER_SETTINGS) {
+    activityManager.goToReaderSettings();
   } else if (resume == BootResume::Silent) {
     // target == home (or reader with no open book): land on home — don't fall
     // through to the sleep-wake "resume reader" logic, which fires on stale

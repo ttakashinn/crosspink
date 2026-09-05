@@ -67,40 +67,45 @@ void EpubReaderMenuActivity::buildMenuItems(std::vector<MenuItem>& items, bool h
                                             const bool hasRenderFallback) {
   items.clear();
   items.reserve(MAX_MENU_ITEMS);
-  // Dictionary is the most frequent in-reader tool. Keep lookup and its
-  // history as the first two rows of the Read tab so neither depends on the
-  // presence of footnotes/bookmarks or on the size of the settings section.
+  // Stable primary rows: the 4 actions most often needed without leaving the
+  // current reading context remain visible at the top on every book.
   items.push_back({MenuAction::DICTIONARY, StrId::STR_LOOKUP});
   items.push_back({MenuAction::LOOKUP_HISTORY, StrId::STR_DICT_HISTORY});
+  items.push_back({MenuAction::TEXT_SETTINGS, StrId::STR_TEXT_SETTINGS});
+  items.push_back({MenuAction::ROTATE_SCREEN, StrId::STR_ORIENTATION});
+
+  // Navigation within the current book follows the primary controls.
   items.push_back({MenuAction::SELECT_CHAPTER, StrId::STR_SELECT_CHAPTER});
   if (hasFootnotes) {
     items.push_back({MenuAction::FOOTNOTES, StrId::STR_FOOTNOTES});
   }
   items.push_back({MenuAction::GO_TO_PERCENT, StrId::STR_GO_TO_PERCENT});
   items.push_back({MenuAction::AUTO_PAGE_TURN, StrId::STR_AUTO_TURN_INTERVAL});
-  items.push_back({MenuAction::DICTIONARY_SWITCH, StrId::STR_DICT_SWITCH});
-  items.push_back({MenuAction::DICTIONARY_BOOK, StrId::STR_DICT_BOOK});
+  items.push_back({MenuAction::READING_STATS, StrId::STR_READING_STATS});
+
+  // Marks are ordered from acting on the current page to browsing saved data.
+  items.push_back({MenuAction::TOGGLE_BOOKMARK, StrId::STR_TOGGLE_BOOKMARK});
   if (hasBookmarks) {
     items.push_back({MenuAction::BOOKMARKS, StrId::STR_BOOKMARKS});
   }
-  items.push_back({MenuAction::TOGGLE_BOOKMARK, StrId::STR_TOGGLE_BOOKMARK});
-  items.push_back({MenuAction::TEXT_SETTINGS, StrId::STR_TEXT_SETTINGS});
-  items.push_back({MenuAction::RENDER_MODE, StrId::STR_RENDER_MODE});
-  if (hasRenderFallback) {
-    items.push_back({MenuAction::TRY_FULL_RENDER_QUALITY, StrId::STR_TRY_FULL_RENDER_QUALITY});
-  }
+  items.push_back({MenuAction::HIGHLIGHT_TEXT, StrId::STR_HIGHLIGHT_TEXT});
+  items.push_back({MenuAction::MY_CLIPPINGS, StrId::STR_MY_CLIPPINGS});
+  items.push_back({MenuAction::DISPLAY_QR, StrId::STR_DISPLAY_QR});
+
+  // Less frequent global controls, service actions and recovery tools.
   items.push_back({MenuAction::NIGHT_MODE, StrId::STR_NIGHT_MODE});
   if (Frontlight.present()) {
     items.push_back({MenuAction::FRONTLIGHT, StrId::STR_FRONTLIGHT});
   }
-  items.push_back({MenuAction::HIGHLIGHT_TEXT, StrId::STR_HIGHLIGHT_TEXT});
-  items.push_back({MenuAction::MY_CLIPPINGS, StrId::STR_MY_CLIPPINGS});
-  items.push_back({MenuAction::ROTATE_SCREEN, StrId::STR_ORIENTATION});
-  items.push_back({MenuAction::READING_STATS, StrId::STR_READING_STATS});
-  items.push_back({MenuAction::SCREENSHOT, StrId::STR_SCREENSHOT_BUTTON});
-  items.push_back({MenuAction::DISPLAY_QR, StrId::STR_DISPLAY_QR});
-  items.push_back({MenuAction::GO_HOME, StrId::STR_GO_HOME_BUTTON});
+  items.push_back({MenuAction::DICTIONARY_SWITCH, StrId::STR_DICT_SWITCH});
+  items.push_back({MenuAction::DICTIONARY_BOOK, StrId::STR_DICT_BOOK});
   items.push_back({MenuAction::SYNC, StrId::STR_SYNC_PROGRESS});
+  items.push_back({MenuAction::SCREENSHOT, StrId::STR_SCREENSHOT_BUTTON});
+  items.push_back({MenuAction::GO_HOME, StrId::STR_GO_HOME_BUTTON});
+  items.push_back({MenuAction::RENDER_MODE, StrId::STR_RENDER_MODE});
+  if (hasRenderFallback) {
+    items.push_back({MenuAction::TRY_FULL_RENDER_QUALITY, StrId::STR_TRY_FULL_RENDER_QUALITY});
+  }
   items.push_back({MenuAction::DELETE_CACHE, StrId::STR_DELETE_CACHE});
 }
 
@@ -126,30 +131,7 @@ bool EpubReaderMenuActivity::opensChildScreen(const MenuAction action) {
 }
 
 EpubReaderMenuActivity::Tab EpubReaderMenuActivity::tabForAction(const MenuAction action) {
-  switch (action) {
-    case MenuAction::BOOKMARKS:
-    case MenuAction::TOGGLE_BOOKMARK:
-    case MenuAction::HIGHLIGHT_TEXT:
-    case MenuAction::MY_CLIPPINGS:
-    case MenuAction::DISPLAY_QR:
-    case MenuAction::SYNC:
-      return Tab::Marks;
-    case MenuAction::TEXT_SETTINGS:
-    case MenuAction::WORD_SPACING:
-    case MenuAction::REPAIR_PARAGRAPH_INDENT:
-    case MenuAction::RENDER_MODE:
-    case MenuAction::TRY_FULL_RENDER_QUALITY:
-    case MenuAction::NIGHT_MODE:
-    case MenuAction::FRONTLIGHT:
-    case MenuAction::ROTATE_SCREEN:
-    case MenuAction::READING_STATS:
-    case MenuAction::SCREENSHOT:
-    case MenuAction::GO_HOME:
-    case MenuAction::DELETE_CACHE:
-      return Tab::More;
-    default:
-      return Tab::Read;
-  }
+  return reader_menu::tabForAction(action);
 }
 
 const char* EpubReaderMenuActivity::tabLabel(const int index) const { return I18N.get(TAB_LABELS[index]); }

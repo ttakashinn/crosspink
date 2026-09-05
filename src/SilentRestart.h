@@ -9,7 +9,10 @@
 void silentRestart();                      // home screen
 void silentRestartToReader();              // currently-open EPUB (APP_STATE.openEpubPath)
 void silentRestartToReaderForLowMemory();  // force heap-defrag reboot, including touch boards
-void silentRestartToVanNhanSoSettings();   // Văn Nhân Số settings
+// Reader settings after Manage Fonts. Keeps the current e-ink frame until the
+// destination's first paint, avoiding a throwaway popup refresh before reboot.
+void silentRestartToReaderSettings();
+void silentRestartToVanNhanSoSettings();  // Văn Nhân Số settings
 // C3 File Transfer entry: reboot into a clean, reader-resource-free heap before
 // allocating the WiFi driver and HTTP/WebSocket services.
 void silentRestartToFileTransfer(NetworkMode mode);

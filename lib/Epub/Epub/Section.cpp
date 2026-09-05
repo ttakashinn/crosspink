@@ -57,7 +57,9 @@ namespace {
 // v49: Persist the publisher page label resolved for each page.
 // v50: Paragraph spacing no longer suppresses explicit first-line indents, and
 //      missing indents are synthesized only by paragraph-indent repair.
-constexpr uint8_t SECTION_FILE_VERSION = 50;
+// v51: Internal EPUB links preserve CSS superscript/subscript positioning.
+// v52: Inline direction changes no longer replace their paragraph's base direction.
+constexpr uint8_t SECTION_FILE_VERSION = 52;
 // Written into the version field while a build is in progress; patched to
 // SECTION_FILE_VERSION only when the build is finalized. An abandoned /
 // crash-interrupted .bin therefore carries version 0, which loadSectionFile rejects

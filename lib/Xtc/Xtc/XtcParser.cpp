@@ -439,14 +439,8 @@ size_t XtcParser::loadPage(uint32_t pageIndex, uint8_t* buffer, size_t bufferSiz
 
   // Calculate bitmap size based on bit depth
   // XTG (1-bit): Row-major, ((width+7)/8) * height bytes
-  // XTH (2-bit): Two bit planes, column-major, ((width * height + 7) / 8) * 2 bytes
-  size_t bitmapSize;
-  if (m_bitDepth == 2) {
-    // XTH: two bit planes, each containing (width * height) bits rounded up to bytes
-    bitmapSize = ((static_cast<size_t>(pageHeader.width) * pageHeader.height + 7) / 8) * 2;
-  } else {
-    bitmapSize = ((pageHeader.width + 7) / 8) * pageHeader.height;
-  }
+  // XTH pads every vertical column to a byte boundary.
+  const size_t bitmapSize = pageBitmapSize(m_bitDepth, pageHeader.width, pageHeader.height);
 
   // Check buffer size
   if (bufferSize < bitmapSize) {
@@ -502,13 +496,8 @@ XtcError XtcParser::loadPageStreaming(uint32_t pageIndex,
 
   // Calculate bitmap size based on bit depth
   // XTG (1-bit): Row-major, ((width+7)/8) * height bytes
-  // XTH (2-bit): Two bit planes, ((width * height + 7) / 8) * 2 bytes
-  size_t bitmapSize;
-  if (m_bitDepth == 2) {
-    bitmapSize = ((static_cast<size_t>(pageHeader.width) * pageHeader.height + 7) / 8) * 2;
-  } else {
-    bitmapSize = ((pageHeader.width + 7) / 8) * pageHeader.height;
-  }
+  // XTH pads every vertical column to a byte boundary.
+  const size_t bitmapSize = pageBitmapSize(m_bitDepth, pageHeader.width, pageHeader.height);
 
   // Read in chunks
   std::vector<uint8_t> chunk(chunkSize);

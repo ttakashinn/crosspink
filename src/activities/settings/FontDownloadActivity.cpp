@@ -69,6 +69,9 @@ void FontDownloadActivity::onBackButton() {
 
 void FontDownloadActivity::onEnter() {
   UiListActivity::onEnter();
+  // Manage Fonts combines WiFi/TLS, a manifest model and a directory scan.
+  // Release all reader SD-font state before any of those allocations begin.
+  sdFontSystem.releaseForNetwork(renderer);
   WiFi.mode(WIFI_STA);
   startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput),
                          [this](const ActivityResult& result) { onWifiSelectionComplete(!result.isCancelled); });
@@ -80,8 +83,13 @@ void FontDownloadActivity::onExit() {
   if (WiFi.getMode() != WIFI_MODE_NULL) {
     WiFi.disconnect(false);
     delay(30);
-    silentRestart();
+    silentRestartToReaderSettings();
   }
+
+  // The silent-restart helper returns on touch devices, whose external rails
+  // should not be reset. Restore their saved SD font before returning in place.
+  sdFontSystem.ensureLoaded(renderer);
+  sdFontSystem.releaseRegistryForNetwork();
 }
 
 void FontDownloadActivity::onWifiSelectionComplete(const bool success) {
@@ -126,6 +134,19 @@ bool FontDownloadActivity::fetchAndParseManifest() {
   // TLS buffers and the full JSON string in RAM simultaneously.
   static constexpr const char* MANIFEST_TMP = "/fonts_manifest.tmp";
 
+  baseUrl_.clear();
+  std::vector<ManifestFamily>().swap(families_);
+  std::vector<std::string>().swap(scriptGroupLabels_);
+  std::vector<int>().swap(filteredIndices_);
+  std::vector<std::string>().swap(rowLabels_);
+  std::vector<fui::ListItem>().swap(rowItems_);
+  rowsDirty_ = true;
+  downloadingFamilyIndex_ = -1;
+  // This function may be retried after registry work. Ensure the JSON parse
+  // never overlaps a retained font catalog.
+  sdFontSystem.releaseForNetwork(renderer);
+  Storage.remove(MANIFEST_TMP);
+
   auto result = HttpDownloader::downloadToFile(FONT_MANIFEST_URL, MANIFEST_TMP, nullptr);
   if (result != HttpDownloader::OK) {
     LOG_ERR("FONT", "Failed to fetch manifest from %s", FONT_MANIFEST_URL);
@@ -143,91 +164,103 @@ bool FontDownloadActivity::fetchAndParseManifest() {
     return false;
   }
 
-  JsonDocument doc;
-  DeserializationError err = deserializeJson(doc, manifestFile);
-  manifestFile.close();
-  Storage.remove(MANIFEST_TMP);
+  // Keep the parsed JSON and the installed-font registry in separate phases.
+  // Both can be large, and their previous overlap was the primary Manage Fonts
+  // peak on C3 devices with many installed families.
+  {
+    JsonDocument doc;
+    const DeserializationError err = deserializeJson(doc, manifestFile);
+    manifestFile.close();
+    Storage.remove(MANIFEST_TMP);
 
-  if (err) {
-    LOG_ERR("FONT", "Manifest parse error: %s", err.c_str());
-    errorMessage_ = "Invalid font manifest";
-    return false;
-  }
-
-  int version = doc["version"] | 0;
-  if (version != FONTS_MANIFEST_VERSION) {
-    LOG_ERR("FONT", "Unsupported manifest version: %d", version);
-    errorMessage_ = "Unsupported manifest version";
-    return false;
-  }
-
-  baseUrl_ = doc["baseUrl"] | "";
-  families_.clear();
-  scriptGroupLabels_.clear();
-  filteredIndices_.clear();
-  fontInstaller_.refreshRegistry();
-
-  JsonArray groupsArr = doc["scriptGroups"].as<JsonArray>();
-  const size_t groupCount = std::min(groupsArr.size(), MAX_SCRIPT_GROUPS);
-  scriptGroupLabels_.reserve(groupCount);
-  if (groupsArr.size() > MAX_SCRIPT_GROUPS) {
-    LOG_ERR("FONT", "Manifest declares more than %zu script groups; extra groups ignored", MAX_SCRIPT_GROUPS);
-  }
-  for (size_t groupIndex = 0; groupIndex < groupCount; groupIndex++) {
-    JsonObject groupObj = groupsArr[groupIndex].as<JsonObject>();
-    const char* tag = groupObj["tag"] | "";
-    const char* label = groupObj["label"] | "";
-    if (*tag == '\0' || *label == '\0') {
-      LOG_ERR("FONT", "Malformed script group at index %zu", groupIndex);
+    if (err) {
+      LOG_ERR("FONT", "Manifest parse error: %s", err.c_str());
       errorMessage_ = "Invalid font manifest";
       return false;
     }
-    scriptGroupLabels_.push_back(label);
-  }
 
-  JsonArray familiesArr = doc["families"].as<JsonArray>();
-  families_.reserve(familiesArr.size());
-  filteredIndices_.reserve(familiesArr.size());
-
-  for (JsonObject fObj : familiesArr) {
-    ManifestFamily family;
-    family.name = fObj["name"] | "";
-    family.description = fObj["description"] | "";
-
-    for (JsonVariant s : fObj["styles"].as<JsonArray>()) {
-      family.styles.push_back(s.as<std::string>());
+    const int version = doc["version"] | 0;
+    if (version != FONTS_MANIFEST_VERSION) {
+      LOG_ERR("FONT", "Unsupported manifest version: %d", version);
+      errorMessage_ = "Unsupported manifest version";
+      return false;
     }
 
-    for (JsonVariant script : fObj["scripts"].as<JsonArray>()) {
-      const char* familyTag = script.as<const char*>();
-      if (!familyTag) continue;
-      for (size_t groupIndex = 0; groupIndex < scriptGroupLabels_.size(); groupIndex++) {
-        JsonObject groupObj = groupsArr[groupIndex].as<JsonObject>();
-        const char* groupTag = groupObj["tag"] | "";
-        if (std::strcmp(familyTag, groupTag) == 0) {
-          family.scriptMask |= uint32_t{1} << groupIndex;
-          break;
-        }
-      }
+    baseUrl_ = doc["baseUrl"] | "";
+
+    JsonArray groupsArr = doc["scriptGroups"].as<JsonArray>();
+    const size_t groupCount = std::min(groupsArr.size(), MAX_SCRIPT_GROUPS);
+    scriptGroupLabels_.reserve(groupCount);
+    if (groupsArr.size() > MAX_SCRIPT_GROUPS) {
+      LOG_ERR("FONT", "Manifest declares more than %zu script groups; extra groups ignored", MAX_SCRIPT_GROUPS);
     }
-
-    family.totalSize = 0;
-    for (JsonObject fileObj : fObj["files"].as<JsonArray>()) {
-      ManifestFile file;
-      file.name = fileObj["name"] | "";
-      file.size = fileObj["size"] | 0;
-
-      if (!fileObj["crc32"].is<uint32_t>()) {
-        LOG_ERR("FONT", "Malformed manifest file entry: missing or invalid crc32 for %s", file.name.c_str());
+    for (size_t groupIndex = 0; groupIndex < groupCount; groupIndex++) {
+      JsonObject groupObj = groupsArr[groupIndex].as<JsonObject>();
+      const char* tag = groupObj["tag"] | "";
+      const char* label = groupObj["label"] | "";
+      if (*tag == '\0' || *label == '\0') {
+        LOG_ERR("FONT", "Malformed script group at index %zu", groupIndex);
         errorMessage_ = "Invalid font manifest";
         return false;
       }
-      file.crc32 = fileObj["crc32"].as<uint32_t>();
-
-      family.totalSize += file.size;
-      family.files.push_back(std::move(file));
+      scriptGroupLabels_.push_back(label);
     }
 
+    std::vector<ManifestFamily> parsedFamilies;
+    JsonArray familiesArr = doc["families"].as<JsonArray>();
+    parsedFamilies.reserve(familiesArr.size());
+
+    // Consume one family at a time. The styles list is intentionally not copied:
+    // CrossPink's UI and installer never read it, while every copied string adds
+    // to the manifest peak.
+    while (!familiesArr.isNull() && familiesArr.size() > 0) {
+      JsonObject fObj = familiesArr[0].as<JsonObject>();
+      ManifestFamily family;
+      family.name = fObj["name"] | "";
+      family.description = fObj["description"] | "";
+
+      for (JsonVariant script : fObj["scripts"].as<JsonArray>()) {
+        const char* familyTag = script.as<const char*>();
+        if (!familyTag) continue;
+        for (size_t groupIndex = 0; groupIndex < scriptGroupLabels_.size(); groupIndex++) {
+          const char* groupTag = groupsArr[groupIndex]["tag"] | "";
+          if (std::strcmp(familyTag, groupTag) == 0) {
+            family.scriptMask |= uint32_t{1} << groupIndex;
+            break;
+          }
+        }
+      }
+
+      JsonArray filesArr = fObj["files"].as<JsonArray>();
+      family.files.reserve(filesArr.size());
+      for (JsonObject fileObj : filesArr) {
+        ManifestFile file;
+        file.name = fileObj["name"] | "";
+        file.size = fileObj["size"] | 0;
+        if (!fileObj["crc32"].is<uint32_t>()) {
+          LOG_ERR("FONT", "Malformed manifest file entry: missing or invalid crc32 for %s", file.name.c_str());
+          errorMessage_ = "Invalid font manifest";
+          return false;
+        }
+        file.crc32 = fileObj["crc32"].as<uint32_t>();
+        family.totalSize += file.size;
+        family.files.push_back(std::move(file));
+      }
+
+      parsedFamilies.push_back(std::move(family));
+      familiesArr.remove(0);
+    }
+    families_.swap(parsedFamilies);
+  }  // JsonDocument freed before registry discovery below.
+
+  if (!fontInstaller_.refreshRegistry()) {
+    LOG_ERR("FONT", "Not enough memory to scan installed fonts");
+    errorMessage_ = tr(STR_MEMORY_ERROR);
+    std::vector<ManifestFamily>().swap(families_);
+    return false;
+  }
+
+  for (auto& family : families_) {
     family.installed = fontInstaller_.isFamilyInstalled(family.name.c_str());
 
     // Detect updates by comparing manifest file sizes with files on disk.
@@ -238,22 +271,25 @@ bool FontDownloadActivity::fetchAndParseManifest() {
         FontInstaller::buildFontPath(family.name.c_str(), file.name.c_str(), path, sizeof(path));
         HalFile f;
         if (Storage.openFileForRead("FONT", path, f)) {
-          size_t actual = f.fileSize();
+          const size_t actual = f.fileSize();
           f.close();
           if (actual != file.size) {
             family.hasUpdate = true;
             break;
           }
         } else {
-          // File missing on disk but family dir exists — treat as update
+          // File missing on disk but family dir exists — treat as update.
           family.hasUpdate = true;
           break;
         }
       }
     }
-
-    families_.push_back(std::move(family));
   }
+
+  // The local installed/update flags are now sufficient. Do not retain the
+  // catalog while list rows are allocated and rendered.
+  sdFontSystem.releaseRegistryForNetwork();
+  filteredIndices_.reserve(families_.size());
 
   const size_t rowCapacity = std::max(families_.size() + 2, scriptGroupLabels_.size() + 1);
   rowLabels_.reserve(rowCapacity);
@@ -419,8 +455,10 @@ void FontDownloadActivity::downloadFamily(ManifestFamily& family) {
     RenderLock lock(*this);
     state_ = DOWNLOADING;
     downloadingFamilyIndex_ = static_cast<int>(&family - families_.data());
-    fileProgress_ = 0;
-    fileTotal_ = 0;
+    fileProgress_.store(0, std::memory_order_relaxed);
+    fileTotal_.store(0, std::memory_order_relaxed);
+    lastProgressUiUpdateAtMs_ = static_cast<uint32_t>(millis());
+    lastProgressUiPercent_ = 0;
     cancelRequested_ = false;
     goHomeRequested_ = false;
   }
@@ -438,8 +476,10 @@ void FontDownloadActivity::downloadFamily(ManifestFamily& family) {
 
     {
       RenderLock lock(*this);
-      fileProgress_ = 0;
-      fileTotal_ = file.size;
+      fileProgress_.store(0, std::memory_order_relaxed);
+      fileTotal_.store(file.size, std::memory_order_release);
+      lastProgressUiUpdateAtMs_ = static_cast<uint32_t>(millis());
+      lastProgressUiPercent_ = 0;
     }
     requestUpdateAndWait();
 
@@ -451,8 +491,8 @@ void FontDownloadActivity::downloadFamily(ManifestFamily& family) {
     auto result = HttpDownloader::downloadToFile(
         url, destPath,
         [this](size_t downloaded, size_t total) {
-          fileProgress_ = downloaded;
-          fileTotal_ = total;
+          fileProgress_.store(downloaded, std::memory_order_relaxed);
+          fileTotal_.store(total, std::memory_order_release);
           mappedInput.update();
           if (mappedInput.isPressed(MappedInputManager::Button::Back) ||
               mappedInput.wasPressed(MappedInputManager::Button::Back)) {
@@ -465,7 +505,15 @@ void FontDownloadActivity::downloadFamily(ManifestFamily& family) {
             cancelRequested_ = true;
             goHomeRequested_ = true;
           }
-          requestUpdate(true);
+          const uint32_t now = static_cast<uint32_t>(millis());
+          const uint8_t currentPercent = font_download_progress::percent(downloaded, total);
+          const bool completed = font_download_progress::isComplete(downloaded, total);
+          if (font_download_progress::shouldPublish(lastProgressUiPercent_, currentPercent,
+                                                    now - lastProgressUiUpdateAtMs_, completed)) {
+            lastProgressUiUpdateAtMs_ = now;
+            lastProgressUiPercent_ = completed ? 100 : currentPercent;
+            requestUpdate(true);
+          }
         },
         &cancelRequested_);
 
@@ -532,7 +580,7 @@ void FontDownloadActivity::downloadFamily(ManifestFamily& family) {
     currentFileIndex_++;
   }
 
-  fontInstaller_.refreshRegistry();
+  sdFontSystem.markRegistryDirty();
   family.installed = true;
   family.hasUpdate = false;
 
@@ -573,7 +621,7 @@ void FontDownloadActivity::onDeleteConfirmationResult(const ActivityResult& resu
     state_ = ERROR;
     errorMessage_ = "Failed to delete font";
   } else {
-    fontInstaller_.refreshRegistry();
+    sdFontSystem.markRegistryDirty();
     family.installed = false;
     family.hasUpdate = false;
     // Unlike the other family_ mutations, this one stays in FAMILY_LIST (no
@@ -841,9 +889,11 @@ void FontDownloadActivity::render(RenderLock&&) {
                              std::to_string(currentFileIndex_ + 1) + "/" + std::to_string(currentFileTotal_) + ")";
     renderer.drawCenteredText(UI_10_FONT_ID, centerY - lineHeight, statusText.c_str());
 
+    const size_t fileTotal = fileTotal_.load(std::memory_order_acquire);
+    const size_t fileProgress = fileProgress_.load(std::memory_order_relaxed);
     float progress = 0;
-    if (fileTotal_ > 0) {
-      progress = static_cast<float>(fileProgress_) / static_cast<float>(fileTotal_);
+    if (fileTotal > 0) {
+      progress = static_cast<float>(fileProgress) / static_cast<float>(fileTotal);
     }
 
     int barY = centerY + metrics.verticalSpacing;

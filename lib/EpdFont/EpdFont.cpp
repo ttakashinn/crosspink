@@ -154,10 +154,21 @@ int8_t EpdFont::getKerning(const uint32_t leftCp, const uint32_t rightCp) const 
   return data->kernMatrix[(lc - 1) * data->kernRightClassCount + (rc - 1)];
 }
 
+// MiniBidi has already applied Arabic contextual joining before text reaches
+// the font. Running GSUB-style ligatures over those presentation forms again
+// can collapse a visually ordered Alef/Lam pair into the wrong Lam-Alef glyph.
+// Latin presentation forms start below U+FB50 and remain eligible.
+static inline bool isArabicPresentationForm(const uint32_t cp) {
+  return (cp >= 0xFB50 && cp <= 0xFDFF) || (cp >= 0xFE70 && cp <= 0xFEFF);
+}
+
 uint32_t EpdFont::getLigature(const uint32_t leftCp, const uint32_t rightCp) const {
   const auto* pairs = data->ligaturePairs;
   const auto count = data->ligaturePairCount;
   if (!pairs || count == 0 || leftCp > 0xFFFF || rightCp > 0xFFFF) {
+    return 0;
+  }
+  if (isArabicPresentationForm(leftCp) || isArabicPresentationForm(rightCp)) {
     return 0;
   }
 

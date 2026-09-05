@@ -154,6 +154,11 @@ struct SettingInfo {
 };
 
 class SettingsActivity final : public UiTabListActivity {
+ public:
+  enum class InitialCategory : uint8_t { Display = 0, Reader = 1, Controls = 2, System = 3 };
+
+ private:
+  const InitialCategory initialCategory_;
   int selectedCategoryIndex = 0;  // Currently selected category
   int settingsCount = 0;
 
@@ -205,7 +210,8 @@ class SettingsActivity final : public UiTabListActivity {
   void syncQuickResumeTimeoutForSleepScreen(bool sleepScreenChanged, bool quickResumeTimeoutChanged);
 
  public:
-  explicit SettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput);
+  explicit SettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
+                            InitialCategory initialCategory = InitialCategory::Display);
   void onEnter() override;
   void onExit() override;
   void render(RenderLock&&) override;

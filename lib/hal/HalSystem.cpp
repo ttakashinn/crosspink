@@ -8,16 +8,47 @@
 #include "esp_debug_helpers.h"
 #include "esp_private/esp_cpu_internal.h"
 #include "esp_private/esp_system_attr.h"
+#include "esp_private/hw_stack_guard.h"
 #include "esp_private/panic_internal.h"
+#include "soc/soc.h"
 
 #define MAX_PANIC_STACK_DEPTH 32
 #define PANIC_CAPTURE_MAGIC 0x50414E49u
+#define PANIC_REGISTERS_MAGIC 0x52454753u
+
+namespace {
+struct PanicRegisters {
+  uint32_t marker;
+  uint32_t mepc;
+  uint32_t ra;
+  uint32_t sp;
+  uint32_t s0;
+  uint32_t mcause;
+  uint32_t mtval;
+  int32_t core;
+  uint32_t stackGuardPc;
+  uint32_t stackGuardMin;
+  uint32_t stackGuardMax;
+  uint32_t stackGuardCore;
+};
+}  // namespace
 
 RTC_NOINIT_ATTR char panicMessage[256];
 RTC_NOINIT_ATTR HalSystem::StackFrame panicStack[MAX_PANIC_STACK_DEPTH];
+RTC_NOINIT_ATTR PanicRegisters panicRegisters;
+RTC_NOINIT_ATTR HalSystem::PanicBreadcrumb HalSystem::panicBreadcrumb;
 // RTC_NOINIT is uninitialized on cold boot, so only this exact marker proves a
 // panic diagnostic was captured before the reset.
 RTC_NOINIT_ATTR volatile uint32_t panicCaptureMarker;
+
+void __attribute__((noinline)) HalSystem::setPanicBreadcrumb(const PanicStage stage, const int32_t spine,
+                                                             const int32_t page) {
+  panicBreadcrumb.spine = spine;
+  panicBreadcrumb.page = page;
+  // Write the stage last so a panic between stores never labels stale page
+  // coordinates as belonging to the new phase.
+  panicBreadcrumb.stage = static_cast<uint32_t>(stage);
+}
 
 extern "C" {
 
@@ -48,12 +79,41 @@ void IRAM_ATTR __wrap_panic_print_backtrace(const void* frame, int core) {
   __real_panic_print_backtrace(frame, core);
   return;
 #else
+  const auto* const registers = static_cast<const RvExcFrame*>(frame);
+  // Save the architectural fault location before walking memory. The former
+  // report stored only bytes addressed by SP; a corrupted SP therefore
+  // produced a convincing-looking dump of unrelated DRAM and hid the actual
+  // faulting instruction.
+  panicRegisters.mepc = static_cast<uint32_t>(registers->mepc);
+  panicRegisters.ra = static_cast<uint32_t>(registers->ra);
+  panicRegisters.sp = static_cast<uint32_t>(registers->sp);
+  panicRegisters.s0 = static_cast<uint32_t>(registers->s0);
+  panicRegisters.mcause = static_cast<uint32_t>(registers->mcause);
+  panicRegisters.mtval = static_cast<uint32_t>(registers->mtval);
+  panicRegisters.core = core;
+  panicRegisters.stackGuardPc = 0;
+  panicRegisters.stackGuardMin = 0;
+  panicRegisters.stackGuardMax = 0;
+  panicRegisters.stackGuardCore = ESP_HW_STACK_GUARD_NOT_FIRED;
+#if defined(CONFIG_ESP_SYSTEM_HW_STACK_GUARD) && CONFIG_ESP_SYSTEM_HW_STACK_GUARD
+  if (panicRegisters.mcause == ETS_ASSIST_DEBUG_INUM) {
+    const uint32_t firedCore = esp_hw_stack_guard_get_fired_cpu();
+    panicRegisters.stackGuardCore = firedCore;
+    if (firedCore != ESP_HW_STACK_GUARD_NOT_FIRED) {
+      panicRegisters.stackGuardPc = esp_hw_stack_guard_get_pc(firedCore);
+      esp_hw_stack_guard_get_bounds(firedCore, &panicRegisters.stackGuardMin, &panicRegisters.stackGuardMax);
+    }
+  }
+#endif
+  panicRegisters.marker = PANIC_REGISTERS_MAGIC;
+
   for (size_t i = 0; i < MAX_PANIC_STACK_DEPTH; i++) {
     panicStack[i].sp = 0;
   }
+  panicCaptureMarker = PANIC_CAPTURE_MAGIC;
 
   // Copied from components/esp_system/port/arch/riscv/panic_arch.c
-  uint32_t sp = (uint32_t)((RvExcFrame*)frame)->sp;
+  const uint32_t sp = panicRegisters.sp;
   const int per_line = 8;
   int depth = 0;
   for (int x = 0; x < 1024; x += per_line * sizeof(uint32_t)) {
@@ -73,8 +133,6 @@ void IRAM_ATTR __wrap_panic_print_backtrace(const void* frame, int core) {
       break;
     }
   }
-  panicCaptureMarker = PANIC_CAPTURE_MAGIC;
-
   __real_panic_print_backtrace(frame, core);
 #endif
 }
@@ -121,6 +179,11 @@ void checkPanic() {
 
 void clearPanic() {
   panicCaptureMarker = 0;
+  panicRegisters.marker = 0;
+  panicRegisters.stackGuardCore = ESP_HW_STACK_GUARD_NOT_FIRED;
+  panicBreadcrumb.stage = static_cast<uint32_t>(PanicStage::None);
+  panicBreadcrumb.spine = -1;
+  panicBreadcrumb.page = -1;
   panicMessage[0] = '\0';
   for (size_t i = 0; i < MAX_PANIC_STACK_DEPTH; i++) {
     panicStack[i].sp = 0;
@@ -134,16 +197,39 @@ std::string getPanicInfo(bool full) {
   } else {
     std::string info;
 
-    info += "CrossPink version: " CROSSPOINT_VERSION;
-    info += "\n\nPanic reason: " + std::string(panicMessage);
-    info += "\n\nLast logs:\n" + getLastLogs();
-    info += "\n\nStack memory:\n";
-
     auto toHex = [](uint32_t value) {
       char buffer[9];
       snprintf(buffer, sizeof(buffer), "%08X", value);
       return std::string(buffer);
     };
+
+    std::string reason = panicMessage;
+#if defined(CONFIG_ESP_SYSTEM_HW_STACK_GUARD) && CONFIG_ESP_SYSTEM_HW_STACK_GUARD
+    if (reason.empty() && panicRegisters.marker == PANIC_REGISTERS_MAGIC &&
+        panicRegisters.mcause == ETS_ASSIST_DEBUG_INUM) {
+      reason = "Stack protection fault";
+    }
+#endif
+
+    info += "CrossPink version: " CROSSPOINT_VERSION;
+    info += "\nReset reason: " + std::to_string(static_cast<int>(esp_reset_reason()));
+    info += "\n\nPanic reason: " + reason;
+    if (panicRegisters.marker == PANIC_REGISTERS_MAGIC) {
+      info += "\n\nFault registers: MEPC=0x" + toHex(panicRegisters.mepc) + " RA=0x" + toHex(panicRegisters.ra) +
+              " SP=0x" + toHex(panicRegisters.sp) + " S0=0x" + toHex(panicRegisters.s0) + " MCAUSE=0x" +
+              toHex(panicRegisters.mcause) + " MTVAL=0x" + toHex(panicRegisters.mtval) +
+              " CORE=" + std::to_string(panicRegisters.core);
+      if (panicRegisters.stackGuardCore != ESP_HW_STACK_GUARD_NOT_FIRED) {
+        info += "\nStack guard: PC=0x" + toHex(panicRegisters.stackGuardPc) + " MIN=0x" +
+                toHex(panicRegisters.stackGuardMin) + " MAX=0x" + toHex(panicRegisters.stackGuardMax) +
+                " CORE=" + std::to_string(panicRegisters.stackGuardCore);
+      }
+    }
+    info += "\nReader breadcrumb: stage=" + std::to_string(panicBreadcrumb.stage) +
+            " spine=" + std::to_string(panicBreadcrumb.spine) + " page=" + std::to_string(panicBreadcrumb.page);
+    info += "\n\nLast logs:\n" + getLastLogs();
+    info += "\n\nStack memory:\n";
+
     for (size_t i = 0; i < MAX_PANIC_STACK_DEPTH; i++) {
       if (panicStack[i].sp == 0) {
         break;

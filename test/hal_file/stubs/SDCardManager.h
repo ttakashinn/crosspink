@@ -12,6 +12,7 @@
 namespace hal_file_test {
 inline uint8_t fileError = 0;
 inline int blockReadResult = 0;
+inline bool pathExists = false;
 }  // namespace hal_file_test
 
 class FsFile {
@@ -74,7 +75,7 @@ class SDCardManager {
   bool ensureDirectoryExists(const char*) { return true; }
   FsFile open(const char*, oflag_t) { return FsFile(true); }
   bool mkdir(const char*, bool) { return true; }
-  bool exists(const char*) { return false; }
+  bool exists(const char*) { return hal_file_test::pathExists; }
   bool remove(const char*) { return true; }
   bool rename(const char*, const char*) { return true; }
   bool rmdir(const char*) { return true; }

@@ -12,6 +12,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 
@@ -32,6 +33,17 @@ constexpr uint16_t DISPLAY_WIDTH = 480;
 constexpr uint16_t DISPLAY_HEIGHT = 800;
 
 constexpr uint64_t XTC_LEGACY_HEADER_SIZE = 0x30;  // Original header before chapterOffset was added.
+
+// XTH planes are column-major and each column is independently padded to a
+// whole byte. Multiplying width*height before rounding under-allocates whenever
+// height is not divisible by 8 and also points plane 2 into plane 1.
+constexpr size_t xthPlaneSize(const uint16_t width, const uint16_t height) {
+  return static_cast<size_t>(width) * ((static_cast<size_t>(height) + 7U) / 8U);
+}
+
+constexpr size_t pageBitmapSize(const uint8_t bitDepth, const uint16_t width, const uint16_t height) {
+  return bitDepth == 2 ? xthPlaneSize(width, height) * 2U : ((static_cast<size_t>(width) + 7U) / 8U) * height;
+}
 
 // XTC file header (56 bytes; legacy files may start the page table at 48 bytes)
 #pragma pack(push, 1)
@@ -81,7 +93,7 @@ struct XtgPageHeader {
   //   dataSize = ((width + 7) / 8) * height
   //
   // XTH (2-bit): Two bit planes, column-major (right-to-left), 8 vertical pixels/byte
-  //   dataSize = ((width * height + 7) / 8) * 2
+  //   dataSize = width * ((height + 7) / 8) * 2
   //   First plane: Bit1 for all pixels
   //   Second plane: Bit2 for all pixels
   //   pixelValue = (bit1 << 1) | bit2

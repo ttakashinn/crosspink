@@ -52,8 +52,11 @@ bool opensChildSettingsScreen(const SettingInfo& setting) {
 const StrId SettingsActivity::categoryNames[categoryCount] = {StrId::STR_CAT_DISPLAY, StrId::STR_CAT_READER,
                                                               StrId::STR_CAT_CONTROLS, StrId::STR_CAT_SYSTEM};
 
-SettingsActivity::SettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-    : UiTabListActivity("Settings", renderer, mappedInput) {}
+SettingsActivity::SettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
+                                   const InitialCategory initialCategory)
+    : UiTabListActivity("Settings", renderer, mappedInput),
+      initialCategory_(initialCategory),
+      selectedCategoryIndex(static_cast<int>(initialCategory)) {}
 
 void SettingsActivity::rebuildSettingsLists() {
   displaySettings.clear();
@@ -153,9 +156,9 @@ void SettingsActivity::rebuildSettingsLists() {
 void SettingsActivity::onEnter() {
   UiTabListActivity::onEnter();
 
-  // Reset selection to first category (ring position 0, the tab bar, comes
-  // from the base's per-tab nav reset)
-  selectedCategoryIndex = 0;
+  // A silent restart can restore the Reader category after Manage Fonts. The
+  // normal entry point keeps the historical Display default.
+  selectedCategoryIndex = static_cast<int>(initialCategory_);
   preserveQuickResumeTimeoutOn =
       SETTINGS.quickResumeSleepScreen == CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT;
   quickResumeTimeoutAutoEnabled = false;

@@ -200,6 +200,17 @@ void ChapterHtmlSlimParser::applySmallCapsToEntry(StyleStackEntry& entry, const 
   }
 }
 
+void ChapterHtmlSlimParser::applyVerticalAlignToEntry(StyleStackEntry& entry, const CssStyle& css) {
+  if (!css.hasVerticalAlign()) return;
+  if (css.verticalAlign == CssVerticalAlign::Super) {
+    entry.hasSup = true;
+    entry.sup = true;
+  } else if (css.verticalAlign == CssVerticalAlign::Sub) {
+    entry.hasSub = true;
+    entry.sub = true;
+  }
+}
+
 void ChapterHtmlSlimParser::pushTableTextStyleEntry(const CssStyle& cssStyle) {
   if (!cssStyle.hasFontWeight() && !cssStyle.hasFontStyle() && !cssStyle.hasFontVariantCaps() &&
       !cssStyle.hasTextDecoration() && !cssStyle.hasDirection() && !cssStyle.hasTextAlign()) {
@@ -219,6 +230,10 @@ void ChapterHtmlSlimParser::pushTableTextStyleEntry(const CssStyle& cssStyle) {
   applySmallCapsToEntry(entry, cssStyle);
   applyTextDecorationToEntry(entry, cssStyle);
   applyDirectionToEntry(entry, cssStyle);
+  // A table/cell/row direction can be inherited by the cell CSS, but only the
+  // cell entry owns a paragraph. Keep table wrappers from rewriting unrelated
+  // flow paragraphs while preserving the cell's base direction.
+  entry.setsParagraphDirection = insideTableCell && cssStyle.hasDirection();
   if (cssStyle.hasTextAlign()) {
     entry.hasTextAlign = true;
     entry.textAlign = cssStyle.textAlign;
@@ -249,6 +264,7 @@ void ChapterHtmlSlimParser::pushDecorationStyleEntry(const CssTextDecoration def
   }
   applySmallCapsToEntry(entry, cssStyle);
   applyDirectionToEntry(entry, cssStyle);
+  applyVerticalAlignToEntry(entry, cssStyle);
   if (!pushInlineStyle(entry)) return;
   updateEffectiveInlineStyle();
 }
@@ -264,8 +280,15 @@ void ChapterHtmlSlimParser::updateEffectiveInlineStyle() {
       currentCssStyle.hasFontVariantCaps() && currentCssStyle.fontVariantCaps == CssFontVariantCaps::SmallCaps;
   effectiveTextDecoration =
       currentCssStyle.hasTextDecoration() ? currentCssStyle.textDecoration : CssTextDecoration::None;
-  effectiveDirectionDefined = currentCssStyle.hasDirection();
-  effectiveDirection = currentCssStyle.direction;
+  bool paragraphDirectionDefined = false;
+  bool paragraphIsRtl = false;
+  if (!blockStyleStack.empty()) {
+    const auto& blockStyle = blockStyleStack.back();
+    paragraphDirectionDefined = blockStyle.directionDefined;
+    paragraphIsRtl = blockStyle.isRtl;
+  }
+  effectiveDirectionDefined = paragraphDirectionDefined;
+  effectiveDirection = paragraphIsRtl ? CssTextDirection::Rtl : CssTextDirection::Ltr;
   effectiveTextAlignDefined = currentCssStyle.hasTextAlign();
   effectiveTextAlign = currentCssStyle.textAlign;
   effectiveSup = false;
@@ -292,6 +315,10 @@ void ChapterHtmlSlimParser::updateEffectiveInlineStyle() {
     if (entry.hasDirection) {
       effectiveDirectionDefined = true;
       effectiveDirection = entry.direction;
+      if (entry.setsParagraphDirection) {
+        paragraphDirectionDefined = true;
+        paragraphIsRtl = entry.direction == CssTextDirection::Rtl;
+      }
     }
     if (entry.hasTextAlign) {
       effectiveTextAlignDefined = true;
@@ -307,17 +334,12 @@ void ChapterHtmlSlimParser::updateEffectiveInlineStyle() {
     }
   }
 
-  // Keep inherited direction in the active empty text block so upcoming block starts
-  // can inherit from non-block ancestors such as <html dir="rtl"> / <body dir="rtl">.
+  // Keep only the paragraph base direction in the empty block. Inline direction
+  // still styles its own text, but must not realign/reorder the whole paragraph.
   if (currentTextBlock && currentTextBlock->isEmpty()) {
     auto& style = currentTextBlock->getBlockStyle();
-    if (effectiveDirectionDefined) {
-      style.directionDefined = true;
-      style.isRtl = (effectiveDirection == CssTextDirection::Rtl);
-    } else {
-      style.directionDefined = false;
-      style.isRtl = false;
-    }
+    style.directionDefined = paragraphDirectionDefined;
+    style.isRtl = paragraphIsRtl;
   }
 }
 
@@ -1191,9 +1213,13 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
         }
       }
 
-      const size_t fragmentPos = src.find('#');
-      if (fragmentPos != std::string::npos) {
-        src.resize(fragmentPos);
+      // EPUB image references are IRIs. A query/fragment identifies a view of
+      // the same ZIP item, not part of its entry name. Strip delimiters before
+      // percent-decoding so a literal encoded '?' or '#' in a filename remains
+      // addressable.
+      const size_t suffixPos = src.find_first_of("?#");
+      if (suffixPos != std::string::npos) {
+        src.resize(suffixPos);
       }
 
       // imageRendering: 0=display, 1=placeholder (alt text only), 2=suppress entirely
@@ -1210,26 +1236,31 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
           // Resolve the image path relative to the HTML file
           std::string resolvedPath = FsHelpers::normalisePath(FsHelpers::decodeUriEscapes(self->contentBase + src));
 
-          if (ImageDecoderFactory::isFormatSupported(resolvedPath)) {
-            // Create a unique filename for the cached image
+          // Probe content before looking at the href suffix. Valid EPUB items
+          // are sometimes extensionless or use an opaque/misleading suffix;
+          // the previous extension-only gate silently replaced those images
+          // with their alt text even when the payload was a supported JPEG/PNG.
+          ImageDimensions dims = {0, 0};
+          ImageDimsProbe headerProbe;
+          self->epub->readItemContentsToStream(resolvedPath, headerProbe, 1024, /*allowEarlyStop=*/true);
+          bool gotDimensions = headerProbe.getDimensions(dims);
+          const ImageDimsProbe::Format detectedFormat = headerProbe.getFormat();
+          const bool supportedExtension =
+              FsHelpers::hasJpgExtension(resolvedPath) || FsHelpers::hasPngExtension(resolvedPath);
+
+          if (gotDimensions || supportedExtension) {
             std::string ext;
-            size_t extPos = resolvedPath.rfind('.');
-            if (extPos != std::string::npos) {
-              ext = resolvedPath.substr(extPos);
+            if (detectedFormat == ImageDimsProbe::Format::Jpeg) {
+              ext = ".jpg";
+            } else if (detectedFormat == ImageDimsProbe::Format::Png) {
+              ext = ".png";
+            } else {
+              const size_t extPos = resolvedPath.rfind('.');
+              ext = extPos == std::string::npos ? std::string{} : resolvedPath.substr(extPos);
             }
             std::string cachedImagePath = self->imageBasePath + std::to_string(self->imageCounter++) + ext;
 
             {
-              // Probe the dimensions from the entry's first bytes (early-aborted
-              // inflate, a few KB) instead of extracting the whole image now —
-              // extraction is deferred to the first render of the page (see
-              // ImageBlock's lazy extractor). This is what keeps first-open of an
-              // image-heavy chapter from stalling for seconds per image.
-              ImageDimensions dims = {0, 0};
-              ImageDimsProbe headerProbe;
-              self->epub->readItemContentsToStream(resolvedPath, headerProbe, 1024, /*allowEarlyStop=*/true);
-              bool gotDimensions = headerProbe.getDimensions(dims);
-
               if (!gotDimensions) {
                 // No header within the stream (rare) — fall back to extracting the
                 // whole image and probing the file. That can take seconds, so
@@ -1470,7 +1501,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
                 Storage.remove(cachedImagePath.c_str());
               }
             }
-          }  // isFormatSupported
+          }
         }
       }
 
@@ -1780,19 +1811,12 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       if (specifiedFontVariantCaps) applySmallCapsToEntry(entry, cssStyle);
       if (specifiedTextDecoration) applyTextDecorationToEntry(entry, cssStyle);
       if (specifiedDirection) applyDirectionToEntry(entry, cssStyle);
+      entry.setsParagraphDirection = strcmp(name, "html") == 0 || strcmp(name, "body") == 0;
       if (specifiedTableTextAlign) {
         entry.hasTextAlign = true;
         entry.textAlign = cssStyle.textAlign;
       }
-      if (specifiedVerticalAlign) {
-        if (cssStyle.verticalAlign == CssVerticalAlign::Super) {
-          entry.hasSup = true;
-          entry.sup = true;
-        } else if (cssStyle.verticalAlign == CssVerticalAlign::Sub) {
-          entry.hasSub = true;
-          entry.sub = true;
-        }
-      }
+      if (specifiedVerticalAlign) applyVerticalAlignToEntry(entry, cssStyle);
       if (!self->pushInlineStyle(entry)) return;
       self->updateEffectiveInlineStyle();
     }

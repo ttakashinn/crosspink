@@ -263,12 +263,12 @@
       "structural_expectations": {
         "x4-default": {
           "image_layout": {
-            "images": 6,
-            "png_images": 5,
+            "images": 7,
+            "png_images": 6,
             "jpeg_images": 1,
             "scaled_down": 6,
             "out_of_bounds": 0,
-            "image_pages": 5,
+            "image_pages": 6,
             "max_source_width": 1600,
             "max_source_height": 1600,
             "max_display_width": 464,
@@ -277,12 +277,12 @@
         },
         "x3-default": {
           "image_layout": {
-            "images": 6,
-            "png_images": 5,
+            "images": 7,
+            "png_images": 6,
             "jpeg_images": 1,
             "scaled_down": 6,
             "out_of_bounds": 0,
-            "image_pages": 5,
+            "image_pages": 6,
             "max_source_width": 1600,
             "max_source_height": 1600,
             "max_display_width": 512,
@@ -291,12 +291,12 @@
         },
         "x4-no-text-aa": {
           "image_layout": {
-            "images": 6,
-            "png_images": 5,
+            "images": 7,
+            "png_images": 6,
             "jpeg_images": 1,
             "scaled_down": 6,
             "out_of_bounds": 0,
-            "image_pages": 5,
+            "image_pages": 6,
             "max_source_width": 1600,
             "max_source_height": 1600,
             "max_display_width": 464,
@@ -311,6 +311,7 @@
         "line art",
         "wide and tall scaling",
         "clipping",
+        "extensionless image content detection",
         "grayscale quantization"
       ]
     },
@@ -375,6 +376,7 @@
       "href": "text/07-bidi-fallback.xhtml#mixed-direction",
       "covers": [
         "mixed LTR and RTL",
+        "inline direction remains scoped to its own text",
         "RTL focus split with supported Latin and Vietnamese glyphs",
         "Arabic",
         "Hebrew",

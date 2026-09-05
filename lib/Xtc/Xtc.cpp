@@ -154,13 +154,8 @@ bool Xtc::generateCoverBmp() const {
 
   // Allocate buffer for page data
   // XTG (1-bit): Row-major, ((width+7)/8) * height bytes
-  // XTH (2-bit): Two bit planes, column-major, ((width * height + 7) / 8) * 2 bytes
-  size_t bitmapSize;
-  if (bitDepth == 2) {
-    bitmapSize = ((static_cast<size_t>(pageInfo.width) * pageInfo.height + 7) / 8) * 2;
-  } else {
-    bitmapSize = ((pageInfo.width + 7) / 8) * pageInfo.height;
-  }
+  // XTH pads every vertical column to a byte boundary.
+  const size_t bitmapSize = xtc::pageBitmapSize(bitDepth, pageInfo.width, pageInfo.height);
   uint8_t* pageBuffer = static_cast<uint8_t*>(malloc(bitmapSize));
   if (!pageBuffer) {
     LOG_ERR("XTC", "Failed to allocate page buffer (%lu bytes)", bitmapSize);
@@ -213,7 +208,7 @@ bool Xtc::generateCoverBmp() const {
     memcpy(hdr + 34, &imageSize, 4);
     coverBmp.write(hdr, sizeof(hdr));
 
-    const size_t planeSize = (static_cast<size_t>(pageInfo.width) * pageInfo.height + 7) / 8;
+    const size_t planeSize = xtc::xthPlaneSize(pageInfo.width, pageInfo.height);
     const uint8_t* plane1 = pageBuffer;                 // Bit1 plane
     const uint8_t* plane2 = pageBuffer + planeSize;     // Bit2 plane
     const size_t colBytes = (pageInfo.height + 7) / 8;  // Bytes per column
@@ -349,12 +344,7 @@ bool Xtc::generateThumbBmp(int height) const {
           thumbHeight, scale);
 
   // Allocate buffer for page data
-  size_t bitmapSize;
-  if (bitDepth == 2) {
-    bitmapSize = ((static_cast<size_t>(pageInfo.width) * pageInfo.height + 7) / 8) * 2;
-  } else {
-    bitmapSize = ((pageInfo.width + 7) / 8) * pageInfo.height;
-  }
+  const size_t bitmapSize = xtc::pageBitmapSize(bitDepth, pageInfo.width, pageInfo.height);
   uint8_t* pageBuffer = static_cast<uint8_t*>(malloc(bitmapSize));
   if (!pageBuffer) {
     LOG_ERR("XTC", "Failed to allocate page buffer (%lu bytes)", bitmapSize);
@@ -395,7 +385,7 @@ bool Xtc::generateThumbBmp(int height) const {
   uint32_t scaleInv_fp = static_cast<uint32_t>(65536.0f / scale);
 
   // Pre-calculate plane info for 2-bit mode
-  const size_t planeSize = (bitDepth == 2) ? ((static_cast<size_t>(pageInfo.width) * pageInfo.height + 7) / 8) : 0;
+  const size_t planeSize = bitDepth == 2 ? xtc::xthPlaneSize(pageInfo.width, pageInfo.height) : 0;
   const uint8_t* plane1 = (bitDepth == 2) ? pageBuffer : nullptr;
   const uint8_t* plane2 = (bitDepth == 2) ? pageBuffer + planeSize : nullptr;
   const size_t colBytes = (bitDepth == 2) ? ((pageInfo.height + 7) / 8) : 0;

@@ -4,8 +4,18 @@
 #include <tuple>
 #include <vector>
 
+#include "Xtc/XtcTypes.h"
 #include "XtcPixelPlanes.h"
 #include "XtcStatusBarOverlayLayout.h"
+
+TEST(XtcPixelPlanes, AccountsForPaddingInsideEveryTwoBitColumn) {
+  // 2 columns x 9 rows require 2 bytes per column in each plane. Rounding the
+  // total 18 bits would return 3 and make plane 2 overlap plane 1.
+  EXPECT_EQ(xtc::xthPlaneSize(2, 9), 4U);
+  EXPECT_EQ(xtc::pageBitmapSize(2, 2, 9), 8U);
+  EXPECT_EQ(xtc::pageBitmapSize(2, 480, 800), 96000U);
+  EXPECT_EQ(xtc::pageBitmapSize(1, 10, 2), 4U);
+}
 
 TEST(XtcPixelPlanes, DecodesRightToLeftColumnMajorPlanesInLogicalRowOrder) {
   // Storage offsets 0,1,2 correspond to logical x=2,1,0.

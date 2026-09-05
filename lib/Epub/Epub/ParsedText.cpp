@@ -795,10 +795,14 @@ bool ParsedText::layoutAndExtractLines(const GfxRenderer& renderer, const int fo
     return false;
   }
   const size_t lineCount = includeLastLine ? lineBreakIndices.size() : lineBreakIndices.size() - 1;
+  // Reuse one fallible buffer across all BiDi lines in this layout pass. Keeping
+  // it in layoutArena avoids both throwing heap allocation and per-line arena
+  // growth on long paragraphs.
+  ArenaVector<uint16_t> reorderedWidths(layoutArena);
 
   for (size_t i = 0; i < lineCount; ++i) {
-    if (!extractLine(i, pageWidth, wordWidths, wordContinues, wordNoSpaceBefore, lineBreakIndices, processLine,
-                     renderer, fontId)) {
+    if (!extractLine(i, pageWidth, wordWidths, wordContinues, wordNoSpaceBefore, lineBreakIndices, reorderedWidths,
+                     processLine, renderer, fontId)) {
       return false;
     }
   }
@@ -1389,7 +1393,7 @@ bool ParsedText::splitPathologicalTokenAtIndex(const size_t wordIndex, const int
 
 bool ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const ArenaVector<uint16_t>& wordWidths,
                              const std::vector<bool>& continuesVec, const std::vector<bool>& noSpaceBeforeVec,
-                             const ArenaVector<size_t>& lineBreakIndices,
+                             const ArenaVector<size_t>& lineBreakIndices, ArenaVector<uint16_t>& reorderedWidths,
                              const std::function<void(std::shared_ptr<TextBlock>, uint32_t)>& processLine,
                              const GfxRenderer& renderer, const int fontId) {
   const size_t lineBreak = lineBreakIndices[breakIndex];
@@ -1479,13 +1483,17 @@ bool ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
     if (!lineRubyTexts.empty()) reorderedRubyTexts.reserve(visualOrderScratch.size());
     reorderedWordsScratch.clear();
     reorderedStylesScratch.clear();
-    reorderedWidthsScratch.clear();
+    reorderedWidths.clear();
     reorderedContinuesScratch.clear();
     reorderedNoSpaceBeforeScratch.clear();
     reorderedFocusBoundaryScratch.clear();
     reorderedWordsScratch.reserve(visualOrderScratch.size());
     reorderedStylesScratch.reserve(visualOrderScratch.size());
-    reorderedWidthsScratch.reserve(visualOrderScratch.size());
+    if (!reorderedWidths.reserve(visualOrderScratch.size())) {
+      LOG_ERR("PTX", "OOM allocating reordered word-width scratch (%u words)",
+              static_cast<unsigned>(visualOrderScratch.size()));
+      return false;
+    }
     reorderedContinuesScratch.reserve(visualOrderScratch.size());
     reorderedNoSpaceBeforeScratch.reserve(visualOrderScratch.size());
     reorderedFocusBoundaryScratch.reserve(visualOrderScratch.size());
@@ -1494,7 +1502,10 @@ bool ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
       const uint16_t src = visualOrderScratch[i];
       reorderedWordsScratch.push_back(std::move(lineWords[src]));
       reorderedStylesScratch.push_back(lineWordStyles[src]);
-      reorderedWidthsScratch.push_back(wordWidths[lastBreakAt + src]);
+      if (!reorderedWidths.push_back(wordWidths[lastBreakAt + src])) {
+        LOG_ERR("PTX", "OOM growing reordered word-width scratch");
+        return false;
+      }
       reorderedFocusBoundaryScratch.push_back(wordFocusBoundary[lastBreakAt + src]);
       if (!lineRubyTexts.empty()) reorderedRubyTexts.push_back(std::move(lineRubyTexts[src]));
 
@@ -1521,8 +1532,8 @@ bool ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
     int reorderedWordWidthSum = 0;
     size_t reorderedGapCount = 0;
     int reorderedNaturalGaps = 0;
-    for (size_t wordIdx = 0; wordIdx < reorderedWidthsScratch.size(); wordIdx++) {
-      reorderedWordWidthSum += reorderedWidthsScratch[wordIdx];
+    for (size_t wordIdx = 0; wordIdx < reorderedWidths.size(); wordIdx++) {
+      reorderedWordWidthSum += reorderedWidths[wordIdx];
       if (wordIdx > 0 && reorderedNoSpaceBeforeScratch[wordIdx]) {
         // Unicode break opportunity with no inserted Latin-style space. It is still
         // a stretchable gap for justified CJK/Korean text.
@@ -1569,12 +1580,11 @@ bool ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
       }
     }
 
-    for (size_t wordIdx = 0; wordIdx < reorderedWidthsScratch.size(); wordIdx++) {
+    for (size_t wordIdx = 0; wordIdx < reorderedWidths.size(); wordIdx++) {
       lineXPos.push_back(static_cast<int16_t>(xpos));
-      xpos += reorderedWidthsScratch[wordIdx];
+      xpos += reorderedWidths[wordIdx];
 
-      const bool nextIsContinuation =
-          wordIdx + 1 < reorderedWidthsScratch.size() && reorderedContinuesScratch[wordIdx + 1];
+      const bool nextIsContinuation = wordIdx + 1 < reorderedWidths.size() && reorderedContinuesScratch[wordIdx + 1];
       if (nextIsContinuation) {
         int advance =
             renderer.getKerning(fontId, lastCodepoint(reorderedWordsScratch[wordIdx]),
@@ -1587,7 +1597,7 @@ bool ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
           advance += reorderedJustifyExtra;
         }
         xpos += advance;
-      } else if (wordIdx + 1 < reorderedWidthsScratch.size()) {
+      } else if (wordIdx + 1 < reorderedWidths.size()) {
         const bool nextNoSpace = reorderedNoSpaceBeforeScratch[wordIdx + 1];
         int gap =
             naturalGapBeforeWord(renderer, fontId, reorderedWordsScratch[wordIdx], reorderedWordsScratch[wordIdx + 1],
@@ -1699,7 +1709,7 @@ bool ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
 
     size_t spanIndex = 0;
     while (spanIndex < lineLinkIdsSeen.size() && lineLinkIdsSeen[spanIndex] != linkId) spanIndex++;
-    const int width = willReorder ? reorderedWidthsScratch[i] : wordWidths[lastBreakAt + i];
+    const int width = willReorder ? reorderedWidths[i] : wordWidths[lastBreakAt + i];
     const int right = lineXPos[i] + width;
     const int topLift =
         (lineWordStyles[i] & EpdFontFamily::SUP) != 0 ? renderer.getFontAscenderSize(fontId) * 2 / 5 : 0;

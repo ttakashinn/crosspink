@@ -7,6 +7,7 @@
 #include <GfxRenderer.h>
 #include <HalFrontlight.h>
 #include <HalStorage.h>
+#include <HalSystem.h>
 #include <I18n.h>
 #include <Logging.h>
 #include <Memory.h>
@@ -1739,7 +1740,7 @@ bool EpubReaderActivity::launchKOReaderSync() {
 
   activityManager.replaceActivity(std::make_unique<KOReaderSyncActivity>(
       renderer, mappedInput, savedEpubPath, currentSpineIndex, currentPage, totalPages, std::move(localKoPos),
-      std::move(localChapterName), paragraphIndex));
+      std::move(localChapterName), paragraphIndex, SETTINGS.orientation));
   return true;
 }
 
@@ -1987,6 +1988,10 @@ void EpubReaderActivity::renderBook() {
   currentPageLinks.clear();
   currentPublisherPageLabel.clear();
   if (!epub) return;
+#if !defined(SIMULATOR)
+  HalSystem::setPanicBreadcrumb(HalSystem::PanicStage::ReaderRenderBegin, currentSpineIndex,
+                                section ? section->currentPage : nextPageNumber);
+#endif
 
   const auto showPendingSyncSaveError = [this]() {
     if (!pendingSyncSaveError) return;
@@ -2288,6 +2293,9 @@ void EpubReaderActivity::renderBook() {
       return;
     }
     pageLoadRetryCount = 0;
+#if !defined(SIMULATOR)
+    HalSystem::setPanicBreadcrumb(HalSystem::PanicStage::ReaderPageLoaded, currentSpineIndex, section->currentPage);
+#endif
 
     currentPageVisibleOffset = p->visibleTextOffset;
     currentPageFootnotes = std::move(p->footnotes);
@@ -2302,6 +2310,10 @@ void EpubReaderActivity::renderBook() {
 
     const auto start = millis();
     renderContents(std::move(p), orientedMarginTop, orientedMarginRight, orientedMarginBottom, orientedMarginLeft);
+#if !defined(SIMULATOR)
+    HalSystem::setPanicBreadcrumb(HalSystem::PanicStage::ReaderRenderDone, currentSpineIndex,
+                                  section ? section->currentPage : -1);
+#endif
     rememberRenderedFallback();
     LOG_DBG("ERS", "Rendered page in %dms", millis() - start);
     lastRenderCompleteMs = millis();
@@ -2522,12 +2534,24 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   }
 
   auto scope = fcm->createPrewarmScope();
+#if !defined(SIMULATOR)
+  HalSystem::setPanicBreadcrumb(HalSystem::PanicStage::ReaderScanBegin, currentSpineIndex,
+                                section ? section->currentPage : -1);
+#endif
   page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop);
   // Scan the status bar too: a CJK book/chapter title redirected to the SD
   // fallback font joins the page's single batch prewarm instead of triggering
   // its own SD pass after the scope ends.
   renderStatusBar();
+#if !defined(SIMULATOR)
+  HalSystem::setPanicBreadcrumb(HalSystem::PanicStage::ReaderScanDone, currentSpineIndex,
+                                section ? section->currentPage : -1);
+#endif
   scope.endScanAndPrewarm();
+#if !defined(SIMULATOR)
+  HalSystem::setPanicBreadcrumb(HalSystem::PanicStage::ReaderPrewarmDone, currentSpineIndex,
+                                section ? section->currentPage : -1);
+#endif
   const auto tPrewarm = millis();
   std::optional<uint32_t> nextPageVisibleOffset;
   if (section && std::any_of(cachedClippings.begin(), cachedClippings.end(),

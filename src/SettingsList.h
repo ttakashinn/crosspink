@@ -193,14 +193,9 @@ inline std::vector<StrId> buildLongPressMenuValues() {
 // ACTION-type entries and entries without a key are device-only.
 //
 // The static list is constructed exactly once (master's optimization, #1086 +
-// #1636) so the per-entry SettingInfo cost is paid once; every call then copies
-// it. When an SdCardFontRegistry is supplied AND has SD card fonts installed,
-// the font-family entry is replaced in that copy with a registry-aware version.
-// A persisted SD selection is also kept representable when minimal network boot
-// deliberately has no catalog. The font-size entry is always rebuilt, since its
-// options are point sizes read from the active family rather than a fixed enum.
-inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* registry = nullptr,
-                                                const std::vector<DictionaryEntry>* dictionaries = nullptr) {
+// #1636). Read-only persistence and web paths iterate it by reference; screens
+// that retain/edit the list still receive an owned copy from getSettingsList().
+inline const std::vector<SettingInfo>& getBaseSettingsList() {
   static const std::vector<SettingInfo> baseList = [] {
     // Enum settings are persisted as numeric values. Assign these labels by enum
     // value so a reordered menu or enum cannot silently swap their behavior.
@@ -492,47 +487,67 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
     return v;
   }();
 
-  std::vector<SettingInfo> v = baseList;
-  if (!BoardConfig::hasTouch()) {
-    v.erase(std::remove_if(v.begin(), v.end(),
-                           [](const SettingInfo& s) {
-                             return s.nameId == StrId::STR_TOUCH_READER_CONTROLS ||
-                                    s.nameId == StrId::STR_READER_MENU_STYLE;
-                           }),
-            v.end());
+  return baseList;
+}
+
+// Keep capability filtering shared by all consumers. This preserves the
+// release behavior: settings that cannot be used by the current board are not
+// persisted or exposed through the web API.
+inline bool isSettingVisibleOnCurrentBoard(const SettingInfo& setting) {
+  const bool hasTouch = BoardConfig::hasTouch();
+  if (!hasTouch &&
+      (setting.nameId == StrId::STR_TOUCH_READER_CONTROLS || setting.nameId == StrId::STR_READER_MENU_STYLE)) {
+    return false;
   }
   // The reader-menu gesture choice only makes sense where the menu stays
-  // reachable without the tap and the bottom edge is free (the capacitive
-  // Home key); everywhere else the bottom-edge up-swipe is Home and the
-  // center tap is the primary path, so the setting stays at its Tap default.
-  if (!BoardConfig::hasHomeKey()) {
-    v.erase(std::remove_if(v.begin(), v.end(),
-                           [](const SettingInfo& s) { return s.nameId == StrId::STR_SHOW_READER_MENU; }),
-            v.end());
+  // reachable without the tap and the bottom edge is free.
+  if (!BoardConfig::hasHomeKey() && setting.nameId == StrId::STR_SHOW_READER_MENU) return false;
+  if (hasTouch &&
+      (setting.nameId == StrId::STR_FRONT_BTN_FOLLOW_ORIENTATION || setting.nameId == StrId::STR_SUNLIGHT_FADING_FIX ||
+       setting.nameId == StrId::STR_BACK_SHORT_TO_FILE_BROWSER)) {
+    return false;
   }
-  if (BoardConfig::hasTouch()) {
-    v.erase(std::remove_if(v.begin(), v.end(),
-                           [](const SettingInfo& s) {
-                             return s.nameId == StrId::STR_FRONT_BTN_FOLLOW_ORIENTATION ||
-                                    s.nameId == StrId::STR_SUNLIGHT_FADING_FIX ||
-                                    s.nameId == StrId::STR_BACK_SHORT_TO_FILE_BROWSER;
-                           }),
-            v.end());
+  return true;
+}
+
+template <typename Visitor>
+inline void forEachVisibleBaseSetting(Visitor&& visitor) {
+  for (const auto& setting : getBaseSettingsList()) {
+    if (isSettingVisibleOnCurrentBoard(setting)) visitor(setting);
   }
-  if ((registry && registry->getFamilyCount() > 0) || SETTINGS.sdFontFamilyName[0] != '\0') {
-    auto it = std::find_if(v.begin(), v.end(), [](const SettingInfo& s) { return s.nameId == StrId::STR_FONT_FAMILY; });
-    if (it != v.end()) {
-      *it = buildFontFamilySetting(registry);
+}
+
+// Visit the exact list exposed by GET/POST without copying the static settings
+// graph. Only the font entries are materialized because their options depend on
+// the currently loaded SD catalog and selected family.
+template <typename Visitor>
+inline void forEachSettingsView(const SdCardFontRegistry* registry, Visitor&& visitor) {
+  const bool hasDynamicFontFamily =
+      (registry && registry->getFamilyCount() > 0) || SETTINGS.sdFontFamilyName[0] != '\0';
+  SettingInfo fontFamilySetting;
+  if (hasDynamicFontFamily) fontFamilySetting = buildFontFamilySetting(registry);
+  SettingInfo fontSizeSetting = buildFontSizeSetting(registry);
+
+  forEachVisibleBaseSetting([&](const SettingInfo& baseSetting) {
+    if (baseSetting.nameId == StrId::STR_FONT_SIZE) {
+      visitor(fontSizeSetting);
+    } else if (hasDynamicFontFamily && baseSetting.nameId == StrId::STR_FONT_FAMILY) {
+      visitor(fontFamilySetting);
+    } else {
+      visitor(baseSetting);
     }
-  }
-  {
-    // Unconditional: even with no SD fonts installed the sizes come from the
-    // built-in family rather than a fixed Small/Medium/Large/XL enum.
-    auto it = std::find_if(v.begin(), v.end(), [](const SettingInfo& s) { return s.nameId == StrId::STR_FONT_SIZE; });
-    if (it != v.end()) {
-      *it = buildFontSizeSetting(registry);
-    }
-  }
+  });
+}
+
+// Build the owned list used by device screens. A persisted SD selection remains
+// representable when minimal network boot has no catalog. Dictionaries are a
+// device-only insertion and therefore stay out of forEachSettingsView().
+inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* registry = nullptr,
+                                                const std::vector<DictionaryEntry>* dictionaries = nullptr) {
+  std::vector<SettingInfo> v;
+  v.reserve(getBaseSettingsList().size() + (dictionaries && !dictionaries->empty() ? 1 : 0));
+  forEachSettingsView(registry, [&](const SettingInfo& setting) { v.push_back(setting); });
+
   if (dictionaries && !dictionaries->empty()) {
     // Insert at the end of the Reader category (just before the first Controls entry).
     auto it =

@@ -44,7 +44,10 @@ class SdCardFontRegistry {
   static const char* defaultWriteRoot();
 
   // Scan SD card, populate families_. Returns true if any families found.
+  // lastDiscoveryFailed() distinguishes an empty card from an incomplete scan
+  // stopped after a recoverable HalFile allocation failure.
   bool discover();
+  bool lastDiscoveryFailed() const { return discoveryFailed_; }
 
   // Release names, paths, and vector capacity retained by the catalog. The
   // next caller that needs enumeration must discover() again.
@@ -57,9 +60,10 @@ class SdCardFontRegistry {
 
  private:
   std::vector<SdCardFontFamilyInfo> families_;  // sorted alphabetically
+  bool discoveryFailed_ = false;
 
   static bool parseFilename(const char* filename, uint8_t& size, uint8_t& style);
-  static void scanDirectory(const char* dirPath, SdCardFontFamilyInfo& family);
+  static bool scanDirectory(const char* dirPath, SdCardFontFamilyInfo& family);
   // Scan one root (e.g. "/.fonts"), append families to `out`, dedup by name.
-  static void scanRoot(const char* rootPath, std::vector<SdCardFontFamilyInfo>& out);
+  static bool scanRoot(const char* rootPath, std::vector<SdCardFontFamilyInfo>& out);
 };

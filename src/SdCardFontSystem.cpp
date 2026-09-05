@@ -37,7 +37,7 @@ constexpr UiFontSize kUiFontSizes[] = {
 }  // namespace
 
 void SdCardFontSystem::begin(GfxRenderer& renderer) {
-  ensureRegistry();
+  const bool registryAvailable = ensureRegistry();
 
   // Register this system as the SD font ID resolver in settings.
   // Uses a static trampoline since CrossPointSettings stores a plain function pointer.
@@ -45,6 +45,11 @@ void SdCardFontSystem::begin(GfxRenderer& renderer) {
     return static_cast<SdCardFontSystem*>(ctx)->resolveFontId(familyName, pointSize);
   };
   SETTINGS.sdFontResolverCtx = this;
+
+  if (!registryAvailable) {
+    LOG_ERR("SDFS", "SD font discovery deferred after low-memory failure");
+    return;
+  }
 
   // If user has a saved SD font selection, load it
   if (SETTINGS.sdFontFamilyName[0] != '\0') {
@@ -73,7 +78,11 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
   // when the wanted family/size still maps to the same point size — the file
   // contents on disk may have changed (e.g. user re-uploaded a new build).
   const bool registryWasDirty = !registryLoaded_ || registryDirty_.load(std::memory_order_acquire);
-  ensureRegistry();
+  if (!ensureRegistry()) {
+    // A transient scan failure must not look like a removed font: keep the
+    // saved selection and any already-loaded family intact for a later retry.
+    return;
+  }
 
   const char* wantedFamily = SETTINGS.sdFontFamilyName;
   const std::string& currentFamily = manager_.currentFamilyName();
@@ -142,19 +151,26 @@ void SdCardFontSystem::releaseForNetwork(GfxRenderer& renderer) {
 }
 
 void SdCardFontSystem::releaseRegistryForNetwork() {
-  if (!registryLoaded_) return;
-  LOG_DBG("SDFS", "Released SD font catalog (%d families)", registry_.getFamilyCount());
+  const int familyCount = registry_.getFamilyCount();
+  if (familyCount > 0) LOG_DBG("SDFS", "Released SD font catalog (%d families)", familyCount);
   registry_.release();
   registryLoaded_ = false;
 }
 
-void SdCardFontSystem::ensureRegistry() {
+bool SdCardFontSystem::ensureRegistry() {
   const bool registryWasDirty = registryDirty_.exchange(false, std::memory_order_acq_rel);
-  if (registryLoaded_ && !registryWasDirty) return;
+  if (registryLoaded_ && !registryWasDirty) return true;
 
   LOG_DBG("SDFS", "%s SD font catalog", registryLoaded_ ? "Refreshing" : "Loading");
   registry_.discover();
+  if (registry_.lastDiscoveryFailed()) {
+    LOG_ERR("SDFS", "SD font registry scan ran out of memory");
+    registryDirty_.store(true, std::memory_order_release);
+    registryLoaded_ = false;
+    return false;
+  }
   registryLoaded_ = true;
+  return true;
 }
 
 void SdCardFontSystem::setupUiFallbacks(GfxRenderer& renderer) {

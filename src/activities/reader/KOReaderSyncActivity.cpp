@@ -16,6 +16,7 @@
 #include "KOReaderCredentialStore.h"
 #include "KOReaderDocumentId.h"
 #include "MappedInputManager.h"
+#include "ReaderSyncPolicy.h"
 #include "ReaderUtils.h"
 #include "SilentRestart.h"
 #include "activities/ActivityManager.h"
@@ -50,7 +51,8 @@ const char* matchMethodName(const DocumentMatchMethod method) {
 KOReaderSyncActivity::KOReaderSyncActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                            const std::string& epubPath, int currentSpineIndex, int currentPage,
                                            int totalPagesInSpine, SavedProgressPosition localKoPos,
-                                           std::string localChapterName, std::optional<uint16_t> currentParagraphIndex)
+                                           std::string localChapterName, std::optional<uint16_t> currentParagraphIndex,
+                                           const uint8_t readerOrientation)
     : Activity("KOReaderSync", renderer, mappedInput),
       UiAppHost(renderer),
       epubPath(epubPath),
@@ -59,6 +61,7 @@ KOReaderSyncActivity::KOReaderSyncActivity(GfxRenderer& renderer, MappedInputMan
       currentPage(currentPage),
       totalPagesInSpine(totalPagesInSpine),
       currentParagraphIndex(currentParagraphIndex),
+      readerOrientation(readerOrientation),
       remoteProgress{},
       remotePosition{},
       localProgress(std::move(localKoPos)) {}
@@ -362,7 +365,8 @@ void KOReaderSyncActivity::performUpload() {
 
 void KOReaderSyncActivity::onEnter() {
   Activity::onEnter();
-  ReaderUtils::applyOrientation(renderer, SETTINGS.orientation);
+  ReaderUtils::applyOrientation(renderer, reader_sync::displayOrientation(readerOrientation, SETTINGS.orientation,
+                                                                          CrossPointSettings::ORIENTATION_COUNT));
 
   resetUi();
   app.on(ACTION_ROW, &KOReaderSyncActivity::onResultRow, this);

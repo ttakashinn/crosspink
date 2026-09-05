@@ -118,6 +118,9 @@ class HalFile : public Print {
   void rewindDirectory();
   bool close();
   HalFile openNextFile();
+#if defined(HAL_STORAGE_TESTING)
+  static void failNextImplAllocationForTest();
+#endif
   bool isOpen() const;
   operator bool() const;
 };

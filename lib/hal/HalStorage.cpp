@@ -16,6 +16,9 @@ namespace {
 #if FREEINK_CAP_USB_MSC
 freeink::UsbMassStorage usbMassStorage;
 #endif
+#if defined(HAL_STORAGE_TESTING)
+bool failNextHalFileImplAllocation = false;
+#endif
 }  // namespace
 
 HalStorage HalStorage::instance;
@@ -161,6 +164,18 @@ class HalFile::Impl {
 };
 
 HalFile::HalFile() = default;
+#if defined(HAL_STORAGE_TESTING)
+void HalFile::failNextImplAllocationForTest() { failNextHalFileImplAllocation = true; }
+
+static bool consumeImplAllocationFailureForTest() {
+  if (failNextHalFileImplAllocation) {
+    failNextHalFileImplAllocation = false;
+    return true;
+  }
+  return false;
+}
+#endif
+
 HalFile::HalFile(std::unique_ptr<Impl> impl) : impl(std::move(impl)) {}
 HalFile::~HalFile() = default;
 HalFile::HalFile(HalFile&&) = default;
@@ -168,7 +183,19 @@ HalFile& HalFile::operator=(HalFile&&) = default;
 
 HalFile HalStorage::open(const char* path, const oflag_t oflag) {
   StorageLock lock;  // ensure thread safety for the duration of this function
-  return HalFile(std::make_unique<HalFile::Impl>(SDCard.open(path, oflag)));
+  FsFile fsFile = SDCard.open(path, oflag);
+  if (!fsFile) return {};
+
+#if defined(HAL_STORAGE_TESTING)
+  if (consumeImplAllocationFailureForTest()) return {};
+#endif
+  auto impl = std::unique_ptr<HalFile::Impl>(new (std::nothrow) HalFile::Impl(std::move(fsFile)));
+  if (!impl) {
+    LOG_ERR("SD", "OOM: HalFile wrapper for %s", path);
+    fsFile.close();
+    return {};
+  }
+  return HalFile(std::move(impl));
 }
 
 bool HalStorage::mkdir(const char* path, const bool pFlag) { HAL_STORAGE_WRAPPED_CALL(mkdir, path, pFlag); }
@@ -185,8 +212,22 @@ bool HalStorage::rmdir(const char* path) { HAL_STORAGE_WRAPPED_CALL(rmdir, path)
 bool HalStorage::openFileForRead(const char* moduleName, const char* path, HalFile& file) {
   StorageLock lock;  // ensure thread safety for the duration of this function
   FsFile fsFile;
-  bool ok = SDCard.openFileForRead(moduleName, path, fsFile);
-  file = HalFile(std::make_unique<HalFile::Impl>(std::move(fsFile)));
+  const bool ok = SDCard.openFileForRead(moduleName, path, fsFile);
+
+#if defined(HAL_STORAGE_TESTING)
+  if (consumeImplAllocationFailureForTest()) {
+    file = HalFile();
+    return false;
+  }
+#endif
+  auto impl = std::unique_ptr<HalFile::Impl>(new (std::nothrow) HalFile::Impl(std::move(fsFile)));
+  if (!impl) {
+    LOG_ERR(moduleName, "OOM: HalFile read wrapper for %s", path);
+    fsFile.close();
+    file = HalFile();
+    return false;
+  }
+  file = HalFile(std::move(impl));
   return ok;
 }
 
@@ -201,8 +242,22 @@ bool HalStorage::openFileForRead(const char* moduleName, const String& path, Hal
 bool HalStorage::openFileForWrite(const char* moduleName, const char* path, HalFile& file) {
   StorageLock lock;  // ensure thread safety for the duration of this function
   FsFile fsFile;
-  bool ok = SDCard.openFileForWrite(moduleName, path, fsFile);
-  file = HalFile(std::make_unique<HalFile::Impl>(std::move(fsFile)));
+  const bool ok = SDCard.openFileForWrite(moduleName, path, fsFile);
+
+#if defined(HAL_STORAGE_TESTING)
+  if (consumeImplAllocationFailureForTest()) {
+    file = HalFile();
+    return false;
+  }
+#endif
+  auto impl = std::unique_ptr<HalFile::Impl>(new (std::nothrow) HalFile::Impl(std::move(fsFile)));
+  if (!impl) {
+    LOG_ERR(moduleName, "OOM: HalFile write wrapper for %s", path);
+    fsFile.close();
+    file = HalFile();
+    return false;
+  }
+  file = HalFile(std::move(impl));
   return ok;
 }
 
@@ -272,6 +327,12 @@ HalFile HalFile::openNextFile() {
   FsFile fsFile = impl->file.openNextFile();
   if (!fsFile) return {};
 
+#if defined(HAL_STORAGE_TESTING)
+  if (consumeImplAllocationFailureForTest()) {
+    impl->localError = true;
+    return {};
+  }
+#endif
   auto next = std::unique_ptr<Impl>(new (std::nothrow) Impl(std::move(fsFile)));
   if (!next) {
     impl->localError = true;

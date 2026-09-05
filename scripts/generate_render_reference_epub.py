@@ -397,6 +397,7 @@ def images_chapter() -> str:
         ("photo-pattern.jpg", "JPEG photo-like: gradient phải mượt trong giới hạn bốn mức xám."),
         ("wide-image.png", "Ảnh rộng: hai mép và dấu góc phải cùng xuất hiện."),
         ("tall-image.png", "Ảnh cao: phải scale hợp lý, không overflow hoặc cấp phát full-size nguy hiểm."),
+        ("opaque-image?view=reader#main", "Ảnh không có phần mở rộng: nhận dạng bằng nội dung và bỏ query/fragment."),
     )
     body = "\n".join(
         f"""<div class="figure"><img src="../images/{name}" alt="{html.escape(caption)}"/><p class="caption">{html.escape(caption)}</p></div>"""
@@ -421,6 +422,7 @@ def bidi_chapter() -> str:
 <p class="instruction">Đây là phạm vi phụ. Tiếng Việt vẫn là baseline chính; các dòng sau phát hiện crash, đảo thứ tự hoặc fallback glyph bị mất.</p>
 
 <h2 id="mixed-direction">Mixed LTR/RTL</h2>
+<p dir="ltr"><span lang="he" dir="rtl">עברית פתיחה</span> — inline RTL must not turn this whole LTR paragraph into RTL.</p>
 <p class="rtl" lang="vi" dir="rtl">FOCUS RTL LATIN: alpha beta gamma delta; tiếng Việt vẫn phải rõ nét.</p>
 <p>Tiếng Việt trước — العربية ١٢٣ — Hebrew עברית 456 — tiếng Việt sau.</p>
 <p class="rtl" lang="ar" dir="rtl">العربية: هذا سطر قصير لاختبار اتجاه الكتابة من اليمين إلى اليسار.</p>
@@ -594,6 +596,15 @@ def make_tall_image() -> bytes:
     return encode_image(image, "PNG")
 
 
+def make_extensionless_image() -> bytes:
+    image = Image.new("L", (96, 64), 255)
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((1, 1, 94, 62), outline=0, width=3)
+    draw.line((8, 8, 87, 55), fill=0, width=3)
+    draw.line((87, 8, 8, 55), fill=0, width=3)
+    return encode_image(image, "PNG")
+
+
 def encode_image(image: Image.Image, image_format: str, **options: object) -> bytes:
     output = io.BytesIO()
     image.save(output, format=image_format, **options)
@@ -694,6 +705,7 @@ def content_opf() -> str:
     <item id="photo" href="images/photo-pattern.jpg" media-type="image/jpeg"/>
     <item id="wide" href="images/wide-image.png" media-type="image/png"/>
     <item id="tall" href="images/tall-image.png" media-type="image/png"/>
+    <item id="opaque-image" href="images/opaque-image" media-type="image/png"/>
   </manifest>
   <spine toc="ncx">
     <itemref idref="cover"/>
@@ -747,6 +759,7 @@ def build_epub() -> bytes:
             ("photo-pattern.jpg", make_photo_pattern()),
             ("wide-image.png", make_wide_image()),
             ("tall-image.png", make_tall_image()),
+            ("opaque-image", make_extensionless_image()),
         )
         for name, data in images:
             add_entry(archive, f"OEBPS/images/{name}", data)
@@ -772,6 +785,7 @@ def validate_epub(data: bytes) -> None:
             "OEBPS/text/08-stress.xhtml",
             "OEBPS/images/photo-pattern.jpg",
             "OEBPS/images/transparent-overlay.png",
+            "OEBPS/images/opaque-image",
         }
         missing = required.difference(archive.namelist())
         if missing:

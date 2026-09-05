@@ -270,6 +270,10 @@ void ActivityManager::goToUsbDrive() {
 
 void ActivityManager::goToSettings() { replaceActivity(std::make_unique<SettingsActivity>(renderer, mappedInput)); }
 
+void ActivityManager::goToReaderSettings() {
+  replaceActivity(std::make_unique<SettingsActivity>(renderer, mappedInput, SettingsActivity::InitialCategory::Reader));
+}
+
 void ActivityManager::goToVanNhanSoSettings(const bool returnToSettingsOnBack) {
   replaceActivity(std::make_unique<VanNhanSoSettingsActivity>(renderer, mappedInput, returnToSettingsOnBack));
 }
@@ -482,4 +486,4 @@ void RenderLock::unlock() {
  * @return true if renderingMutex is busy, otherwise false.
  *
  */
-bool RenderLock::peek() { return xQueuePeek(activityManager.renderingMutex, NULL, 0) != pdTRUE; };
+bool RenderLock::peek() { return xSemaphoreGetMutexHolder(activityManager.renderingMutex) != nullptr; }

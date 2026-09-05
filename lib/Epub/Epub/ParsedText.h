@@ -67,7 +67,6 @@ class ParsedText {
   bool isContinuation_ = false;
   std::vector<std::string> reorderedWordsScratch;
   std::vector<EpdFontFamily::Style> reorderedStylesScratch;
-  std::vector<uint16_t> reorderedWidthsScratch;
   std::vector<bool> reorderedContinuesScratch;
   std::vector<bool> reorderedNoSpaceBeforeScratch;
   std::vector<uint8_t> reorderedFocusBoundaryScratch;
@@ -99,7 +98,7 @@ class ParsedText {
                                      ArenaVector<uint16_t>& wordWidths);
   bool extractLine(size_t breakIndex, int pageWidth, const ArenaVector<uint16_t>& wordWidths,
                    const std::vector<bool>& continuesVec, const std::vector<bool>& noSpaceBeforeVec,
-                   const ArenaVector<size_t>& lineBreakIndices,
+                   const ArenaVector<size_t>& lineBreakIndices, ArenaVector<uint16_t>& reorderedWidths,
                    const std::function<void(std::shared_ptr<TextBlock>, uint32_t)>& processLine,
                    const GfxRenderer& renderer, int fontId);
   bool calculateWordWidths(ArenaVector<uint16_t>& wordWidths, const GfxRenderer& renderer, int fontId);

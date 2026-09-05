@@ -1,0 +1,4 @@
+add_executable(ReaderSyncPolicyTest ReaderSyncPolicyTest.cpp)
+target_include_directories(ReaderSyncPolicyTest PRIVATE ${REPO_ROOT}/src/activities/reader)
+target_link_libraries(ReaderSyncPolicyTest PRIVATE crosspoint_test_common GTest::gtest_main)
+gtest_discover_tests(ReaderSyncPolicyTest)

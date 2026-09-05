@@ -47,14 +47,16 @@ class SdCardFontSystem {
 
   /// Ensure the catalog exists, re-scanning after SD changes. Minimal network
   /// boot intentionally leaves it unloaded until a web request needs it.
-  void ensureRegistry();
+  /// Returns false only when discovery was interrupted by a recoverable
+  /// allocation failure; callers must preserve the saved font selection then.
+  bool ensureRegistry();
 
   /// Release only catalog enumeration memory after a network response. Loaded
   /// font data is independent and remains valid until the normal reboot/exit.
   void releaseRegistryForNetwork();
 
   /// Backward-compatible web UI entry point.
-  void refreshIfDirty() { ensureRegistry(); }
+  void refreshIfDirty() { (void)ensureRegistry(); }
 
  private:
   // Load the active SD family at the built-in UI point sizes and register each

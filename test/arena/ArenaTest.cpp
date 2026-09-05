@@ -73,6 +73,20 @@ TEST(ArenaVector, ResizeAndInsertPreserveOrder) {
   EXPECT_EQ(values[3], 40);
 }
 
+TEST(ArenaVector, ReportsCapacityFailureWithoutLosingExistingValues) {
+  Arena arena;
+  ASSERT_TRUE(arena.init(32, 32));
+  ArenaVector<uint16_t> values(arena);
+  ASSERT_TRUE(values.reserve(8));
+  ASSERT_TRUE(values.push_back(11));
+  ASSERT_TRUE(values.push_back(22));
+
+  EXPECT_FALSE(values.reserve(32));
+  ASSERT_EQ(values.size(), 2U);
+  EXPECT_EQ(values[0], 11);
+  EXPECT_EQ(values[1], 22);
+}
+
 TEST(Arena, ArrayCountOverflowIsRejected) {
   Arena arena;
   ASSERT_TRUE(arena.init(128, 128));

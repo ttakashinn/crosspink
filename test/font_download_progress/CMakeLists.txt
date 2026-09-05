@@ -1,0 +1,3 @@
+add_executable(FontDownloadProgressPolicyTest FontDownloadProgressPolicyTest.cpp)
+target_link_libraries(FontDownloadProgressPolicyTest PRIVATE crosspoint_test_common GTest::gtest_main)
+gtest_discover_tests(FontDownloadProgressPolicyTest)

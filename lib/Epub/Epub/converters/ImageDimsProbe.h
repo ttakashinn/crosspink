@@ -15,11 +15,17 @@
 // PNG: reads the IHDR fields at their fixed offsets (bytes 16..23).
 class ImageDimsProbe : public Print {
  public:
+  enum class Format : uint8_t { Unknown, Jpeg, Png };
+
   size_t write(uint8_t b) override;
   size_t write(const uint8_t* data, size_t len) override;
 
   // True only when a valid header was found; fills `out`.
   bool getDimensions(ImageDimensions& out) const;
+  // The detected format is exposed only after a complete, valid dimensions
+  // header. EPUB item hrefs are not required to carry a useful extension, so
+  // callers use this to choose the decoder/cache suffix from file contents.
+  Format getFormat() const { return state == State::Done ? format : Format::Unknown; }
 
  private:
   bool feed(uint8_t b);  // returns false once parsing is finished (found or failed)
@@ -38,6 +44,7 @@ class ImageDimsProbe : public Print {
     Failed,
   };
   State state = State::Sniff;
+  Format format = Format::Unknown;
   uint32_t pos = 0;       // absolute stream offset (PNG fixed-offset parsing)
   uint32_t skipLeft = 0;  // remaining segment bytes to skip
   uint16_t segLen = 0;

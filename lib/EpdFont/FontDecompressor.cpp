@@ -5,6 +5,26 @@
 #include <Utf8.h>
 
 #include <cstdlib>
+#include <memory>
+#include <new>
+
+namespace {
+
+constexpr uint8_t MAX_PREWARM_GROUPS = 128;
+
+// prewarmCache() runs below the reader's already-large render frame. Keeping
+// these fixed-capacity work arrays on that task's 8 KB stack left too little
+// room for an interrupt context on ESP32-C3 and could trip the hardware stack
+// guard during an otherwise ordinary page turn. The workspace is temporary,
+// fallible heap storage: it is released before the visible render passes and
+// costs no steady-state heap.
+struct PrewarmScratch {
+  uint32_t neededGlyphs[FontDecompressor::MAX_PAGE_GLYPHS];
+  uint16_t neededGroups[MAX_PREWARM_GROUPS];
+  uint32_t groupAlignedTracker[MAX_PREWARM_GROUPS];
+};
+
+}  // namespace
 
 FontDecompressor::~FontDecompressor() { deinit(); }
 
@@ -258,8 +278,14 @@ int FontDecompressor::prewarmCache(const EpdFontData* fontData, const char* utf8
   }
   PageSlot& slot = pageSlots[pageSlotCount];
 
+  auto scratch = std::unique_ptr<PrewarmScratch>(new (std::nothrow) PrewarmScratch);
+  if (!scratch) {
+    LOG_ERR("FDC", "Failed to allocate %u-byte prewarm workspace", static_cast<unsigned>(sizeof(PrewarmScratch)));
+    return -1;
+  }
+
   // Step 1: Collect unique glyph indices needed for this page
-  uint32_t neededGlyphs[MAX_PAGE_GLYPHS];
+  uint32_t* const neededGlyphs = scratch->neededGlyphs;
   uint16_t glyphCount = 0;
   bool glyphCapWarned = false;
 
@@ -331,7 +357,7 @@ int FontDecompressor::prewarmCache(const EpdFontData* fontData, const char* utf8
 
   // Step 2: Compute total buffer size and collect unique groups
   uint32_t totalBytes = 0;
-  uint16_t neededGroups[128];
+  uint16_t* const neededGroups = scratch->neededGroups;
   uint8_t groupCount = 0;
   bool groupCapWarned = false;
 
@@ -346,7 +372,7 @@ int FontDecompressor::prewarmCache(const EpdFontData* fontData, const char* utf8
       }
     }
     if (!found) {
-      if (groupCount < 128) {
+      if (groupCount < MAX_PREWARM_GROUPS) {
         neededGroups[groupCount++] = gi;
       } else if (!groupCapWarned) {
         LOG_DBG("FDC", "Group cap (128) reached during prewarm; some groups will use hot-group fallback");
@@ -392,7 +418,8 @@ int FontDecompressor::prewarmCache(const EpdFontData* fontData, const char* utf8
 
   // Step 3b: Pre-scan to compute each needed glyph's byte-aligned offset within its group.
   // This avoids recomputing aligned offsets per group during extraction in step 4.
-  uint32_t groupAlignedTracker[128] = {};  // running byte-aligned offset for each needed group
+  uint32_t* const groupAlignedTracker = scratch->groupAlignedTracker;
+  memset(groupAlignedTracker, 0, sizeof(scratch->groupAlignedTracker));
 
   if (fontData->glyphToGroup) {
     // Frequency-grouped: single O(totalGlyphs) pass through glyphToGroup

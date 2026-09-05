@@ -6,42 +6,14 @@
 #include <string>
 #include <vector>
 
+#include "ReaderMenuModel.h"
 #include "activities/UiTabListActivity.h"
 #include "components/OptionPopup.h"
 
 class EpubReaderMenuActivity final : public UiTabListActivity {
  public:
-  enum class Tab : uint8_t { Read, Marks, More, Count };
-
-  // Menu actions available from the reader menu.
-  enum class MenuAction {
-    SELECT_CHAPTER,
-    FOOTNOTES,
-    TEXT_SETTINGS,
-    NIGHT_MODE,
-    FRONTLIGHT,
-    GO_TO_PERCENT,
-    AUTO_PAGE_TURN,
-    ROTATE_SCREEN,
-    BOOKMARKS,
-    TOGGLE_BOOKMARK,
-    SCREENSHOT,
-    DISPLAY_QR,
-    GO_HOME,
-    SYNC,
-    DELETE_CACHE,
-    DICTIONARY,
-    LOOKUP_HISTORY,
-    DICTIONARY_SWITCH,
-    DICTIONARY_BOOK,
-    HIGHLIGHT_TEXT,
-    MY_CLIPPINGS,
-    READING_STATS,
-    WORD_SPACING,
-    REPAIR_PARAGRAPH_INDENT,
-    RENDER_MODE,
-    TRY_FULL_RENDER_QUALITY
-  };
+  using Tab = reader_menu::Tab;
+  using MenuAction = reader_menu::Action;
 
   struct MenuItem {
     MenuAction action;

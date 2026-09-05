@@ -1,8 +1,10 @@
 #pragma once
 
+#include <atomic>
 #include <string>
 #include <vector>
 
+#include "FontDownloadProgressPolicy.h"
 #include "FontInstaller.h"
 #include "SdCardFont.h"
 #include "activities/UiListActivity.h"
@@ -61,7 +63,6 @@ class FontDownloadActivity final : public UiListActivity {
   struct ManifestFamily {
     std::string name;
     std::string description;
-    std::vector<std::string> styles;
     std::vector<ManifestFile> files;
     size_t totalSize = 0;
     bool installed = false;
@@ -87,9 +88,13 @@ class FontDownloadActivity final : public UiListActivity {
   // Download progress
   size_t currentFileIndex_ = 0;
   size_t currentFileTotal_ = 0;
-  size_t fileProgress_ = 0;
-  size_t fileTotal_ = 0;
-  int downloadingFamilyIndex_ = 0;
+  std::atomic<size_t> fileProgress_{0};
+  std::atomic<size_t> fileTotal_{0};
+  uint32_t lastProgressUiUpdateAtMs_ = 0;
+  uint8_t lastProgressUiPercent_ = 0;
+  // Negative until a family download starts. A manifest error must never make
+  // Retry act on a partially parsed family at index zero.
+  int downloadingFamilyIndex_ = -1;
   std::string errorMessage_;
   bool cancelRequested_ = false;
   // Set when the cancel came from the home gesture (consumed by the download

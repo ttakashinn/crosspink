@@ -138,12 +138,7 @@ void XtcReaderActivity::renderPage() {
   const uint16_t pageHeight = xtc->getPageHeight();
   const uint8_t bitDepth = xtc->getBitDepth();
 
-  size_t pageBufferSize;
-  if (bitDepth == 2) {
-    pageBufferSize = ((static_cast<size_t>(pageWidth) * pageHeight + 7) / 8) * 2;
-  } else {
-    pageBufferSize = ((pageWidth + 7) / 8) * pageHeight;
-  }
+  const size_t pageBufferSize = xtc::pageBitmapSize(bitDepth, pageWidth, pageHeight);
 
   uint8_t* pageBuffer = static_cast<uint8_t*>(malloc(pageBufferSize));
   if (!pageBuffer) {
@@ -182,7 +177,7 @@ void XtcReaderActivity::renderPage() {
   const bool renderStatusBar = statusBarVisible && statusBarLayout.visible();
 
   if (bitDepth == 2) {
-    const size_t planeSize = (static_cast<size_t>(pageWidth) * pageHeight + 7) / 8;
+    const size_t planeSize = xtc::xthPlaneSize(pageWidth, pageHeight);
     const uint8_t* plane1 = pageBuffer;
     const uint8_t* plane2 = pageBuffer + planeSize;
     auto visitPixels = [&](auto&& visit) {

@@ -1241,8 +1241,6 @@ void CrossPointWebServer::handleGetSettings() const {
   // Minimal network boot intentionally skips the SD font catalog. Never scan
   // the card from this request: that blocks the single HTTP loop and retains
   // catalog memory exactly when WiFi/web-server heap is most constrained.
-  const auto& settings = getSettingsList(sdFontSystem.registryIfLoaded());
-
   server->setContentLength(CONTENT_LENGTH_UNKNOWN);
   server->send(200, "application/json", "");
   server->sendContent("[");
@@ -1252,8 +1250,8 @@ void CrossPointWebServer::handleGetSettings() const {
   bool seenFirst = false;
   JsonDocument doc;
 
-  for (const auto& s : settings) {
-    if (!s.key) continue;  // Skip ACTION-only entries
+  forEachSettingsView(sdFontSystem.registryIfLoaded(), [&](const SettingInfo& s) {
+    if (!s.key) return;  // Skip ACTION-only entries
 
     doc.clear();
     doc["key"] = s.key;
@@ -1307,13 +1305,13 @@ void CrossPointWebServer::handleGetSettings() const {
         break;
       }
       default:
-        continue;
+        return;
     }
 
     const size_t written = serializeJson(doc, output, outputSize);
     if (written >= outputSize) {
       LOG_DBG("WEB", "Skipping oversized setting JSON for: %s", s.key);
-      continue;
+      return;
     }
 
     if (seenFirst) {
@@ -1324,7 +1322,7 @@ void CrossPointWebServer::handleGetSettings() const {
     server->sendContent(output);
     yield();                          // Yield to allow WiFi and other tasks to process during a slow send
     resetTaskWatchdogIfSubscribed();  // Reset watchdog: each sendContent() is a blocking network write
-  }
+  });
 
   server->sendContent("]");
   server->sendContent("");
@@ -1347,12 +1345,11 @@ void CrossPointWebServer::handlePostSettings() {
 
   // Match GET: saving an unrelated setting must not trigger an SD scan or make
   // the web server unresponsive during minimal network boot.
-  const auto& settings = getSettingsList(sdFontSystem.registryIfLoaded());
   int applied = 0;
 
-  for (const auto& s : settings) {
-    if (!s.key) continue;
-    if (!doc[s.key].is<JsonVariant>()) continue;
+  forEachSettingsView(sdFontSystem.registryIfLoaded(), [&](const SettingInfo& s) {
+    if (!s.key) return;
+    if (!doc[s.key].is<JsonVariant>()) return;
 
     switch (s.type) {
       case SettingType::TOGGLE: {
@@ -1402,7 +1399,7 @@ void CrossPointWebServer::handlePostSettings() {
       default:
         break;
     }
-  }
+  });
 
   SETTINGS.saveToFile();
 

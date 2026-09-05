@@ -10,6 +10,7 @@
 #include <memory>
 
 #include "EpdFontFamily.h"
+#include "FontReadSafety.h"
 
 static_assert(sizeof(EpdGlyph) == 16, "EpdGlyph must be 16 bytes to match .cpfont file layout");
 static_assert(sizeof(EpdUnicodeInterval) == 12, "EpdUnicodeInterval must be 12 bytes to match .cpfont file layout");
@@ -1110,6 +1111,14 @@ int SdCardFont::prewarmStyle(uint8_t styleIdx, const uint32_t* codepoints, uint3
     freeStyleMiniData(s);
     return static_cast<int>(cpCount);
   }
+  const uint64_t fontFileSize = file.fileSize64();
+  if (fontFileSize == 0) {
+    LOG_ERR("SDCF", "Prewarm: failed to read .cpfont size (style %u)", styleIdx);
+    delete[] readOrder;
+    delete[] mappings;
+    freeStyleMiniData(s);
+    return static_cast<int>(cpCount);
+  }
 
   unsigned long sdStart = millis();
   uint32_t seekCount = 0;
@@ -1125,7 +1134,16 @@ int SdCardFont::prewarmStyle(uint8_t styleIdx, const uint32_t* codepoints, uint3
     uint32_t mapIdx = readOrder[i];
     int32_t gIdx = mappings[mapIdx].globalIndex;
 
-    uint32_t fileOff = s.glyphsFileOffset + static_cast<uint32_t>(gIdx) * sizeof(EpdGlyph);
+    const uint64_t fileOff64 = static_cast<uint64_t>(s.glyphsFileOffset) +
+                               static_cast<uint64_t>(static_cast<uint32_t>(gIdx)) * sizeof(EpdGlyph);
+    if (fileOff64 > UINT32_MAX || !font_read_safety::containsRange(fontFileSize, fileOff64, sizeof(EpdGlyph))) {
+      LOG_ERR("SDCF", "Prewarm: glyph %d is outside .cpfont (style %u)", gIdx, styleIdx);
+      delete[] readOrder;
+      delete[] mappings;
+      freeStyleMiniData(s);
+      return static_cast<int>(cpCount);
+    }
+    const size_t fileOff = static_cast<size_t>(fileOff64);
     if (gIdx != lastReadIndex + 1) {
       if (!file.seekSet(fileOff)) {
         LOG_ERR("SDCF", "Prewarm: failed to seek to glyph %d (style %u)", gIdx, styleIdx);
@@ -1152,7 +1170,18 @@ int SdCardFont::prewarmStyle(uint8_t styleIdx, const uint32_t* codepoints, uint3
   if (!metadataOnly) {
     // Compute total bitmap size
     for (uint32_t i = 0; i < validCount; i++) {
-      totalBitmapSize += s.miniGlyphs[i].dataLength;
+      const auto& glyph = s.miniGlyphs[i];
+      const uint64_t bitmapOffset = static_cast<uint64_t>(s.bitmapFileOffset) + glyph.dataOffset;
+      uint32_t nextBitmapSize = 0;
+      if (bitmapOffset > UINT32_MAX || !font_read_safety::containsRange(fontFileSize, bitmapOffset, glyph.dataLength) ||
+          !font_read_safety::addUint32(totalBitmapSize, glyph.dataLength, nextBitmapSize)) {
+        LOG_ERR("SDCF", "Prewarm: invalid bitmap range (style %u, glyph %u)", styleIdx, i);
+        delete[] readOrder;
+        delete[] mappings;
+        freeStyleMiniData(s);
+        return static_cast<int>(cpCount);
+      }
+      totalBitmapSize = nextBitmapSize;
     }
 
     if (!ensureArrayCapacity(s.miniBitmap, s.miniBitmapCapacity, totalBitmapSize)) {
@@ -1179,7 +1208,7 @@ int SdCardFont::prewarmStyle(uint8_t styleIdx, const uint32_t* codepoints, uint3
         continue;
       }
 
-      uint32_t fileOff = s.bitmapFileOffset + glyph.dataOffset;
+      const size_t fileOff = static_cast<size_t>(static_cast<uint64_t>(s.bitmapFileOffset) + glyph.dataOffset);
       if (fileOff != lastBitmapEnd) {
         if (!file.seekSet(fileOff)) {
           LOG_ERR("SDCF", "Prewarm: failed to seek to bitmap (style %u)", styleIdx);

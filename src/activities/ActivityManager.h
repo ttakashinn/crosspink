@@ -95,6 +95,7 @@ class ActivityManager {
   bool resumeFileTransferFromNetworkBoot(uint32_t payload);
   void goToUsbDrive();
   void goToSettings();
+  void goToReaderSettings();
   void goToVanNhanSoSettings(bool returnToSettingsOnBack = false);
   void goToFileBrowser(std::string path = {});
   void goToRecentBooks();
